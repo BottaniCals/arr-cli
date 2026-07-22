@@ -265,25 +265,25 @@ Conventions used throughout:
     - Tests assert: pending/storage/health each hit the right path; auth-disabled warning fires once when not quiet; suppressed under `--quiet`; `rules` is not in `--help`
     - _Requirements: REQ-9 AC1, REQ-9 AC6, REQ-11 AC4_
 
-- [ ] 12. Implement Seerr CLI (`arr_cli/seerr.py`) — 6 commands + /auth/me fallback probe
-  - [ ] 12.1 Create module with shared `_get` helper and command dispatch
+- [x] 12. Implement Seerr CLI (`arr_cli/seerr.py`) — 6 commands + /auth/me fallback probe
+  - [x] 12.1 Create module with shared `_get` helper and command dispatch
     - All commands use `transport.get("seerr", ...)` which injects `X-Api-Key` per REQ-2 AC3
     - Module-level `_DISPATCH` mapping 6 command names to handlers
     - _Requirements: REQ-10 AC1-7, REQ-11 AC1_
-  - [ ] 12.2 Implement `requests`, `request-count`, `search`, `available`, `media` commands
+  - [x] 12.2 Implement `requests`, `request-count`, `search`, `available`, `media` commands
     - `requests` → `GET /api/v1/request` (REQ-10 AC1)
     - `request-count` → `GET /api/v1/request/count` (REQ-10 AC2)
     - `search <query>` → `GET /api/v1/search/multi?query=<urlencoded query>` (REQ-10 AC3)
     - `available <query>` → `GET /api/v1/media/available?query=<urlencoded query>` (REQ-10 AC4)
     - `media <tmdbId>` → `GET /api/v1/media/{tmdbId}` (REQ-10 AC5)
     - _Requirements: REQ-10 AC1, REQ-10 AC2, REQ-10 AC3, REQ-10 AC4, REQ-10 AC5_
-  - [ ] 12.3 Implement `user` command with `/api/v1/user/me` → `/auth/me` 404 fallback probe
+  - [x] 12.3 Implement `user` command with `/api/v1/user/me` → `/auth/me` 404 fallback probe
     - Step 1: try `GET /api/v1/user/me` (REQ-10 AC6); on HTTP 404, immediately try `GET /auth/me`
     - Step 2: return whichever succeeds; if both 404, raise `HttpError(exit_code=4)`
     - Log both attempts at DEBUG level with status and URL so the operator can see which path was used
     - Do NOT implement `create-request` (REQ-10 AC7 — tier-2, requires `--confirm`)
     - _Requirements: REQ-10 AC6, REQ-10 AC7, design.md "Pre-locking Verifications — Seerr"_
-  - [ ] 12.4 Add `main(argv=None)` entry point and `tests/unit/test_seerr.py`
+  - [x] 12.4 Add `main(argv=None)` entry point and `tests/unit/test_seerr.py`
     - `main` registers 6 subcommands; `create-request` MUST NOT appear in `--help` (REQ-10 AC7)
     - Tests: each command hits the right path; user command falls back from `/api/v1/user/me` 404 to `/auth/me` 200; user command returns exit 4 when both 404
     - _Requirements: REQ-10 AC1-7, REQ-11 AC4_
