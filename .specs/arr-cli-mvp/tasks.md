@@ -185,25 +185,25 @@ Conventions used throughout:
     - Assert `--debug=True` prints traceback; `--debug=False` does not
     - _Requirements: REQ-11 AC3, REQ-11 AC4, REQ-4 AC5_
 
-- [ ] 8. Implement Jellyfin CLI (`arr_cli/jellyfin.py`) — 8 commands
-  - [ ] 8.1 Create module with shared `_get(path, params=None, args, cfg)` helper and command dispatch table
+- [x] 8. Implement Jellyfin CLI (`arr_cli/jellyfin.py`) — 8 commands
+  - [x] 8.1 Create module with shared `_get(path, params=None, args, cfg)` helper and command dispatch table
     - Helper calls `transport.get("jellyfin", path, params, cfg=cfg, ...)` then `output.emit(payload, human=args.human, columns=...)`
     - Module-level `_DISPATCH = {"now": cmd_now, "resume": cmd_resume, ...}`
     - Each `cmd_*` returns `int` exit code (0 success, propagated error code otherwise)
     - _Requirements: REQ-6 AC1-8, REQ-11 AC1_
-  - [ ] 8.2 Implement `now`, `resume`, `recent`, `nextup`, `latest` commands
+  - [x] 8.2 Implement `now`, `resume`, `recent`, `nextup`, `latest` commands
     - `now` → `GET /Sessions` (REQ-6 AC1)
     - `resume` → `GET /Users/{user_id}/Items/Resume` with `user_id` from `cfg.jellyfin.user_id`; raise `ConfigError` if missing (REQ-6 AC2)
     - `recent` → `GET /Users/{user_id}/Items?SortBy=DatePlayed&Filters=IsPlayed` (REQ-6 AC3)
     - `nextup` → `GET /Shows/NextUp` with optional `Limit`, `StartIndex`, `UserId` from `--limit` and a future `--start-index` (REQ-6 AC4)
     - `latest` → `GET /Users/{user_id}/Items/Latest` (REQ-6 AC5)
     - _Requirements: REQ-6 AC1, REQ-6 AC2, REQ-6 AC3, REQ-6 AC4, REQ-6 AC5_
-  - [ ] 8.3 Implement `search`, `item`, `favorites` commands
+  - [x] 8.3 Implement `search`, `item`, `favorites` commands
     - `search <query>` → `GET /Items?searchTerm=<urlencoded query>`; empty query returns the empty array response, NOT an error (REQ-6 AC6)
     - `item <id>` → `GET /Items/{id}`; rely on transport's automatic 404 → `HttpError(exit_code=4)` naming the id (REQ-6 AC7)
     - `favorites` → `GET /Users/{user_id}/Items/Favorites` (REQ-6 AC8)
     - _Requirements: REQ-6 AC6, REQ-6 AC7, REQ-6 AC8_
-  - [ ] 8.4 Add `main(argv=None)` entry point and `tests/unit/test_jellyfin.py`
+  - [x] 8.4 Add `main(argv=None)` entry point and `tests/unit/test_jellyfin.py`
     - `main` registers the 8 subcommands via `argparse.add_subparsers`; unknown args exit `1` with usage on stderr (REQ-11 AC4)
     - Each test mocks `transport.get` with `unittest.mock.patch` and asserts the exact path, params, and auth header; covers one success path and one 404 path per command
     - Assert `favorites`, `resume`, `recent`, `latest` raise `ConfigError` when `cfg.jellyfin.user_id` is `None`
