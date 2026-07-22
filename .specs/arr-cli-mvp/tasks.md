@@ -359,8 +359,8 @@ Conventions used throughout:
 
 > **Implementation note (2026-07-22):** task 19 shipped as opt-in integration test scaffolding. The runtime in this MVP does not have pytest installed; the skip decorator is therefore implemented in `tests/integration/conftest.py` as :func:`skip_unless_run_integration` using stdlib :func:`unittest.skipUnless` so the same opt-in flag (``--run-integration``) works under both pytest and the unittest runner. The unittest runner additionally honours the ``ARR_RUN_INTEGRATION=1`` env var because unittest does not natively parse ``--key=value`` style arguments. The example integration test lives at `tests/integration/test_smoke_integration.py` per the orchestrator's directive (ONE example test, not one-per-service as the original spec line implied) and demonstrates the full opt-in wiring against a live service URL. The `Makefile` gained an opt-in `integration-test` target; the `README` gained a paragraph in section 6 documenting the opt-in flag and the `ARR_LIVE_URL` / `ARR_LIVE_API_KEY` / `ARR_LIVE_USER_ID` env vars.
 
-- [ ] 20. Final verification pass against the requirements checklist
-  - [ ] 20.1 Walk every REQ-1..REQ-12 AC and confirm a task/subtask cites it
+- [x] 20. Final verification pass against the requirements checklist
+  - [x] 20.1 Walk every REQ-1..REQ-12 AC and confirm a task/subtask cites it
     - REQ-1 (config): covered by tasks 1.2, 1.3, 3.x
     - REQ-2 (auth): covered by task 4.2
     - REQ-3 (JSON + --human): covered by task 6.x
