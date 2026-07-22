@@ -209,22 +209,22 @@ Conventions used throughout:
     - Assert `favorites`, `resume`, `recent`, `latest` raise `ConfigError` when `cfg.jellyfin.user_id` is `None`
     - _Requirements: REQ-6 AC1-8, REQ-11 AC4_
 
-- [ ] 9. Implement Radarr CLI (`arr_cli/radarr.py`) — 6 commands
-  - [ ] 9.1 Create module with shared `_get` helper, command dispatch, and ISO-8601 date validation
+- [x] 9. Implement Radarr CLI (`arr_cli/radarr.py`) — 6 commands
+  - [x] 9.1 Create module with shared `_get` helper, command dispatch, and ISO-8601 date validation
     - Helper: `_validate_iso_date(value: str) -> str` returns the value if it matches `^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z?)?$`; else raise `ConfigError` with the documented stderr message
     - Module-level `_DISPATCH` mapping 6 command names to handler functions
     - _Requirements: REQ-7 AC2, REQ-11 AC1_
-  - [ ] 9.2 Implement `calendar`, `wanted`, `queue` commands
+  - [x] 9.2 Implement `calendar`, `wanted`, `queue` commands
     - `calendar [start [end]]` → `GET /api/v3/calendar`; if `start` given, append `start=<start>` to params; if `end` given, also append `end=<end>`; both validated via `_validate_iso_date` (REQ-7 AC1, AC2)
     - `wanted` → `GET /api/v3/wanted/missing` (REQ-7 AC3)
     - `queue` → `GET /api/v3/queue` (REQ-7 AC4)
     - _Requirements: REQ-7 AC1, REQ-7 AC2, REQ-7 AC3, REQ-7 AC4_
-  - [ ] 9.3 Implement `recent`, `lookup`, `movie` commands
+  - [x] 9.3 Implement `recent`, `lookup`, `movie` commands
     - `recent` → `GET /api/v3/history/movie` (REQ-7 AC5)
     - `lookup <term>` → `GET /api/v3/movie/lookup?term=<urlencoded term>` (REQ-7 AC6)
     - `movie <id>` → `GET /api/v3/movie/{id}`; 404 → `HttpError(exit_code=4)` naming the id (REQ-7 AC7)
     - _Requirements: REQ-7 AC5, REQ-7 AC6, REQ-7 AC7_
-  - [ ] 9.4 Add `main(argv=None)` entry point and `tests/unit/test_radarr.py`
+  - [x] 9.4 Add `main(argv=None)` entry point and `tests/unit/test_radarr.py`
     - `main` registers 6 subcommands; unknown args exit `1` (REQ-11 AC4)
     - Tests cover: calendar without dates; calendar with start only; calendar with start+end; calendar with malformed date (assert `ConfigError(exit_code=1)` and stderr usage hint); lookup percent-encoding; movie 404 → exit 4
     - _Requirements: REQ-7 AC1-7, REQ-11 AC4_
