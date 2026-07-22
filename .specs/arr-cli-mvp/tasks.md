@@ -249,18 +249,18 @@ Conventions used throughout:
     - Tests cover: calendar with malformed date → `ConfigError(exit_code=1)`; recent hits `/history` not `/history/movie`; series 404 → exit 4
     - _Requirements: REQ-8 AC1-7, REQ-11 AC4_
 
-- [ ] 11. Implement Maintainerr CLI (`arr_cli/maintainerr.py`) — 3 commands + warning
-  - [ ] 11.1 Create module skeleton with shared `_get` helper and warn-once auth-disabled startup check
+- [x] 11. Implement Maintainerr CLI (`arr_cli/maintainerr.py`) — 3 commands + warning
+  - [x] 11.1 Create module skeleton with shared `_get` helper and warn-once auth-disabled startup check
     - At `main()` start: if `cfg.maintainerr.auth_enabled is False` and not `args.quiet`, call `cli_common.warn_once("maintainerr", "maintainerr: auth disabled; ensure this CLI is reachable only on a trusted/private network", quiet=args.quiet)`
     - The warn-once set must reset each invocation (REQ-9 AC1)
     - _Requirements: REQ-9 AC1_
-  - [ ] 11.2 Implement `pending`, `storage`, `health` commands
+  - [x] 11.2 Implement `pending`, `storage`, `health` commands
     - `pending` → `GET /api/collections/overlay-data` (REQ-9 AC2)
     - `storage` → `GET /api/storage-metrics` (REQ-9 AC3)
     - `health` → `GET /api/health/ready` (REQ-9 AC4)
     - Do NOT implement a `rules` command (REQ-9 AC5 — explicitly out of MVP scope)
     - _Requirements: REQ-9 AC2, REQ-9 AC3, REQ-9 AC4, REQ-9 AC5_
-  - [ ] 11.3 Add `main(argv=None)` entry point, 401/403 guidance, and `tests/unit/test_maintainerr.py`
+  - [x] 11.3 Add `main(argv=None)` entry point, 401/403 guidance, and `tests/unit/test_maintainerr.py`
     - In `transport.get`'s `AuthError` path for maintainerr, stderr guidance prepends `maintainerr: 401/403 received — set auth.enabled=true in arr.conf and restart` (REQ-9 AC6)
     - Tests assert: pending/storage/health each hit the right path; auth-disabled warning fires once when not quiet; suppressed under `--quiet`; `rules` is not in `--help`
     - _Requirements: REQ-9 AC1, REQ-9 AC6, REQ-11 AC4_
