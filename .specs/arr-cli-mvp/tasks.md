@@ -229,22 +229,22 @@ Conventions used throughout:
     - Tests cover: calendar without dates; calendar with start only; calendar with start+end; calendar with malformed date (assert `ConfigError(exit_code=1)` and stderr usage hint); lookup percent-encoding; movie 404 → exit 4
     - _Requirements: REQ-7 AC1-7, REQ-11 AC4_
 
-- [ ] 10. Implement Sonarr CLI (`arr_cli/sonarr.py`) — 6 commands
-  - [ ] 10.1 Create module with shared `_get` helper and ISO-8601 date validation (reuse pattern from radarr)
+- [x] 10. Implement Sonarr CLI (`arr_cli/sonarr.py`) — 6 commands
+  - [x] 10.1 Create module with shared `_get` helper and ISO-8601 date validation (reuse pattern from radarr)
     - Re-export `_validate_iso_date` or copy the 6-line validator; documented as identical to radarr's
     - Module-level `_DISPATCH` for the 6 commands
     - _Requirements: REQ-8 AC2, REQ-11 AC1_
-  - [ ] 10.2 Implement `calendar`, `wanted`, `queue` commands
+  - [x] 10.2 Implement `calendar`, `wanted`, `queue` commands
     - `calendar [start [end]]` → `GET /api/v3/calendar` with `start=` and optional `end=` params; ISO-8601 validated (REQ-8 AC1, AC2)
     - `wanted` → `GET /api/v3/wanted/missing` (REQ-8 AC3)
     - `queue` → `GET /api/v3/queue` (REQ-8 AC4)
     - _Requirements: REQ-8 AC1, REQ-8 AC2, REQ-8 AC3, REQ-8 AC4_
-  - [ ] 10.3 Implement `recent`, `lookup`, `series` commands
+  - [x] 10.3 Implement `recent`, `lookup`, `series` commands
     - `recent` → `GET /api/v3/history` (note: TV history, NOT `/history/movie` like Radarr) (REQ-8 AC5)
     - `lookup <term>` → `GET /api/v3/series/lookup?term=<urlencoded term>` (REQ-8 AC6)
     - `series <id>` → `GET /api/v3/series/{id}`; 404 → `HttpError(exit_code=4)` naming the id (REQ-8 AC7)
     - _Requirements: REQ-8 AC5, REQ-8 AC6, REQ-8 AC7_
-  - [ ] 10.4 Add `main(argv=None)` entry point and `tests/unit/test_sonarr.py`
+  - [x] 10.4 Add `main(argv=None)` entry point and `tests/unit/test_sonarr.py`
     - `main` registers 6 subcommands; unknown args exit `1` (REQ-11 AC4)
     - Tests cover: calendar with malformed date → `ConfigError(exit_code=1)`; recent hits `/history` not `/history/movie`; series 404 → exit 4
     - _Requirements: REQ-8 AC1-7, REQ-11 AC4_
