@@ -68,13 +68,13 @@ The implementation conforms to the following Python ecosystem conventions:
 
 Console-script entry points declared in `pyproject.toml` map each executable name to its module:
 
-| Executable       | Module                              | Commands |
-|------------------|-------------------------------------|----------|
-| `jellyfin`       | `arr_cli.jellyfin:main`             | 8        |
-| `radarr`         | `arr_cli.radarr:main`               | 6        |
-| `sonarr`         | `arr_cli.sonarr:main`               | 6        |
-| `maintainerr`    | `arr_cli.maintainerr:main`          | 3        |
-| `seerr`          | `arr_cli.seerr:main`                | 6        |
+| Executable    | Module                     | Commands |
+| ------------- | -------------------------- | -------- |
+| `jellyfin`    | `arr_cli.jellyfin:main`    | 8        |
+| `radarr`      | `arr_cli.radarr:main`      | 6        |
+| `sonarr`      | `arr_cli.sonarr:main`      | 6        |
+| `maintainerr` | `arr_cli.maintainerr:main` | 3        |
+| `seerr`       | `arr_cli.seerr:main`       | 6        |
 
 ## Code Reuse Analysis
 
@@ -214,6 +214,7 @@ flowchart TD
 
 - **Purpose:** Load, validate, and resolve the canonical configuration file. Owns YAML/TOML parsing, env-var override layering, POSIX permission checks, and the `ServiceConfig` / `AuthConfig` dataclasses.
 - **Interfaces:**
+
   ```python
   def load_config(
       path: Path | None = None,
@@ -239,6 +240,7 @@ flowchart TD
       extra: dict[str, str]   # maintainerr auth headers; extensible
       auth_enabled: bool      # maintainerr only; default False
   ```
+
 - **Dependencies:** `tomllib`, `PyYAML`, `pathlib`, `os.stat`.
 - **Reuses:** `urllib.parse` for URL validation, stdlib `dataclasses` for the immutable config record.
 
@@ -246,6 +248,7 @@ flowchart TD
 
 - **Purpose:** Single HTTP entry point for all five CLIs. Attaches the correct auth header per service, applies per-call timeouts, centralizes retry policy, and translates raw `requests` exceptions into the `ArrError` hierarchy.
 - **Interfaces:**
+
   ```python
   def get(
       service: Literal["jellyfin", "radarr", "sonarr", "maintainerr", "seerr"],
@@ -259,6 +262,7 @@ flowchart TD
 
   def _inject_auth(headers: dict[str, str], service: str, auth: AuthConfig) -> None: ...
   ```
+
 - **Dependencies:** `requests`, `arr_facade.config`, `arr_facade.errors`, `urllib.parse.quote`.
 - **Reuses:** `requests.Session()` for keep-alive within a single invocation (no shared state across invocations).
 
@@ -266,6 +270,7 @@ flowchart TD
 
 - **Purpose:** Define the `ArrError` hierarchy and the canonical exit-code map. Every error carries `service`, `op`, and a structured message suitable for stderr.
 - **Interfaces:**
+
   ```python
   class ArrError(Exception):
       service: str
@@ -278,6 +283,7 @@ flowchart TD
   class HttpError(ArrError):    ...   # exit_code = 4
   class ParseError(ArrError):   ...   # exit_code = 5
   ```
+
 - **Dependencies:** stdlib only.
 - **Reuses:** `logging` for the `--debug` trace path (not for the default stderr surface).
 
@@ -285,11 +291,13 @@ flowchart TD
 
 - **Purpose:** Render JSON payloads as tabular `--human` text, or pass JSON through verbatim. Enforce column caps and the `COLUMNS` environment variable.
 - **Interfaces:**
+
   ```python
   def emit(payload: Any, *, human: bool, columns: list[str] | None = None) -> None: ...
 
   def human(payload: Any, columns: list[str], *, limit: int = 20, max_width: int = 120) -> str: ...
   ```
+
 - **Dependencies:** stdlib `json`, `shutil.get_terminal_size`.
 - **Reuses:** None beyond stdlib.
 
@@ -297,6 +305,7 @@ flowchart TD
 
 - **Purpose:** Shared `argparse` base. Defines the universal flag set (`--config`, `--debug`, `--quiet`, `--human`/`-h`, `--connect-timeout`, `--read-timeout`, `--retry`) and the per-service subcommand registration helpers.
 - **Interfaces:**
+
   ```python
   def build_parser(
       prog: str,
@@ -309,6 +318,7 @@ flowchart TD
       handler: Callable[[argparse.Namespace, ServiceConfig], int],
   ) -> Callable[[list[str] | None], int]: ...
   ```
+
 - **Dependencies:** `argparse`, `arr_facade.config`, `arr_facade.transport`, `arr_facade.errors`, `arr_facade.output`.
 - **Reuses:** Wraps `argparse.BooleanOptionalAction` (Python 3.9+ stdlib).
 
@@ -395,6 +405,7 @@ class ServiceConfig:
 ```
 
 Resolution order (per REQ-1 AC7):
+
 1. `--config <path>` flag, if given.
 2. Otherwise `~/.config/lily/arr.conf`.
 3. Parse by file extension or leading-byte sniff (`.toml` → `tomllib`, `.yaml`/`.yml` → `yaml.safe_load`).
@@ -433,13 +444,13 @@ By design, every command returns `int` (the exit code) and writes its payload to
 
 ### Exit code map (REQ-4 AC1, AC2, AC5; REQ-4 AC6)
 
-| Code | Class         | Trigger                                                          | Example stderr                                                                  |
-|------|---------------|------------------------------------------------------------------|---------------------------------------------------------------------------------|
-| 1    | `ConfigError` | Missing config, bad perms, unknown format, malformed date input  | `radarr: calendar — invalid date 'next-tuesday'; expected ISO-8601`             |
-| 2    | `AuthError`   | HTTP 401/403 from service, or missing required credential        | `jellyfin: op=now — 401 Unauthorized; check jellyfin.api_key in arr.conf`       |
-| 3    | `NetworkError`| DNS, connection refused, TLS, timeout                           | `radarr: op=calendar url=https://radarr.example/api/v3/calendar — Timeout`     |
-| 4    | `HttpError`   | HTTP 4xx (non-auth) or 5xx                                       | `sonarr: op=series id=42 status=404 message=Series not found`                   |
-| 5    | `ParseError`  | JSON decode failure                                              | `seerr: op=user — invalid JSON at byte offset 17`                               |
+| Code | Class          | Trigger                                                         | Example stderr                                                             |
+| ---- | -------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| 1    | `ConfigError`  | Missing config, bad perms, unknown format, malformed date input | `radarr: calendar — invalid date 'next-tuesday'; expected ISO-8601`        |
+| 2    | `AuthError`    | HTTP 401/403 from service, or missing required credential       | `jellyfin: op=now — 401 Unauthorized; check jellyfin.api_key in arr.conf`  |
+| 3    | `NetworkError` | DNS, connection refused, TLS, timeout                           | `radarr: op=calendar url=https://radarr.example/api/v3/calendar — Timeout` |
+| 4    | `HttpError`    | HTTP 4xx (non-auth) or 5xx                                      | `sonarr: op=series id=42 status=404 message=Series not found`              |
+| 5    | `ParseError`   | JSON decode failure                                             | `seerr: op=user — invalid JSON at byte offset 17`                          |
 
 ### Error scenario handling
 
@@ -460,7 +471,7 @@ By design, every command returns `int` (the exit code) and writes its payload to
 ### `--debug` toggle (REQ-4 AC5)
 
 - Default: stderr shows only the structured `service=... op=... status=... message=...` line.
-- `--debug`: in addition, full Python traceback and a request/response pair (URL, headers with **secrets redacted to `***` while preserving the header name and token length**, status, body) are written to stderr. The redaction is unconditional per the security NFR.
+- `--debug`: in addition, full Python traceback and a request/response pair (URL, headers with **secrets redacted to `\***` while preserving the header name and token length\*\*, status, body) are written to stderr. The redaction is unconditional per the security NFR.
 - `--quiet`: suppresses the Maintainerr auth-disabled warning (REQ-9 AC1) and any informational stderr lines, but errors still surface.
 
 ### Per-service independence (REQ-4 AC4)
@@ -522,12 +533,12 @@ The following endpoints were not yet verified at design time and will be re-chec
 
 The MVP carries explicit performance acceptance criteria; the design meets them as follows:
 
-| Budget                  | Target | How the design meets it                                                              |
-|-------------------------|--------|--------------------------------------------------------------------------------------|
-| Cold-start (process)    | ≤ 2 s  | Stdlib-only facade + lazy imports of `requests`/`yaml`/`tomllib` in each CLI entry point; no eager initialization, no module-level network I/O. A `time python -c 'import arr_cli.jellyfin'` measurement is added to `scripts/smoke.sh --dry-run` and gates CI. |
-| Peak resident memory    | ≤ 80 MiB | Per-invocation `requests.Session()` (released on process exit); no in-memory payload cache; tabular `--human` mode streams rather than holding the full payload twice; `tracemalloc` snapshot in `tests/unit/test_perf_budgets.py` asserts `< 80 * 1024 * 1024` after a representative 10,000-item payload. |
-| Per-command latency     | dominated by service response | Default `connect_timeout=5s` and `read_timeout=30s`; `--retry` defaults to 0 (no double-work); no global locks, no daemon IPC. |
-| Large-payload cap       | 10,000 items | `transport.get` accepts a `max_items` kwarg; default 10,000. Larger responses are truncated with a stderr warning naming the count and the cap (REQ NFR-Performance AC). |
+| Budget               | Target                        | How the design meets it                                                                                                                                                                                                                                                                                     |
+| -------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cold-start (process) | ≤ 2 s                         | Stdlib-only facade + lazy imports of `requests`/`yaml`/`tomllib` in each CLI entry point; no eager initialization, no module-level network I/O. A `time python -c 'import arr_cli.jellyfin'` measurement is added to `scripts/smoke.sh --dry-run` and gates CI.                                             |
+| Peak resident memory | ≤ 80 MiB                      | Per-invocation `requests.Session()` (released on process exit); no in-memory payload cache; tabular `--human` mode streams rather than holding the full payload twice; `tracemalloc` snapshot in `tests/unit/test_perf_budgets.py` asserts `< 80 * 1024 * 1024` after a representative 10,000-item payload. |
+| Per-command latency  | dominated by service response | Default `connect_timeout=5s` and `read_timeout=30s`; `--retry` defaults to 0 (no double-work); no global locks, no daemon IPC.                                                                                                                                                                              |
+| Large-payload cap    | 10,000 items                  | `transport.get` accepts a `max_items` kwarg; default 10,000. Larger responses are truncated with a stderr warning naming the count and the cap (REQ NFR-Performance AC).                                                                                                                                    |
 
 These budgets are enforced as unit tests so any regression fails CI before tag time.
 
@@ -539,13 +550,13 @@ The MVP ships two documentation files. Their required contents are enumerated he
 
 1. **Purpose**: one-paragraph statement of what the package is and who it is for (Lily the chat companion and Renald the operator).
 2. **Canonical config path**: `~/.config/lily/arr.conf`, with a note that `--config <path>` overrides it per-invocation.
-3. **Placeholder-only example**: an embedded code block showing `arr.conf.example` contents (verbatim copy of the placeholder schema in the Data Models section above). The README must explicitly state: *"Do not commit a real arr.conf. Real keys go in a local file only; `arr.conf.example` ships with placeholders."*
+3. **Placeholder-only example**: an embedded code block showing `arr.conf.example` contents (verbatim copy of the placeholder schema in the Data Models section above). The README must explicitly state: _"Do not commit a real arr.conf. Real keys go in a local file only; `arr.conf.example` ships with placeholders."_
 4. **Per-service command tables**: five tables (one per service), each with columns `Command`, `HTTP method`, `Path`, `Notes`. The 29 commands map 1:1 with the table in the Components and Interfaces section above.
 5. **Auth matrix**: a table showing per-service `Header` and `Header value source` (a verbatim copy of the auth matrix in the Components and Interfaces section).
 6. **Install / invoke instructions**: `pip install -e .[dev]` for development install, then one example invocation per service (e.g. `arr-jellyfin now --human`, `arr-radarr wanted`, `arr-sonarr calendar 2026-01-01 2026-01-31`, `arr-maintainerr health`, `arr-seerr user`).
 7. **Exit codes**: a table with the 5 codes, their class, and an example trigger (copy from the Error Handling section).
 8. **Out-of-scope (tier-2) list**: bullet list naming Maintainerr `veto`, Seerr `create-request`, mutations, webhooks, daemon/cache layer.
-9. **Contributing**: one sentence — *"Nothing gets hardcoded. Any new service, command, or config key that hardcodes a URL, key, or user-id will be rejected at review."*
+9. **Contributing**: one sentence — _"Nothing gets hardcoded. Any new service, command, or config key that hardcodes a URL, key, or user-id will be rejected at review."_
 
 ### `CHANGELOG.md` — required `## MVP` entry
 

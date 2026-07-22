@@ -7,6 +7,7 @@ The `arr-cli-mvp` feature delivers a set of read-only Python CLI wrappers around
 The CLIs target **Lily** (Renald's chat companion Bott) as the primary operator. Lily uses them to converse with Renald about what he is watching, tease his rewatch patterns, surface newly added content, comment on what Maintainerr is about to delete, and help him discover and request media. The CLIs also serve Renald directly for ad-hoc shell inspection.
 
 Value:
+
 - **No hardcoded values** — every URL, API key, and user identifier lives in a single gitignored config file (`~/.config/lily/arr.conf`) so the repo can be public, contributed to, and audited.
 - **Uniform operator experience** — JSON by default, `--human`/`-h` for readable text; consistent exit codes; consistent error surface across all five services.
 - **Safe to leave lying around** — read-only MVP, stateless per invocation (no daemon, no mandatory cache), graceful failure when a service is down (one broken service cannot break the others).
@@ -15,6 +16,7 @@ Value:
 Out of scope for this MVP (reserved for a tier-2 follow-up): Maintainerr `veto` (`POST /api/collections/media/handle`), Seerr `create-request` (`POST /api/v1/request`), any write/mutate endpoint, webhook receivers, and long-running/cache daemons.
 
 Pre-locking verification items (must be confirmed in the design phase, then re-checked at integration time):
+
 - Maintainerr `/api/rules` endpoint presence against live `/api/swagger`.
 - Seerr `/api/v1/...` path correctness against live `/api/v1/openapi.json`.
 
