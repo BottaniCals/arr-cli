@@ -319,15 +319,15 @@ Conventions used throughout:
     - Wire the check into `scripts/secret-scan` (extend the script from task 14.2) or a separate `scripts/example-lint.sh`
     - _Requirements: REQ-1 AC4_
 
-- [ ] 16. Write `README.md` with the 9 documented sections in order
-  - [ ] 16.1 Sections 1–5: Purpose, config path, placeholder example, command tables, auth matrix
+- [x] 16. Write `README.md` with the 9 documented sections in order
+  - [x] 16.1 Sections 1–5: Purpose, config path, placeholder example, command tables, auth matrix
     - Section 1 (Purpose): one paragraph naming Lily + Renald
     - Section 2 (Canonical config path): `~/.config/lily/arr.conf` + `--config <path>` override note
     - Section 3 (Placeholder example): embedded code block of `arr.conf.example`; explicit warning `Do not commit a real arr.conf`
     - Section 4 (Per-service command tables): 5 tables (one per service) with columns Command / HTTP method / Path / Notes; 29 rows total
     - Section 5 (Auth matrix): table mapping each service to its auth header and value source
     - _Requirements: REQ-12 AC1_
-  - [ ] 16.2 Sections 6–9: Install/invoke, exit codes, out-of-scope, contributing
+  - [x] 16.2 Sections 6–9: Install/invoke, exit codes, out-of-scope, contributing
     - Section 6: `pip install -e .[dev]` then one example invocation per service
     - Section 7: 5-row exit-code table (1..5) with class and example trigger
     - Section 8: bullet list naming Maintainerr `veto`, Seerr `create-request`, mutations, webhooks, daemon/cache layer
