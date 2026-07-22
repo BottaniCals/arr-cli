@@ -4,7 +4,7 @@ The retry policy is intentionally opt-in (REQ NFR-Reliability): the
 default ``ServiceConfig.retry`` is ``0`` so a single, fast, deterministic
 HTTP attempt is the norm. Operators flip it on per-invocation via
 ``--retry N`` and combine it with ``--deadline`` (or
-``LILY_DEADLINE`` / ``cfg.deadline``) when the service is flaky.
+``ARR_DEADLINE`` / ``cfg.deadline``) when the service is flaky.
 
 Only network-class errors are retried (REQ NFR-Reliability). Auth,
 HTTP-status, and parse failures bubble up immediately:
@@ -138,9 +138,7 @@ def with_retry(
         budget.
     """
     if not isinstance(attempts, int):
-        raise TypeError(
-            f"attempts must be an int; got {type(attempts).__name__}"
-        )
+        raise TypeError(f"attempts must be an int; got {type(attempts).__name__}")
     if attempts < 1:
         raise ValueError(
             f"attempts must be >= 1 (got {attempts}); use 1 for a "
@@ -173,9 +171,7 @@ def with_retry(
                 # final exception.
                 break
 
-            if deadline is not None and (
-                time.monotonic() - start > deadline
-            ):
+            if deadline is not None and (time.monotonic() - start > deadline):
                 # Deadline blown: stop retrying. The structured
                 # message will carry the attempt count so operators
                 # can see why we gave up.
