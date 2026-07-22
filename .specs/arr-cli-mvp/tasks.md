@@ -334,8 +334,8 @@ Conventions used throughout:
     - Section 9: contributing one-liner — `Nothing gets hardcoded. Any new service, command, or config key that hardcodes a URL, key, or user-id will be rejected at review.`
     - _Requirements: REQ-12 AC1, REQ-12 AC3_
 
-- [ ] 17. Write `CHANGELOG.md` with the `## MVP` entry
-  - [ ] 17.1 Author the `## MVP` (0.1.0) section per Documentation Deliverables
+- [x] 17. Write `CHANGELOG.md` with the `## MVP` entry
+  - [x] 17.1 Author the `## MVP` (0.1.0) section per Documentation Deliverables
     - `### Added` subsection: 5 CLI bullets (one per service with command counts), shared `arr_facade` package description, canonical config path note, JSON default + `--human` note, 5-exit-code list, `scripts/smoke.sh` and `scripts/secret-scan` mention
     - `### Out of scope (deferred to tier-2)` subsection: bullets for Maintainerr `veto`, Seerr `create-request`, all mutations, webhooks, daemon/cache, Maintainerr `/api/rules`
     - This MUST be the only section in the file until tier-2 ships
