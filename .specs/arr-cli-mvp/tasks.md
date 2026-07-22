@@ -311,8 +311,8 @@ Conventions used throughout:
     - Exit `1` on any match; exit `0` otherwise
     - _Requirements: NFR-Security (no committed secrets)_
 
-- [ ] 15. Write placeholder-only committed example config validation hook
-  - [ ] 15.1 Add a CI-time check that `arr.conf.example` contains only documented placeholders
+- [x] 15. Write placeholder-only committed example config validation hook
+  - [x] 15.1 Add a CI-time check that `arr.conf.example` contains only documented placeholders
     - Assert no value matches `https?://(?!example\.com)\S+` (real URLs forbidden)
     - Assert every `api_key` value equals `YOUR_API_KEY_HERE`
     - Assert every `user_id` value equals `<user-id>`
