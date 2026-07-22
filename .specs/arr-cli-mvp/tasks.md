@@ -296,17 +296,17 @@ Conventions used throughout:
     - Large-payload cap: assert `transport.get` with `max_items=10_000` warns to stderr and truncates when upstream returns more
     - _Requirements: REQ NFR-Performance (all four budgets)_
 
-- [ ] 14. Create smoke and secret-scan CI scripts
-  - [ ] 14.1 Create `scripts/smoke.sh` exercising one command per service with `--human` and default JSON
+- [x] 14. Create smoke and secret-scan CI scripts
+  - [x] 14.1 Create `scripts/smoke.sh` exercising one command per service with `--human` and default JSON
     - Per service: `jellyfin now`, `radarr calendar`, `sonarr calendar`, `maintainerr health`, `seerr user`
     - Run each twice: once with `--human`, once without (default JSON)
     - Add `--dry-run` mode that asserts per-service command grammar (parses `--help`) without making network calls; CI always uses `--dry-run`
     - Add `--live` mode gated behind `RUN_LIVE=1` env var; non-zero exit on any failure
     - Include the cold-start timing check (`time python -c 'import arr_cli.jellyfin'`) as a smoke step
-    - Make script POSIX-sh compatible (no bash-only features required); use `set -euo pipefail`
+    - Make script POSIX-sh compatible (no bash-only features required); use `set -eu` (no `pipefail` -- historically optional in POSIX)
     - _Requirements: NFR-Usability (smoke test), NFR-Performance (cold-start)_
-  - [ ] 14.2 Create `scripts/secret-scan` greppable script for committed API-key shapes
-    - Grep the working tree (excluding `.git/`, `venv/`, `__pycache__/`) for patterns: `X-Api-Key:\s*\S+`, `api_key\s*[:=]\s*['"]?[A-Za-z0-9]{16,}`, `apikey\s*[:=]\s*['"]?[A-Za-z0-9]{16,}`, `token\s*[:=]\s*['"]?[A-Za-z0-9]{20,}`
+  - [x] 14.2 Create `scripts/secret-scan` greppable script for committed API-key shapes
+    - Grep the working tree (excluding `.git/`, `venv/`, `__pycache__/`) for patterns: `X-Api-Key:\s*\S+`, `api_key\s*[:=]\s*['"]?[A-Za-z0-9_-]{16,}`, `apikey\s*[:=]\s*['"]?[A-Za-z0-9_-]{16,}` (folded into single `api_?key` regex), `token\s*[:=]\s*['"]?[A-Za-z0-9_-]{20,}`
     - Always ignore `arr.conf.example` (placeholder-only) and `tests/` fixture files
     - Exit `1` on any match; exit `0` otherwise
     - _Requirements: NFR-Security (no committed secrets)_
