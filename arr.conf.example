@@ -1,6 +1,6 @@
 # arr.conf.example - placeholder-only example.
 #
-# Copy this file to ~/.config/lily/arr.conf and fill in real values locally.
+# Copy this file to ~/.config/arr/arr.conf and fill in real values locally.
 # NEVER commit a real arr.conf. The real file is gitignored (see .gitignore).
 #
 # Both YAML and TOML are accepted (selected by file extension .yaml/.yml/.toml).

@@ -210,7 +210,7 @@ def build_parser(
         default=None,
         help=(
             "override the canonical config path for this invocation "
-            "(default: ~/.config/lily/arr.conf)"
+            "(default: ~/.config/arr/arr.conf)"
         ),
     )
 
@@ -254,27 +254,21 @@ def build_parser(
         type=float,
         metavar="SECONDS",
         default=DEFAULT_CONNECT_TIMEOUT,
-        help=(
-            f"connect timeout in seconds (default: {DEFAULT_CONNECT_TIMEOUT})"
-        ),
+        help=(f"connect timeout in seconds (default: {DEFAULT_CONNECT_TIMEOUT})"),
     )
     parser.add_argument(
         "--read-timeout",
         type=float,
         metavar="SECONDS",
         default=DEFAULT_READ_TIMEOUT,
-        help=(
-            f"read timeout in seconds (default: {DEFAULT_READ_TIMEOUT})"
-        ),
+        help=(f"read timeout in seconds (default: {DEFAULT_READ_TIMEOUT})"),
     )
     parser.add_argument(
         "--retry",
         type=int,
         metavar="N",
         default=DEFAULT_RETRY,
-        help=(
-            f"retry attempts on network-class errors (default: {DEFAULT_RETRY})"
-        ),
+        help=(f"retry attempts on network-class errors (default: {DEFAULT_RETRY})"),
     )
     parser.add_argument(
         "--deadline",
@@ -282,8 +276,7 @@ def build_parser(
         metavar="SECONDS",
         default=None,
         help=(
-            "absolute wall-clock cap (seconds) for the retry layer "
-            "(default: unbounded)"
+            "absolute wall-clock cap (seconds) for the retry layer (default: unbounded)"
         ),
     )
 
@@ -293,10 +286,7 @@ def build_parser(
         type=int,
         metavar="N",
         default=DEFAULT_LIMIT,
-        help=(
-            f"row-count cap for --human pagination "
-            f"(default: {DEFAULT_LIMIT})"
-        ),
+        help=(f"row-count cap for --human pagination (default: {DEFAULT_LIMIT})"),
     )
 
     return parser
@@ -340,9 +330,7 @@ def _handle_arr_error(exc: ArrError, *, debug: bool) -> int:
     return exc.exit_code
 
 
-def _handle_unexpected_error(
-    exc: Exception, *, service: str, debug: bool
-) -> int:
+def _handle_unexpected_error(exc: Exception, *, service: str, debug: bool) -> int:
     """Translate an unexpected :class:`Exception` into a stderr line + exit code.
 
     The default path emits a single line so a consumer piping stderr
@@ -354,10 +342,7 @@ def _handle_unexpected_error(
     only legitimate way to leave that map is via an
     :class:`ArrError` subclass).
     """
-    _emit_error_line(
-        f"unexpected error in {service}: "
-        f"{exc.__class__.__name__}: {exc}"
-    )
+    _emit_error_line(f"unexpected error in {service}: {exc.__class__.__name__}: {exc}")
     if debug:
         _emit_error_line(traceback.format_exc())
     return 1

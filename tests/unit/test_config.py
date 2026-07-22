@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tomllib
 import unittest
 from pathlib import Path
 
@@ -52,6 +51,7 @@ def _yaml_available() -> bool:
     """
     try:
         import yaml  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -181,7 +181,7 @@ class TestLoadConfigTOML(unittest.TestCase):
         self._env_snapshot = dict(os.environ)
         # Clear all per-service + transport env vars to a known baseline.
         for var in (
-            "LILY_CONFIG_PATH",
+            "ARR_CLI_CONFIG",
             "LILY_CONNECT_TIMEOUT",
             "LILY_READ_TIMEOUT",
             "LILY_RETRY",
@@ -203,7 +203,7 @@ class TestLoadConfigTOML(unittest.TestCase):
     def test_round_trip_all_services(self) -> None:
         # Full 5-service schema: each section parses to AuthConfig.
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://jellyfin.example"
             api_key = "***"
@@ -228,7 +228,7 @@ class TestLoadConfigTOML(unittest.TestCase):
             connect_timeout = 5.0
             read_timeout = 30.0
             retry = 0
-            '''
+            """
         ) as path:
             cfg = load_config(path)
             self.assertIsNotNone(cfg.jellyfin)
@@ -248,11 +248,11 @@ class TestLoadConfigTOML(unittest.TestCase):
         # must not raise — only the CLI surface does, when the service
         # is actually invoked.
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://jellyfin.example"
             api_key = "***"
-            '''
+            """
         ) as path:
             cfg = load_config(path)
             self.assertIsNotNone(cfg.jellyfin)
@@ -265,10 +265,10 @@ class TestLoadConfigTOML(unittest.TestCase):
         # A section with no ``url`` key is treated as absent (slot
         # becomes ``None``) so operators can stage a partial config.
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             api_key = "***"
-            '''
+            """
         ) as path:
             cfg = load_config(path)
             self.assertIsNone(cfg.jellyfin)
@@ -277,11 +277,11 @@ class TestLoadConfigTOML(unittest.TestCase):
         # REQ-1 AC7: env var wins over file value.
         os.environ["LILY_JELLYFIN_URL"] = "https://env.example"
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://file.example"
             api_key = "***"
-            '''
+            """
         ) as path:
             cfg = load_config(path)
             self.assertEqual(cfg.jellyfin.url, "https://env.example")
@@ -289,11 +289,11 @@ class TestLoadConfigTOML(unittest.TestCase):
     def test_env_overrides_api_key(self) -> None:
         os.environ["LILY_JELLYFIN_API_KEY"] = "env-key"
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://file.example"
             api_key = "file-key"
-            '''
+            """
         ) as path:
             cfg = load_config(path)
             self.assertEqual(cfg.jellyfin.api_key, "env-key")
@@ -301,12 +301,12 @@ class TestLoadConfigTOML(unittest.TestCase):
     def test_env_overrides_user_id(self) -> None:
         os.environ["LILY_JELLYFIN_USER_ID"] = "env-user"
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://file.example"
             api_key = "x"
             user_id = "file-user"
-            '''
+            """
         ) as path:
             cfg = load_config(path)
             self.assertEqual(cfg.jellyfin.user_id, "env-user")
@@ -317,13 +317,13 @@ class TestLoadConfigTOML(unittest.TestCase):
         os.environ["LILY_RETRY"] = "3"
         os.environ["LILY_DEADLINE"] = "12.5"
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://example.com"
             api_key = "x"
             connect_timeout = 5.0
             read_timeout = 30.0
-            '''
+            """
         ) as path:
             cfg = load_config(path)
             self.assertEqual(cfg.connect_timeout, 1.5)
@@ -336,11 +336,11 @@ class TestLoadConfigTOML(unittest.TestCase):
         # by tests and tools that want to inspect the file verbatim).
         os.environ["LILY_JELLYFIN_URL"] = "https://env.example"
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://file.example"
             api_key = "x"
-            '''
+            """
         ) as path:
             cfg = load_config(path, env_overrides=False)
             self.assertEqual(cfg.jellyfin.url, "https://file.example")
@@ -357,7 +357,7 @@ class TestLoadConfigYAML(unittest.TestCase):
 
     def setUp(self) -> None:
         self._env_snapshot = dict(os.environ)
-        for var in ("LILY_CONFIG_PATH",):
+        for var in ("ARR_CLI_CONFIG",):
             os.environ.pop(var, None)
 
     def tearDown(self) -> None:
@@ -431,21 +431,21 @@ class TestLoadConfigMissingFile(unittest.TestCase):
         self.assertEqual(ctx.exception.exit_code, 1)
         self.assertIn(str(bogus), ctx.exception.message)
 
-    def test_default_path_resolved_via_lily_config_path(self) -> None:
-        # ``LILY_CONFIG_PATH`` overrides the default canonical path.
+    def test_default_path_resolved_via_ARR_CLI_CONFIG(self) -> None:
+        # ``ARR_CLI_CONFIG`` overrides the default canonical path.
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://example.com"
             api_key = "x"
-            '''
+            """
         ) as path:
-            os.environ["LILY_CONFIG_PATH"] = str(path)
+            os.environ["ARR_CLI_CONFIG"] = str(path)
             try:
                 cfg = load_config()  # no explicit path
                 self.assertEqual(cfg.jellyfin.url, "https://example.com")
             finally:
-                os.environ.pop("LILY_CONFIG_PATH", None)
+                os.environ.pop("ARR_CLI_CONFIG", None)
 
 
 class TestLoadConfigPermissions(unittest.TestCase):
@@ -454,11 +454,11 @@ class TestLoadConfigPermissions(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "POSIX-only")
     def test_world_readable_rejected(self) -> None:
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://example.com"
             api_key = "x"
-            '''
+            """
         ) as path:
             os.chmod(path, 0o644)  # group + world readable
             try:
@@ -472,11 +472,11 @@ class TestLoadConfigPermissions(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "POSIX-only")
     def test_group_readable_rejected(self) -> None:
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://example.com"
             api_key = "x"
-            '''
+            """
         ) as path:
             os.chmod(path, 0o640)  # group readable
             try:
@@ -491,11 +491,11 @@ class TestLoadConfigPermissions(unittest.TestCase):
         # 0600 (and 0700, since the loader only forbids group/world)
         # must parse cleanly.
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://example.com"
             api_key = "x"
-            '''
+            """
         ) as path:
             os.chmod(path, 0o600)
             cfg = load_config(path)
@@ -512,33 +512,33 @@ class TestURLValidation(unittest.TestCase):
 
     def test_https_accepted(self) -> None:
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https://example.com"
             api_key = "x"
-            '''
+            """
         ) as path:
             cfg = load_config(path)
             self.assertEqual(cfg.jellyfin.url, "https://example.com")
 
     def test_http_accepted(self) -> None:
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "http://example.com"
             api_key = "x"
-            '''
+            """
         ) as path:
             cfg = load_config(path)
             self.assertEqual(cfg.jellyfin.url, "http://example.com")
 
     def test_ftp_rejected(self) -> None:
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "ftp://example.com"
             api_key = "x"
-            '''
+            """
         ) as path:
             with self.assertRaises(ConfigError) as ctx:
                 load_config(path)
@@ -547,11 +547,11 @@ class TestURLValidation(unittest.TestCase):
 
     def test_empty_url_rejected(self) -> None:
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = ""
             api_key = "x"
-            '''
+            """
         ) as path:
             with self.assertRaises(ConfigError) as ctx:
                 load_config(path)
@@ -560,11 +560,11 @@ class TestURLValidation(unittest.TestCase):
     def test_non_string_url_rejected(self) -> None:
         # TOML/HTTP coercion does not apply — a number is not a URL.
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = 12345
             api_key = "x"
-            '''
+            """
         ) as path:
             with self.assertRaises(ConfigError) as ctx:
                 load_config(path)
@@ -574,11 +574,11 @@ class TestURLValidation(unittest.TestCase):
     def test_url_with_empty_host_rejected(self) -> None:
         # ``scheme://path-only`` parses with no hostname.
         with tempfile_TOML(
-            '''
+            """
             [jellyfin]
             url = "https:///no-host"
             api_key = "x"
-            '''
+            """
         ) as path:
             with self.assertRaises(ConfigError) as ctx:
                 load_config(path)
@@ -592,9 +592,9 @@ class TestStructuralValidation(unittest.TestCase):
         # A scalar / list / number where a mapping is expected → fail
         # closed with ConfigError.
         with tempfile_TOML(
-            '''
+            """
             jellyfin = "not-a-mapping"
-            '''
+            """
         ) as path:
             with self.assertRaises(ConfigError) as ctx:
                 load_config(path)
@@ -603,11 +603,11 @@ class TestStructuralValidation(unittest.TestCase):
 
     def test_auth_enabled_must_be_bool(self) -> None:
         with tempfile_TOML(
-            '''
+            """
             [maintainerr]
             url = "https://example.com"
             auth_enabled = "true"
-            '''
+            """
         ) as path:
             with self.assertRaises(ConfigError) as ctx:
                 load_config(path)
@@ -631,12 +631,12 @@ class TestStructuralValidation(unittest.TestCase):
 
     def test_extra_must_be_mapping(self) -> None:
         with tempfile_TOML(
-            '''
+            """
             [maintainerr]
             url = "https://example.com"
             auth_enabled = true
             extra = "not-a-mapping"
-            '''
+            """
         ) as path:
             with self.assertRaises(ConfigError) as ctx:
                 load_config(path)

@@ -37,7 +37,7 @@ Radarr, Sonarr, Maintainerr, and Seerr/Overseerr. Every command is an HTTP
     `--quiet`, `--human`/`-h`, `--connect-timeout`, `--read-timeout`,
     `--retry`, `--deadline`, and `--limit` flags.
   - `retry.py` — optional exponential-backoff retry layer for `--retry N`.
-- **Single canonical config** at `~/.config/lily/arr.conf` accepting YAML or
+- **Single canonical config** at `~/.config/arr/arr.conf` accepting YAML or
   TOML by extension and by leading-byte sniff; local copies are gitignored
   and `arr.conf.example` ships with placeholder-only values.
 - **Uniform output contract:** verbatim service JSON on stdout by default;
@@ -86,6 +86,3 @@ Radarr, Sonarr, Maintainerr, and Seerr/Overseerr. Every command is an HTTP
 - **Integration tests** against a live operator instance — opt-in via
   `--run-integration` and gated behind `ARR_LIVE_URL` / `ARR_LIVE_API_KEY`;
   never runs in default CI.
-
-[Unreleased]: https://example.com/arr-cli/compare/v0.1.0...HEAD
-[MVP]: https://example.com/arr-cli/releases/tag/v0.1.0

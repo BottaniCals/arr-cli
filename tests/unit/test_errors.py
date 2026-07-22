@@ -105,12 +105,12 @@ class TestConfigError(unittest.TestCase):
         exc = ConfigError(
             "config",
             "load",
-            "config file not found: ~/.config/lily/arr.conf",
+            "config file not found: ~/.config/arr/arr.conf",
         )
         self.assertEqual(
             str(exc),
             "service=config op=load "
-            "message=config file not found: ~/.config/lily/arr.conf",
+            "message=config file not found: ~/.config/arr/arr.conf",
         )
 
     def test_str_does_not_contain_status_token(self) -> None:

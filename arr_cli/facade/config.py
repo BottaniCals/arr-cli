@@ -31,7 +31,7 @@ import stat
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Mapping
 from urllib.parse import urlparse
 
 # ``yaml`` is imported lazily inside :func:`_parse_yaml` so a host
@@ -66,8 +66,8 @@ DEFAULT_READ_TIMEOUT: float = 30.0
 DEFAULT_RETRY: int = 0
 
 #: Canonical config path (REQ-1 AC1). Overridable per invocation via
-#: ``--config`` or globally via ``LILY_CONFIG_PATH``.
-DEFAULT_CONFIG_PATH = Path("~/.config/lily/arr.conf")
+#: ``--config`` or globally via ``ARR_CLI_CONFIG``.
+DEFAULT_CONFIG_PATH = Path("~/.config/arr/arr.conf")
 
 #: Tuple of supported service names. The loader maps each to a top-level
 #: key in the parsed config mapping (``jellyfin:`` in YAML,
@@ -104,8 +104,9 @@ class AuthConfig:
     #: Free-form extra headers (Maintainerr auth-proxy use case).
     extra: Mapping[str, str] = field(default_factory=dict)
 
-    def __init__(self, url, ak=None, user_id=None, auth_enabled=False,
-                 extra=None, api_key=None):
+    def __init__(
+        self, url, ak=None, user_id=None, auth_enabled=False, extra=None, api_key=None
+    ):
         # ``api_key`` is the canonical name documented in design.md;
         # ``ak`` is the internal field. We accept either spelling on
         # construction so call-sites can use the documented keyword
@@ -162,14 +163,14 @@ class ServiceConfig:
 
 
 def _resolve_config_path(path):
-    """Return the absolute config path, honouring ``LILY_CONFIG_PATH``.
+    """Return the absolute config path, honouring ``ARR_CLI_CONFIG``.
 
     Precedence chain (REQ-1 AC1): ``--config`` flag >
-    ``LILY_CONFIG_PATH`` env > :data:`DEFAULT_CONFIG_PATH`.
+    ``ARR_CLI_CONFIG`` env > :data:`DEFAULT_CONFIG_PATH`.
     """
     if path is not None:
         return Path(path).expanduser()
-    env_override = os.environ.get("LILY_CONFIG_PATH")
+    env_override = os.environ.get("ARR_CLI_CONFIG")
     if env_override:
         return Path(env_override).expanduser()
     return DEFAULT_CONFIG_PATH.expanduser()
@@ -310,10 +311,7 @@ def _validate_url(url, *, service):
         raise ConfigError(
             "config",
             "load",
-            (
-                f"{service}.url must be http(s) with a non-empty host; "
-                f"got {url!r}"
-            ),
+            (f"{service}.url must be http(s) with a non-empty host; got {url!r}"),
         )
     return url
 
@@ -382,10 +380,7 @@ def _coerce_auth_section(raw, *, service):
         extra_val = {}
     elif isinstance(extra_raw, Mapping):
         try:
-            extra_val = {
-                str(key): str(value)
-                for key, value in extra_raw.items()
-            }
+            extra_val = {str(key): str(value) for key, value in extra_raw.items()}
         except Exception as exc:
             raise ConfigError(
                 "config",
@@ -396,8 +391,7 @@ def _coerce_auth_section(raw, *, service):
         raise ConfigError(
             "config",
             "load",
-            f"{service}.extra must be a mapping; "
-            f"got {type(extra_raw).__name__}",
+            f"{service}.extra must be a mapping; got {type(extra_raw).__name__}",
         )
 
     return AuthConfig(
@@ -577,7 +571,7 @@ def load_config(path=None, *, env_overrides=True):
     ----------
     path:
         Explicit config file path. ``None`` (the default) falls back to
-        ``LILY_CONFIG_PATH`` and finally to
+        ``ARR_CLI_CONFIG`` and finally to
         :data:`DEFAULT_CONFIG_PATH` -- see REQ-1 AC1.
     env_overrides:
         When ``True`` (default), every ``LILY_<SERVICE>_*`` and
@@ -621,10 +615,7 @@ def load_config(path=None, *, env_overrides=True):
         raise ConfigError(
             "config",
             "load",
-            (
-                f"unknown config format for {resolved}; "
-                "expected .toml, .yaml, or .yml"
-            ),
+            (f"unknown config format for {resolved}; expected .toml, .yaml, or .yml"),
         )
 
     sections = {}
@@ -642,9 +633,7 @@ def load_config(path=None, *, env_overrides=True):
             raw["connect_timeout"], field_name="connect_timeout"
         )
     if "read_timeout" in raw:
-        read_timeout = _coerce_timeout(
-            raw["read_timeout"], field_name="read_timeout"
-        )
+        read_timeout = _coerce_timeout(raw["read_timeout"], field_name="read_timeout")
     if "retry" in raw:
         retry = _coerce_retry(raw["retry"], field_name="retry")
     if "deadline" in raw:
@@ -675,9 +664,7 @@ def load_config(path=None, *, env_overrides=True):
         )
     env_read = os.environ.get("LILY_READ_TIMEOUT")
     if env_read is not None:
-        read_timeout = _coerce_timeout(
-            env_read, field_name="LILY_READ_TIMEOUT"
-        )
+        read_timeout = _coerce_timeout(env_read, field_name="LILY_READ_TIMEOUT")
     env_retry = os.environ.get("LILY_RETRY")
     if env_retry is not None:
         retry = _coerce_retry(env_retry, field_name="LILY_RETRY")
