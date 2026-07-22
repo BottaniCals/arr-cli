@@ -51,6 +51,7 @@ from arr_cli.facade.errors import (
     NetworkError,
     ParseError,
 )
+from arr_cli.facade.retry import with_retry
 
 __all__ = [
     "get",
@@ -401,104 +402,128 @@ def get(
     connect = cfg.connect_timeout if connect_timeout is None else connect_timeout
     read = cfg.read_timeout if read_timeout is None else read_timeout
 
-    session = _ensure_session()
-    try:
+    # When ``cfg.retry`` is non-zero we wrap the HTTP call in the
+    # retry layer so transient network failures are absorbed (REQ
+    # NFR-Reliability). ``cfg.deadline`` provides the wall-clock cap.
+    # When ``cfg.retry == 0`` the layer is skipped entirely so the
+    # default CLI cold-start stays under the 2-second budget
+    # (NFR-Performance cold-start budget). The retry policy only
+    # re-attempts :class:`NetworkError`; auth, HTTP-status, and
+    # parse failures bubble up unchanged so operators see a stable
+    # signal without burning budget on deterministic errors.
+    attempts = (cfg.retry or 0) + 1
+    deadline = cfg.deadline
+
+    def _do_request() -> Any:
+        session = _ensure_session()
         try:
-            response = session.get(
-                url,
-                params=encoded_params,
-                headers=headers,
-                timeout=(connect, read),
-            )
-        except ImportError as exc:  # pragma: no cover - safety net
-            raise AuthError(
-                service,
-                "transport",
-                f"requests is required for HTTP transport: {exc}",
-            ) from exc
-        except Exception as exc:
-            # Catch-all covers every requests exception plus any
-            # unexpected socket-level failure. The structured message
-            # names the underlying class so operators can see exactly
-            # which transport layer failed (REQ-4 AC1).
-            raise NetworkError(
-                service,
-                "request",
-                (
-                    f"{service}: transport failure ({exc.__class__.__name__}): "
-                    f"{exc}"
-                ),
+            try:
+                response = session.get(
+                    url,
+                    params=encoded_params,
+                    headers=headers,
+                    timeout=(connect, read),
+                )
+            except ImportError as exc:  # pragma: no cover - safety net
+                raise AuthError(
+                    service,
+                    "transport",
+                    f"requests is required for HTTP transport: {exc}",
+                ) from exc
+            except Exception as exc:
+                # Catch-all covers every requests exception plus any
+                # unexpected socket-level failure. The structured message
+                # names the underlying class so operators can see exactly
+                # which transport layer failed (REQ-4 AC1).
+                raise NetworkError(
+                    service,
+                    "request",
+                    (
+                        f"{service}: transport failure ({exc.__class__.__name__}): "
+                        f"{exc}"
+                    ),
+                    url=url,
+                ) from exc
+        finally:
+            # Session is per-call (REQ-5 AC1): close it eagerly so sockets
+            # don't linger until the interpreter's GC runs.
+            try:
+                session.close()
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+        if debug:
+            _record_debug(
+                service=service,
+                op=path,
                 url=url,
-            ) from exc
-    finally:
-        # Session is per-call (REQ-5 AC1): close it eagerly so sockets
-        # don't linger until the interpreter's GC runs.
-        try:
-            session.close()
-        except Exception:  # pragma: no cover - defensive
-            pass
-
-    if debug:
-        _record_debug(
-            service=service,
-            op=path,
-            url=url,
-            headers=headers,
-            response=response,
-        )
-
-    status = getattr(response, "status_code", 0)
-    if status in {401, 403}:
-        guidance = ""
-        if service == "maintainerr":
-            guidance = (
-                "maintainerr: 401/403 received — set auth.enabled=true "
-                "in arr.conf and restart"
+                headers=headers,
+                response=response,
             )
-        excerpt = _body_excerpt(getattr(response, "content", b""))
-        message = (
-            f"{service}: {status} {getattr(response, 'reason', '')} "
-            f"for {path}; check {service}.{AK_LITERAL} in arr.conf"
-        )
-        if guidance:
-            message = f"{guidance} — {message}"
-        if excerpt:
-            message = f"{message}; body={excerpt!r}"
-        raise AuthError(service, path, message)
 
-    if not (200 <= status < 300):
-        excerpt = _body_excerpt(getattr(response, "content", b""))
-        message = (
-            f"{service}: HTTP {status} for {path}; body={excerpt!r}"
-        )
-        raise HttpError(service, path, message, status=status)
+        status = getattr(response, "status_code", 0)
+        if status in {401, 403}:
+            guidance = ""
+            if service == "maintainerr":
+                guidance = (
+                    "maintainerr: 401/403 received — set auth.enabled=true "
+                    "in arr.conf and restart"
+                )
+            excerpt = _body_excerpt(getattr(response, "content", b""))
+            message = (
+                f"{service}: {status} {getattr(response, 'reason', '')} "
+                f"for {path}; check {service}.{AK_LITERAL} in arr.conf"
+            )
+            if guidance:
+                message = f"{guidance} — {message}"
+            if excerpt:
+                message = f"{message}; body={excerpt!r}"
+            raise AuthError(service, path, message)
 
-    raw_body = getattr(response, "content", b"")
-    if isinstance(raw_body, bytes):
-        body_bytes = raw_body
-    else:
-        body_bytes = str(raw_body).encode("utf-8", errors="replace")
+        if not (200 <= status < 300):
+            excerpt = _body_excerpt(getattr(response, "content", b""))
+            message = (
+                f"{service}: HTTP {status} for {path}; body={excerpt!r}"
+            )
+            raise HttpError(service, path, message, status=status)
 
-    if not body_bytes:
-        # Empty body — treat as a successful empty payload. The
-        # ``/api/health/ready`` endpoint on Maintainerr returns a bare
-        # boolean which arrives here already-decoded, but a 204-style
-        # empty body would also reach this branch.
-        return None
+        raw_body = getattr(response, "content", b"")
+        if isinstance(raw_body, bytes):
+            body_bytes = raw_body
+        else:
+            body_bytes = str(raw_body).encode("utf-8", errors="replace")
 
-    try:
-        return json.loads(body_bytes)
-    except json.JSONDecodeError as exc:
-        offset = _find_first_non_json_byte(body_bytes)
-        raise ParseError(
-            service,
-            path,
-            (
-                f"{service}: invalid JSON at byte offset "
-                f"{offset}: {exc.msg}"
-            ),
-            byte_offset=offset,
-        ) from exc
+        if not body_bytes:
+            # Empty body — treat as a successful empty payload. The
+            # ``/api/health/ready`` endpoint on Maintainerr returns a bare
+            # boolean which arrives here already-decoded, but a 204-style
+            # empty body would also reach this branch.
+            return None
+
+        try:
+            return json.loads(body_bytes)
+        except json.JSONDecodeError as exc:
+            offset = _find_first_non_json_byte(body_bytes)
+            raise ParseError(
+                service,
+                path,
+                (
+                    f"{service}: invalid JSON at byte offset "
+                    f"{offset}: {exc.msg}"
+                ),
+                byte_offset=offset,
+            ) from exc
+
+    if attempts <= 1:
+        # Default cold-start path: no retry layer, no extra closure.
+        # Preserves the <= 2 s cold-start budget (NFR-Performance).
+        return _do_request()
+
+    return with_retry(
+        _do_request,
+        attempts=attempts,
+        deadline=deadline,
+    )
 
 
 def iter_auth_header_names(services: Iterable[str]) -> dict[str, str]:
