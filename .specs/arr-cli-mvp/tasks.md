@@ -341,8 +341,8 @@ Conventions used throughout:
     - This MUST be the only section in the file until tier-2 ships
     - _Requirements: REQ-12 AC2_
 
-- [ ] 18. Wire CI hookup (Makefile or `make ci` target) — deferred but stubbed
-  - [ ] 18.1 Create `Makefile` with `ci` target and `help` default target
+- [x] 18. Wire CI hookup (Makefile or `make ci` target) — deferred but stubbed
+  - [x] 18.1 Create `Makefile` with `ci` target and `help` default target
     - `ci`: runs `pytest tests/unit`, `scripts/secret-scan`, `scripts/smoke.sh --dry-run` in sequence; non-zero exit on any failure
     - `test`: just `pytest tests/unit`
     - `smoke-dry`: just `scripts/smoke.sh --dry-run`
