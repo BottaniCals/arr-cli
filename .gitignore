@@ -1,0 +1,52 @@
+# --- Python build / venv artefacts ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+.pyc
+src/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Test / tool caches ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# --- Editor / OS noise ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- User-local config files (keep arr.conf.example committed) ---
+# REQ-1 AC5: never commit a user's real config. Either extension is supported.
+arr.conf
+arr.conf.local
+arr.local.yaml
+arr.local.yml
+arr.local.toml
+arr.local.conf
+
+# Allow the placeholder example explicitly (gitignore negation).
+# `arr.conf.example` is intentionally NOT excluded and ships with the repo.
+!arr.conf.example
+
+# --- Local-only lock / scratch files ---
+*.lock
+*.pid
