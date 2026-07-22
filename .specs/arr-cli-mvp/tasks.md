@@ -288,8 +288,8 @@ Conventions used throughout:
     - Tests: each command hits the right path; user command falls back from `/api/v1/user/me` 404 to `/auth/me` 200; user command returns exit 4 when both 404
     - _Requirements: REQ-10 AC1-7, REQ-11 AC4_
 
-- [ ] 13. Enforce performance budgets via unit tests
-  - [ ] 13.1 Create `tests/unit/test_perf_budgets.py` asserting cold-start and memory caps
+- [x] 13. Enforce performance budgets via unit tests
+  - [x] 13.1 Create `tests/unit/test_perf_budgets.py` asserting cold-start and memory caps
     - Cold-start: `time.monotonic()` before and after `python -c "import arr_cli.jellyfin"` (subprocess); assert elapsed ≤ 2.0s on a warm Python install
     - Memory cap: instantiate `human()` against a synthetic 10,000-item payload; snapshot `tracemalloc` peak; assert ≤ 80 MiB
     - Human-mode latency: time `human()` against a 1,000-item payload; assert ≤ 1.5s exclusive of network
