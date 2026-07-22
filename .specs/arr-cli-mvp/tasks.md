@@ -350,12 +350,14 @@ Conventions used throughout:
     - `help`: print available targets with one-line descriptions
     - _Requirements: design.md "CI hooks (deferred to tasks phase)"_
 
-- [ ] 19. Add integration test scaffolding (opt-in via `--run-integration`)
-  - [ ] 19.1 Create `tests/integration/test_live_endpoints.py` with a guard for the live-run flag
+- [x] 19. Add integration test scaffolding (opt-in via `--run-integration`)
+  - [x] 19.1 Create `tests/integration/test_live_endpoints.py` with a guard for the live-run flag
     - Module-level guard: `pytestmark = pytest.mark.skipif("--run-integration" not in sys.argv, reason="opt-in")` so the file is skipped in default CI
     - One test per service hitting the documented endpoint with `responses` mocked to assert URL/header shape (so the test still passes without network when run with `--run-integration`)
     - Document at the top of the file: set `ARR_LIVE_URL` and `ARR_LIVE_API_KEY` env vars to enable true network calls
     - _Requirements: design.md `tests/integration/` placeholder_
+
+> **Implementation note (2026-07-22):** task 19 shipped as opt-in integration test scaffolding. The runtime in this MVP does not have pytest installed; the skip decorator is therefore implemented in `tests/integration/conftest.py` as :func:`skip_unless_run_integration` using stdlib :func:`unittest.skipUnless` so the same opt-in flag (``--run-integration``) works under both pytest and the unittest runner. The unittest runner additionally honours the ``ARR_RUN_INTEGRATION=1`` env var because unittest does not natively parse ``--key=value`` style arguments. The example integration test lives at `tests/integration/test_smoke_integration.py` per the orchestrator's directive (ONE example test, not one-per-service as the original spec line implied) and demonstrates the full opt-in wiring against a live service URL. The `Makefile` gained an opt-in `integration-test` target; the `README` gained a paragraph in section 6 documenting the opt-in flag and the `ARR_LIVE_URL` / `ARR_LIVE_API_KEY` / `ARR_LIVE_USER_ID` env vars.
 
 - [ ] 20. Final verification pass against the requirements checklist
   - [ ] 20.1 Walk every REQ-1..REQ-12 AC and confirm a task/subtask cites it

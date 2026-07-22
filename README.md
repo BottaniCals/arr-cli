@@ -255,6 +255,22 @@ Run `scripts/smoke.sh --dry-run` for a no-network grammar check across all
 five CLIs; `scripts/smoke.sh --live` (gated behind `RUN_LIVE=1`) hits the
 operator's instance with one command per service.
 
+Integration tests under `tests/integration/` exercise the CLIs against a
+live service instance. They are **skipped by default** and only run when
+the test runner is invoked with `--run-integration` (pytest) or when
+`ARR_RUN_INTEGRATION=1` is exported (unittest). To run them against your
+own instance, export `ARR_LIVE_URL` and the per-service credentials
+first:
+
+```bash
+export ARR_LIVE_URL=https://jellyfin.example.com
+export ARR_LIVE_API_KEY=...
+export ARR_LIVE_USER_ID=...   # jellyfin endpoints that need user_id
+pytest tests/integration/ --run-integration
+# or, with the Makefile:
+make integration-test
+```
+
 Universal flags (every CLI):
 
 | Flag                     | Description                                                          |

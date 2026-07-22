@@ -69,13 +69,14 @@ SH      ?= sh
 PROJECT_ROOT := $(abspath $(CURDIR))
 SCRIPTS_DIR  := $(PROJECT_ROOT)/scripts
 TESTS_DIR    := $(PROJECT_ROOT)/tests/unit
+INTEG_DIR    := $(PROJECT_ROOT)/tests/integration
 PY_SRC_DIRS  := $(PROJECT_ROOT)/arr_cli $(PROJECT_ROOT)/tests
 
 # --- phony declarations -----------------------------------------------------
 # Everything in this Makefile is a recipe, not a file target. Declaring
 # them .PHONY keeps `make` from getting confused if a stray file
 # named `test` or `ci` ever appears in the tree.
-.PHONY: help test lint secret-scan smoke smoke-dry smoke-live ci
+.PHONY: help test integration-test lint secret-scan smoke smoke-dry smoke-live ci
 
 # --- default target ---------------------------------------------------------
 # `make` with no args prints the help banner so the first thing an
@@ -86,6 +87,7 @@ help:
 	@printf 'Available targets:\n'
 	@printf '  help           Print this help banner (default target)\n'
 	@printf '  test           Run the unit test suite (pytest tests/unit)\n'
+	@printf '  integration-test  Run the opt-in integration suite (pytest tests/integration --run-integration)\n'
 	@printf '  lint           Byte-compile every Python file under arr_cli/ and tests/\n'
 	@printf '  secret-scan    Run scripts/secret-scan (greps for committed API-key shapes)\n'
 	@printf '  smoke          Run scripts/smoke.sh (defaults to --dry-run; CI safe)\n'
@@ -100,6 +102,18 @@ help:
 test:
 	@printf 'make: [test] running pytest tests/unit\n'
 	@$(PYTEST) $(TESTS_DIR)
+
+# --- integration-test -------------------------------------------------------
+# Opt-in integration suite (task 19). Every test under `tests/integration/`
+# is decorated with ``skip_unless_run_integration`` and is SKIPPED by
+# default; passing ``--run-integration`` to pytest unmasks them. This
+# target is intentionally NOT chained into ``make ci`` because CI never
+# reaches the operator's live services without an explicit opt-in.
+# Operators running this target locally are expected to export
+# ``ARR_LIVE_URL`` (and the per-service credentials) before invoking it.
+integration-test:
+	@printf 'make: [integration-test] running pytest tests/integration --run-integration\n'
+	@$(PYTEST) $(INTEG_DIR) --run-integration
 
 # --- lint -------------------------------------------------------------------
 # Byte-compile every Python file under `arr_cli/` and `tests/`. This
