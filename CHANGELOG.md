@@ -26,7 +26,7 @@ Radarr, Sonarr, Maintainerr, and Seerr/Overseerr. Every command is an HTTP
     `available <query>`, `media <tmdbId>`, `user`.
 - **Shared facade package** (`arr_cli.facade`) providing:
   - `config.py` — YAML/TOML config loader with POSIX permission check,
-    URL validation, and `LILY_*` environment-variable overrides.
+    URL validation, and `ARR_*` environment-variable overrides.
   - `transport.py` — single HTTP entry point with per-service auth-header
     injection, percent-encoded params, and timeout enforcement.
   - `errors.py` — `ArrError` hierarchy with the five documented exit codes

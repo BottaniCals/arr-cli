@@ -142,7 +142,7 @@ is almost always `arr_cli/facade/`.
 > hardcodes a URL, key, or user-id will be rejected at review.
 
 1. **Config path is canonical:** `~/.config/arr/arr.conf`. Per-invocation
-   override: `--config <path>`. Env-var overrides follow the `LILY_*`
+   override: `--config <path>`. Env-var overrides follow the `ARR_*`
    convention documented in `arr.conf.example`.
 2. **File permissions:** POSIX mode must be `0600` or stricter; the CLI
    refuses to read a group/world-readable file with exit code `1`.

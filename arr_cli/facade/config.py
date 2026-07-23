@@ -426,13 +426,13 @@ def _replace_service(cfg, service, auth):
 
 
 def _apply_service_env_overrides(cfg, *, service):
-    """Layer ``LILY_<SERVICE>_*`` overrides on top of the parsed config.
+    """Layer ``ARR_<SERVICE>_*`` overrides on top of the parsed config.
 
     Honours REQ-1 AC7. The mapping is intentionally explicit so the
     surface is auditable at review time.
     """
     env = os.environ
-    prefix = f"LILY_{service.upper()}"
+    prefix = f"ARR_{service.upper()}"
     current = getattr(cfg, SERVICE_FIELD[service])
 
     # Bootstrap a fresh AuthConfig if the section was absent in the file.
@@ -574,9 +574,9 @@ def load_config(path=None, *, env_overrides=True):
         ``ARR_CLI_CONFIG`` and finally to
         :data:`DEFAULT_CONFIG_PATH` -- see REQ-1 AC1.
     env_overrides:
-        When ``True`` (default), every ``LILY_<SERVICE>_*`` and
-        ``LILY_{CONNECT,READ}_TIMEOUT`` / ``LILY_RETRY`` /
-        ``LILY_DEADLINE`` env var is layered on top of the parsed file
+        When ``True`` (default), every ``ARR_<SERVICE>_*`` and
+        ``ARR_{CONNECT,READ}_TIMEOUT`` / ``ARR_RETRY`` /
+        ``ARR_DEADLINE`` env var is layered on top of the parsed file
         (REQ-1 AC7). Set to ``False`` for tests / tools that want the
         file content alone.
 
@@ -657,20 +657,18 @@ def load_config(path=None, *, env_overrides=True):
     for service in SERVICES:
         cfg = _apply_service_env_overrides(cfg, service=service)
 
-    env_connect = os.environ.get("LILY_CONNECT_TIMEOUT")
+    env_connect = os.environ.get("ARR_CONNECT_TIMEOUT")
     if env_connect is not None:
-        connect_timeout = _coerce_timeout(
-            env_connect, field_name="LILY_CONNECT_TIMEOUT"
-        )
-    env_read = os.environ.get("LILY_READ_TIMEOUT")
+        connect_timeout = _coerce_timeout(env_connect, field_name="ARR_CONNECT_TIMEOUT")
+    env_read = os.environ.get("ARR_READ_TIMEOUT")
     if env_read is not None:
-        read_timeout = _coerce_timeout(env_read, field_name="LILY_READ_TIMEOUT")
-    env_retry = os.environ.get("LILY_RETRY")
+        read_timeout = _coerce_timeout(env_read, field_name="ARR_READ_TIMEOUT")
+    env_retry = os.environ.get("ARR_RETRY")
     if env_retry is not None:
-        retry = _coerce_retry(env_retry, field_name="LILY_RETRY")
-    env_deadline = os.environ.get("LILY_DEADLINE")
+        retry = _coerce_retry(env_retry, field_name="ARR_RETRY")
+    env_deadline = os.environ.get("ARR_DEADLINE")
     if env_deadline is not None:
-        deadline = _coerce_deadline(env_deadline, field_name="LILY_DEADLINE")
+        deadline = _coerce_deadline(env_deadline, field_name="ARR_DEADLINE")
 
     if (
         connect_timeout != cfg.connect_timeout

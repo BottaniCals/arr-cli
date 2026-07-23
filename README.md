@@ -45,7 +45,7 @@ jellyfin now --config /path/to/arr.local.yaml
 ```
 
 Env-var overrides are also honored (see `arr.conf.example` for the full list
-of `LILY_*` keys). The CLI will:
+of `ARR_*` keys). The CLI will:
 
 - Exit non-zero with a stderr message naming the canonical path if the config
   is missing.

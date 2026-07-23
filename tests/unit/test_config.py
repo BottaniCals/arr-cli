@@ -177,20 +177,20 @@ class TestLoadConfigTOML(unittest.TestCase):
     """``load_config`` against tmp TOML files (REQ-1 AC3, AC4, AC7)."""
 
     def setUp(self) -> None:
-        # Snapshot env so each test can mutate ``LILY_*`` without leaks.
+        # Snapshot env so each test can mutate ``ARR_*`` without leaks.
         self._env_snapshot = dict(os.environ)
         # Clear all per-service + transport env vars to a known baseline.
         for var in (
             "ARR_CLI_CONFIG",
-            "LILY_CONNECT_TIMEOUT",
-            "LILY_READ_TIMEOUT",
-            "LILY_RETRY",
-            "LILY_DEADLINE",
+            "ARR_CONNECT_TIMEOUT",
+            "ARR_READ_TIMEOUT",
+            "ARR_RETRY",
+            "ARR_DEADLINE",
         ):
             os.environ.pop(var, None)
         for service in ("JELLYFIN", "RADARR", "SONARR", "MAINTAINERR", "SEERR"):
             for suffix in ("URL", "API_KEY", "USER_ID"):
-                os.environ.pop(f"LILY_{service}_{suffix}", None)
+                os.environ.pop(f"ARR_{service}_{suffix}", None)
 
     def tearDown(self) -> None:
         # Restore the env so the next test starts clean.
@@ -275,7 +275,7 @@ class TestLoadConfigTOML(unittest.TestCase):
 
     def test_env_overrides_url(self) -> None:
         # REQ-1 AC7: env var wins over file value.
-        os.environ["LILY_JELLYFIN_URL"] = "https://env.example"
+        os.environ["ARR_JELLYFIN_URL"] = "https://env.example"
         with tempfile_TOML(
             """
             [jellyfin]
@@ -287,7 +287,7 @@ class TestLoadConfigTOML(unittest.TestCase):
             self.assertEqual(cfg.jellyfin.url, "https://env.example")
 
     def test_env_overrides_api_key(self) -> None:
-        os.environ["LILY_JELLYFIN_API_KEY"] = "env-key"
+        os.environ["ARR_JELLYFIN_API_KEY"] = "env-key"
         with tempfile_TOML(
             """
             [jellyfin]
@@ -299,7 +299,7 @@ class TestLoadConfigTOML(unittest.TestCase):
             self.assertEqual(cfg.jellyfin.api_key, "env-key")
 
     def test_env_overrides_user_id(self) -> None:
-        os.environ["LILY_JELLYFIN_USER_ID"] = "env-user"
+        os.environ["ARR_JELLYFIN_USER_ID"] = "env-user"
         with tempfile_TOML(
             """
             [jellyfin]
@@ -312,10 +312,10 @@ class TestLoadConfigTOML(unittest.TestCase):
             self.assertEqual(cfg.jellyfin.user_id, "env-user")
 
     def test_env_overrides_transport_defaults(self) -> None:
-        os.environ["LILY_CONNECT_TIMEOUT"] = "1.5"
-        os.environ["LILY_READ_TIMEOUT"] = "9.0"
-        os.environ["LILY_RETRY"] = "3"
-        os.environ["LILY_DEADLINE"] = "12.5"
+        os.environ["ARR_CONNECT_TIMEOUT"] = "1.5"
+        os.environ["ARR_READ_TIMEOUT"] = "9.0"
+        os.environ["ARR_RETRY"] = "3"
+        os.environ["ARR_DEADLINE"] = "12.5"
         with tempfile_TOML(
             """
             [jellyfin]
@@ -334,7 +334,7 @@ class TestLoadConfigTOML(unittest.TestCase):
     def test_env_overrides_disabled(self) -> None:
         # ``env_overrides=False`` returns the file content alone (used
         # by tests and tools that want to inspect the file verbatim).
-        os.environ["LILY_JELLYFIN_URL"] = "https://env.example"
+        os.environ["ARR_JELLYFIN_URL"] = "https://env.example"
         with tempfile_TOML(
             """
             [jellyfin]
