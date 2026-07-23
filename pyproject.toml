@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
-    { name = "Cedar", email = "cedar@example.invalid" },
+    { name = "Cedar" },
 ]
 keywords = ["jellyfin", "radarr", "sonarr", "maintainerr", "seerr", "cli"]
 classifiers = [
