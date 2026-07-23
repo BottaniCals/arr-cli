@@ -201,7 +201,7 @@ def cmd_calendar(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     )
     # Sonarr's calendar payload is an array of episodes with
     # ``series`` and ``episode`` nested objects; pick the columns
-    # most likely to be useful to Lily / Renald.
+    # to surface for human-rendering.
     columns = [
         "title",
         "seasonNumber",

@@ -189,8 +189,7 @@ def cmd_pending(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     Returns the per-collection overlay information Maintainerr uses
     to decide what is about to be cleaned up. The endpoint returns a
     JSON object whose shape is service-defined; the ``--human``
-    renderer picks the columns most likely to be useful to Lily /
-    Renald (collection title, media count, deletion date).
+    renderer picks collection title, media count, and deletion date.
     """
     payload = _get(
         "/api/collections/overlay-data",

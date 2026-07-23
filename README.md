@@ -1,17 +1,16 @@
 # arr-cli
 
-Read-only Python CLI wrappers around Renald's self-hosted media server stack —
+Read-only Python CLI wrappers around a self-hosted media server stack —
 Jellyfin, Radarr, Sonarr, Maintainerr, and Seerr/Overseerr. The package ships
 five thin executables (`jellyfin`, `radarr`, `sonarr`, `maintainerr`, `seerr`)
 backed by a single shared facade (`arr_cli.facade`) that owns configuration,
 HTTP transport, authentication, error mapping, and output formatting. Together
 they expose **29 read-only commands** (every call is an HTTP `GET`).
 
-The CLIs target two operators. **Lily** (Renald's chat companion Bott) consumes
-JSON on stdout from a shell pipeline to power conversational queries about
-what Renald is watching, his rewatch patterns, newly added content, and what
-Maintainerr is about to delete. **Renald** (the operator) uses `--human` /
-`-h` for ad-hoc terminal inspection.
+The CLIs are intended for two uses:
+- shell pipelines that consume the verbatim JSON on stdout,
+- ad-hoc terminal inspection with `--human` / `-h` to render the
+  response as a readable table.
 
 This is the **MVP** release. It is deliberately read-only, stateless per
 invocation (no daemon, no mandatory cache), and safe to leave lying around —
