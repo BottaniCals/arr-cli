@@ -291,7 +291,7 @@ class TestCmdNow(unittest.TestCase):
     def test_now_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
         args = _namespace(human=False)
-        payload = [{"DeviceName": "Living Room TV", "UserName": "renald"}]
+        payload = [{"DeviceName": "Living Room TV", "UserName": "operator"}]
         with _patched_get_payload(payload):
             output = _capture_stdout(cmd_now, args, cfg)
         # JSON pass-through: the payload is rendered verbatim.
@@ -654,7 +654,7 @@ class TestHumanMode(unittest.TestCase):
     def test_human_mode_columns_for_now(self) -> None:
         cfg = _service_config()
         args = _namespace(human=True)
-        payload = [{"DeviceName": "TV", "UserName": "renald"}]
+        payload = [{"DeviceName": "TV", "UserName": "operator"}]
         with _patched_get_payload(payload), \
                 patch("arr_cli.jellyfin.output.emit") as mock_emit:
             cmd_now(args, cfg)
@@ -801,7 +801,7 @@ class TestMainEntryPoint(unittest.TestCase):
             pass
 
     def test_main_now_returns_zero_on_success(self) -> None:
-        payload = [{"DeviceName": "TV", "UserName": "renald"}]
+        payload = [{"DeviceName": "TV", "UserName": "operator"}]
         with patch(
             "arr_cli.jellyfin.transport.get",
             return_value=payload,
