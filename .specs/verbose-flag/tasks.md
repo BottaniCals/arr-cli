@@ -20,7 +20,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
 
 ## Tasks
 
-- [ ] 1. Register `--verbose` universal flag in `arr_cli/facade/cli_common.py`
+- [x] 1. Register `--verbose` universal flag in `arr_cli/facade/cli_common.py`
   - [ ] 1.1 Add `--verbose` argument immediately after the existing `--human` / `-h` entry in `build_parser`
     - File: `arr_cli/facade/cli_common.py`
     - Shape: `parser.add_argument("--verbose", action="store_true", default=False, help="...")` — followed by no short alias (REQ-2 AC5)
@@ -31,7 +31,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - `main_wrapper` is unchanged — `args.verbose` flows through `argparse` into the per-service `_emit` helpers exactly as `args.human` does today
     - _Requirements: REQ-2 AC5, REQ-6 AC2_
 
-- [ ] 2. Extend `arr_cli.facade.output.emit` signature with the priority chain
+- [x] 2. Extend `arr_cli.facade.output.emit` signature with the priority chain
   - [ ] 2.1 Extend the public `emit(...)` signature with keyword-only `verbose_mode`, `service`, `command` parameters
     - File: `arr_cli/facade/output.py`
     - New signature: `def emit(payload, *, human_mode, verbose_mode=False, service="", command="", columns=None, limit=DEFAULT_LIMIT, max_width=DEFAULT_MAX_WIDTH, stream=None) -> None`
@@ -49,7 +49,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - No mechanic comments; just the precedence order for future readers (REQ-3 AC5, NFR-Usability)
     - _Requirements: REQ-1 AC1–AC4, REQ-2 AC1–AC3, REQ-3 AC1–AC6, REQ-5 AC3, AC5_
 
-- [ ] 3. Add `arr_cli.facade.output.summarize` public function with graceful default
+- [x] 3. Add `arr_cli.facade.output.summarize` public function with graceful default
   - [ ] 3.1 Implement the public `summarize(service, command, payload)` function
     - File: `arr_cli/facade/output.py`
     - Signature: `def summarize(service: str, command: str, payload: Any) -> Any`
@@ -60,7 +60,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - Mention that the dispatch table is `_SUMMARY_RENDERERS` (module-level)
     - _Requirements: REQ-1 AC4, REQ-3 AC6, REQ-5 AC5_
 
-- [ ] 4. Build the `_SUMMARY_RENDERERS` dispatch table with 15 entries
+- [x] 4. Build the `_SUMMARY_RENDERERS` dispatch table with 15 entries
   - [ ] 4.1 Declare the module-level `_SUMMARY_RENDERERS` table
     - File: `arr_cli/facade/output.py`
     - Type: `_SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {...}`
@@ -77,7 +77,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - The 14 safe-to-leave-alone commands are intentionally absent; this is the documented contract
     - _Requirements: REQ-3 AC6, REQ-4 AC2, REQ-4 AC3_
 
-- [ ] 5. Add safe-access helpers in `arr_cli/facade/output.py`
+- [x] 5. Add safe-access helpers in `arr_cli/facade/output.py`
   - [ ] 5.1 Implement `_safe_get(payload, *path, default=None)` for nested-dict traversal
     - File: `arr_cli/facade/output.py`
     - Behaviour: walks `payload[path[0]][path[1]]...`, returning `default` on any `KeyError` / `TypeError` / `IndexError` (covers dict-missing, list-index-OOB, scalar-instead-of-dict, and `None` intermediates)
@@ -89,7 +89,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - Renderers rely on these helpers for every field access; the no-raise contract is what guarantees REQ-1 AC4 / REQ-5 AC5
     - _Requirements: REQ-1 AC4, REQ-5 AC5_
 
-- [ ] 6. Implement the 5 jellyfin summary renderers in `arr_cli/facade/output.py`
+- [x] 6. Implement the 5 jellyfin summary renderers in `arr_cli/facade/output.py`
   - [ ] 6.1 Implement `_summary_jellyfin_now(payload)`
     - Top-level shape: array of objects (one per active Jellyfin `/Sessions` row); `[]` when no sessions
     - Per-session object: `{ user, device, client, playing, progress }` where `playing` is `null` when `NowPlayingItem` is missing/falsy (REQ-4 AC4)
@@ -111,7 +111,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
   - [ ] 6.6 Confirm all five renderers register in `_SUMMARY_RENDERERS` (covered by Task 4.1)
     - _Requirements: REQ-1 AC1, AC4, REQ-4 AC1, AC4, AC5_
 
-- [ ] 7. Implement the 3 radarr summary renderers in `arr_cli/facade/output.py`
+- [x] 7. Implement the 3 radarr summary renderers in `arr_cli/facade/output.py`
   - [ ] 7.1 Implement `_summary_radarr_wanted(payload)`
     - Top-level shape: array of `{ title, year, tmdbId, monitored }`
     - Defensive: non-list → `[]`; missing fields → `None` / `0` / `False`
@@ -124,7 +124,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
   - [ ] 7.4 Confirm all three renderers register in `_SUMMARY_RENDERERS` (covered by Task 4.1)
     - _Requirements: REQ-1 AC1, AC4, REQ-4 AC1, AC5_
 
-- [ ] 8. Implement the 3 sonarr summary renderers in `arr_cli/facade/output.py`
+- [x] 8. Implement the 3 sonarr summary renderers in `arr_cli/facade/output.py`
   - [ ] 8.1 Implement `_summary_sonarr_wanted(payload)`
     - Top-level shape: array of `{ title, seasonNumber, episodeNumber, airDate, monitored }`
     - Defensive: non-list → `[]`; missing fields → `None` / `0` / `False`
@@ -137,7 +137,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
   - [ ] 8.4 Confirm all three renderers register in `_SUMMARY_RENDERERS` (covered by Task 4.1)
     - _Requirements: REQ-1 AC1, AC4, REQ-4 AC1, AC5_
 
-- [ ] 9. Implement the 3 seerr summary renderers in `arr_cli/facade/output.py`
+- [x] 9. Implement the 3 seerr summary renderers in `arr_cli/facade/output.py`
   - [ ] 9.1 Implement `_summary_seerr_requests(payload)`
     - Top-level shape: array of `{ title, type, status, createdAt, requestedBy.displayName }`
     - Defensive: non-list → `[]`; missing `requestedBy` → `{"displayName": None}`; missing fields → `None`
@@ -150,7 +150,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
   - [ ] 9.4 Confirm all three renderers register in `_SUMMARY_RENDERERS` (covered by Task 4.1)
     - _Requirements: REQ-1 AC1, AC4, REQ-4 AC1, AC5_
 
-- [ ] 10. Implement `_summary_maintainerr_pending` in `arr_cli/facade/output.py`
+- [x] 10. Implement `_summary_maintainerr_pending` in `arr_cli/facade/output.py`
   - [ ] 10.1 Implement the single maintainerr renderer
     - Top-level shape: array of `{ title, mediaCount, deleteAfterDays, isOnHold }`
     - Defensive: non-list → `[]`; missing fields → `None` / `0` / `False`
@@ -158,7 +158,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - `maintainerr health` and `maintainerr storage` are deliberately NOT in the table (out of scope per workboard ticket)
     - _Requirements: REQ-1 AC1, AC4, REQ-4 AC1, AC5_
 
-- [ ] 11. Update `arr_cli/jellyfin.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
+- [x] 11. Update `arr_cli/jellyfin.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
   - [ ] 11.1 Add `SERVICE_NAME = "jellyfin"` module-level constant (if not already present)
     - File: `arr_cli/jellyfin.py`
     - Reuse the existing constant if the file already names one; otherwise declare it next to the other module-level constants
@@ -171,7 +171,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - Specifically, `cmd_now` is the canonical-size-to-summary candidate and exercises the new branch
     - _Requirements: REQ-2 AC1, AC3, REQ-3 AC1–AC5, REQ-5 AC3_
 
-- [ ] 12. Update `arr_cli/radarr.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
+- [x] 12. Update `arr_cli/radarr.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
   - [ ] 12.1 Add `SERVICE_NAME = "radarr"` module-level constant (if not already present)
     - File: `arr_cli/radarr.py`
   - [ ] 12.2 Update the `_emit` helper body to the canonical shape (same as Task 11.2)
@@ -181,7 +181,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - `cmd_wanted` is the size-to-summary candidate that exercises the new branch
     - _Requirements: REQ-2 AC1, AC3, REQ-3 AC1–AC5, REQ-5 AC3_
 
-- [ ] 13. Update `arr_cli/sonarr.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
+- [x] 13. Update `arr_cli/sonarr.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
   - [ ] 13.1 Add `SERVICE_NAME = "sonarr"` module-level constant (if not already present)
     - File: `arr_cli/sonarr.py`
   - [ ] 13.2 Update the `_emit` helper body to the canonical shape (same as Task 11.2)
@@ -191,7 +191,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - `cmd_wanted` is the size-to-summary candidate that exercises the new branch
     - _Requirements: REQ-2 AC1, AC3, REQ-3 AC1–AC5, REQ-5 AC3_
 
-- [ ] 14. Update `arr_cli/maintainerr.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
+- [x] 14. Update `arr_cli/maintainerr.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
   - [ ] 14.1 Add `SERVICE_NAME = "maintainerr"` module-level constant (if not already present)
     - File: `arr_cli/maintainerr.py`
   - [ ] 14.2 Update the `_emit` helper body to the canonical shape (same as Task 11.2)
@@ -201,7 +201,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - `cmd_pending` is the size-to-summary candidate that exercises the new branch; `cmd_health` is explicitly out of scope (verbatim stays put)
     - _Requirements: REQ-2 AC1, AC3, REQ-3 AC1–AC5, REQ-5 AC3_
 
-- [ ] 15. Update `arr_cli/seerr.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
+- [x] 15. Update `arr_cli/seerr.py::_emit` to thread `verbose_mode`, `service`, and `command` into `output.emit`
   - [ ] 15.1 Add `SERVICE_NAME = "seerr"` module-level constant (if not already present)
     - File: `arr_cli/seerr.py`
   - [ ] 15.2 Update the `_emit` helper body to the canonical shape (same as Task 11.2)
@@ -211,7 +211,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - `cmd_requests` is the size-to-summary candidate that exercises the new branch; `cmd_request_count` is explicitly out of scope (verbatim stays put)
     - _Requirements: REQ-2 AC1, AC3, REQ-3 AC1–AC5, REQ-5 AC3_
 
-- [ ] 16. Add `--verbose` parser tests in `tests/unit/test_cli_common.py`
+- [x] 16. Add `--verbose` parser tests in `tests/unit/test_cli_common.py`
   - [ ] 16.1 Add 3 tests covering the new flag
     - File: `tests/unit/test_cli_common.py`
     - Test 1: `build_parser().parse_args(["--verbose"])` → `args.verbose is True` (REQ-2 AC5)
@@ -220,7 +220,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
   - [ ] 16.2 Confirm tests use stdlib `unittest` + `unittest.mock` only (matches the existing file's conventions)
     - _Requirements: REQ-2 AC5, REQ-6 AC4_
 
-- [ ] 17. Add dispatch + threading tests in `tests/unit/test_output.py`
+- [x] 17. Add dispatch + threading tests in `tests/unit/test_output.py`
   - [ ] 17.1 Add a `TestEmitPriorityChain` class with 5 cases
     - File: `tests/unit/test_output.py`
     - Case 1: `human_mode=True, verbose_mode=False` → tabular human view on stdout (REQ-3 AC1)
@@ -244,7 +244,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - Case 6: per-service `_emit` smoke — instantiate a minimal `argparse.Namespace(command="now", human=False, verbose=False, limit=20)` and assert `jellyfin._emit(payload, args)` calls `output.emit` with `service="jellyfin"` and `command="now"` keyword arguments (verified via `unittest.mock.patch` on `output.emit`); repeat or sample for one service per file to lock the threading in each per-service file
     - _Requirements: REQ-1 AC4, REQ-2 AC1, REQ-3 AC1–AC6, REQ-5 AC3, AC5_
 
-- [ ] 18. Add 15 per-renderer unit tests in `tests/unit/test_output.py`
+- [x] 18. Add 15 per-renderer unit tests in `tests/unit/test_output.py`
   - [ ] 18.1 Add 5 jellyfin per-renderer tests
     - File: `tests/unit/test_output.py`
     - One test each for `_summary_jellyfin_now`, `_summary_jellyfin_recent`, `_summary_jellyfin_favorites`, `_summary_jellyfin_resume`, `_summary_jellyfin_latest`
@@ -260,7 +260,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
   - [ ] 18.6 Confirm all 15 tests are hermetic — no live HTTP, no `responses` mocking needed (the renderers are pure functions over pre-decoded payloads; AGENTS.md §7.5)
     - _Requirements: REQ-1 AC1, AC4, AC5, REQ-4 AC1, AC4, AC5, REQ-6 AC4_
 
-- [ ] 19. Add `jellyfin now` end-to-end handler test (summary + verbose paths) in `tests/unit/test_jellyfin.py`
+- [x] 19. Add `jellyfin now` end-to-end handler test (summary + verbose paths) in `tests/unit/test_jellyfin.py`
   - [ ] 19.1 Add the `cmd_now` smoke test
     - File: `tests/unit/test_jellyfin.py`
     - Two sub-cases in one test or two sibling tests:
@@ -270,35 +270,35 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - Assert exit code `0` and pipe-clean JSON on stdout
     - _Requirements: REQ-2 AC1, REQ-6 AC4(a), AC4(b)_
 
-- [ ] 20. Add `radarr wanted` end-to-end handler test in `tests/unit/test_radarr.py`
+- [x] 20. Add `radarr wanted` end-to-end handler test in `tests/unit/test_radarr.py`
   - [ ] 20.1 Add the `cmd_wanted` smoke test
     - File: `tests/unit/test_radarr.py`
     - Two sub-cases (summary + verbose), same pattern as Task 19.1
     - Mock the upstream HTTP via `responses`
     - _Requirements: REQ-2 AC1, REQ-6 AC4_
 
-- [ ] 21. Add `sonarr wanted` end-to-end handler test in `tests/unit/test_sonarr.py`
+- [x] 21. Add `sonarr wanted` end-to-end handler test in `tests/unit/test_sonarr.py`
   - [ ] 21.1 Add the `cmd_wanted` smoke test
     - File: `tests/unit/test_sonarr.py`
     - Two sub-cases (summary + verbose), same pattern as Task 19.1
     - Mock the upstream HTTP via `responses`
     - _Requirements: REQ-2 AC1, REQ-6 AC4_
 
-- [ ] 22. Add `seerr requests` end-to-end handler test in `tests/unit/test_seerr.py`
+- [x] 22. Add `seerr requests` end-to-end handler test in `tests/unit/test_seerr.py`
   - [ ] 22.1 Add the `cmd_requests` smoke test
     - File: `tests/unit/test_seerr.py`
     - Two sub-cases (summary + verbose), same pattern as Task 19.1
     - Mock the upstream HTTP via `responses`
     - _Requirements: REQ-2 AC1, REQ-6 AC4_
 
-- [ ] 23. Add `maintainerr pending` end-to-end handler test in `tests/unit/test_maintainerr.py`
+- [x] 23. Add `maintainerr pending` end-to-end handler test in `tests/unit/test_maintainerr.py`
   - [ ] 23.1 Add the `cmd_pending` smoke test
     - File: `tests/unit/test_maintainerr.py`
     - Two sub-cases (summary + verbose), same pattern as Task 19.1
     - Mock the upstream HTTP via `responses`
     - _Requirements: REQ-2 AC1, REQ-6 AC4_
 
-- [ ] 24. Update `CHANGELOG.md` with the flip entry and the new `--verbose` flag
+- [x] 24. Update `CHANGELOG.md` with the flip entry and the new `--verbose` flag
   - [ ] 24.1 Add a new release section under the existing `[MVP]` entry
     - File: `CHANGELOG.md`
     - Header: `## [Unreleased]` (or the next-release header per repo convention) above the `[MVP]` entry
@@ -307,7 +307,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
   - [ ] 24.2 Confirm the entry preserves the existing Keep-a-Changelog format conventions used by the file
     - _Requirements: REQ-6 AC1, REQ-6 AC3_
 
-- [ ] 25. Update `README.md` §4 with the new flag and the BREAKING note
+- [x] 25. Update `README.md` §4 with the new flag and the BREAKING note
   - [ ] 25.1 Update the universal-flag row(s) in §4 to include `--verbose`
     - File: `README.md`
     - Add a row mirroring the existing `--human` / `-h` row: `| \`--verbose\` | emit the verbatim service JSON payload instead of the curated summary (default for size-to-summary commands) |`
@@ -318,7 +318,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - The replacement phrasing is "default JSON output is a curated per-command summary for the 15 size-to-summary commands; pass `--verbose` for the verbatim service payload"
     - _Requirements: REQ-6 AC1, AC3_
 
-- [ ] 26. Confirm `arr_cli/py.typed` and `pyproject.toml` remain consistent
+- [x] 26. Confirm `arr_cli/py.typed` and `pyproject.toml` remain consistent
   - [ ] 26.1 Confirm `arr_cli/py.typed` is unchanged
     - The PEP 561 marker file is preserved byte-for-byte; no deletion, no rename
     - The new `output.summarize` public function declares its full type signature (`(str, str, Any) -> Any`) so downstream type checkers see it (NFR-Technical Standards)
@@ -328,7 +328,7 @@ deps (`requests`, `PyYAML`, `pytest`, `responses`).
     - Run `pip install -e ".[dev]"` to confirm the lockfile state is unchanged
     - _Requirements: REQ-6 AC1, NFR-Security, NFR-Technical Standards_
 
-- [ ] 27. Run CI verification — `make ci` and `make lint` stay green
+- [x] 27. Run CI verification — `make ci` and `make lint` stay green
   - [ ] 27.1 Run `make ci` (test + secret-scan + smoke-dry)
     - Command: `make ci` (or `make test && make secret-scan && make smoke-dry` for explicit per-target feedback)
     - All targets must pass green; the test target exercises the new ~57 test cases against the existing ~150
