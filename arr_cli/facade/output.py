@@ -1,14 +1,21 @@
 """Output formatting for the arr-cli facade (task 6).
 
-This module owns two responsibilities:
+This module owns three responsibilities:
 
 * :func:`emit` — single entry point used by every service CLI to write
-  a payload to stdout. When ``human`` is False the payload is JSON
-  pass-through (REQ-3 AC1); when True the payload is rendered as a
-  tabular human-readable view (REQ-3 AC2).
+  a payload to stdout. The dispatch chain (``human`` > ``verbose`` >
+  default summary > verbatim JSON) selects between :func:`human`,
+  the curated per-command summary, and the verbatim pass-through
+  (REQ-3 AC1-AC5).
 * :func:`human` — tabular renderer that handles list-of-dict,
   list-of-list, dict, and scalar payloads per design.md "Components
   and Interfaces / arr_facade.output".
+* :func:`summarize` and :data:`_SUMMARY_RENDERERS` — per-command
+  summary renderer registry. For the 15 size-to-summary candidate
+  commands the registered renderer maps the verbatim payload to a
+  curated, chat-agent-sized shape; for any other key (including the
+  14 safe-to-leave-alone commands) :func:`summarize` returns the
+  payload unchanged as a graceful default (REQ-1 AC4, REQ-5 AC5).
 
 Diagnostics never mix with stdout (REQ-3 AC4). All warnings go to
 stderr via the module logger; the renderer itself writes only the
@@ -851,7 +858,11 @@ def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
 # (REQ-3 AC6). The 14 safe-to-leave-alone commands are intentionally
 # absent; their ``_emit`` calls still pass ``service`` / ``command``
 # but the lookup misses and ``emit`` falls through to the default
-# verbatim pass-through (REQ-5 AC3).
+# verbatim pass-through (REQ-5 AC3). Misses -- including the empty
+# ``("", "")`` key and any unknown ``(service, command)`` pair -- are
+# the documented graceful default of :func:`summarize`, which returns
+# the payload unchanged rather than raising ``KeyError`` (REQ-1 AC4,
+# REQ-5 AC5).
 _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("jellyfin", "now"): _summary_jellyfin_now,
     ("jellyfin", "recent"): _summary_jellyfin_recent,

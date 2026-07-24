@@ -14,6 +14,14 @@ import unittest
 from unittest.mock import patch
 
 
+def _capture_stdout(callable_: object, *args: object, **kwargs: object) -> str:
+    """Invoke ``callable_`` with stdout redirected to a StringIO buffer."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        callable_(*args, **kwargs)  # type: ignore[operator]
+    return buffer.getvalue()
+
+
 class TestSeerrModule(unittest.TestCase):
     """Five focused tests covering the task 12 contract."""
 
@@ -91,13 +99,6 @@ class TestSeerrModule(unittest.TestCase):
 class TestVerboseFlagCmdRequests(unittest.TestCase):
     """REQ-6 AC4: ``cmd_requests`` summary vs verbose paths."""
 
-    @staticmethod
-    def _capture_stdout(callable_: object, *args: object, **kwargs: object) -> str:
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            callable_(*args, **kwargs)  # type: ignore[operator]
-        return buffer.getvalue()
-
     def test_cmd_requests_default_emits_summary(self) -> None:
         from arr_cli.seerr import cmd_requests
 
@@ -124,7 +125,7 @@ class TestVerboseFlagCmdRequests(unittest.TestCase):
             }
         ]
         with patch("arr_cli.seerr.transport.get", return_value=payload):
-            output = self._capture_stdout(cmd_requests, args, None)
+            output = _capture_stdout(cmd_requests, args, None)
         rendered = json.loads(output)
         self.assertEqual(rendered[0]["title"], "Foo")
         self.assertEqual(rendered[0]["type"], "movie")
@@ -155,7 +156,7 @@ class TestVerboseFlagCmdRequests(unittest.TestCase):
             }
         ]
         with patch("arr_cli.seerr.transport.get", return_value=payload):
-            output = self._capture_stdout(cmd_requests, args, None)
+            output = _capture_stdout(cmd_requests, args, None)
         self.assertEqual(json.loads(output), payload)
 
 
