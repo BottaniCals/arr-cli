@@ -29,12 +29,13 @@ import json
 import logging
 import os
 import shutil
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 __all__ = [
     "emit",
     "human",
     "resolve_width",
+    "summarize",
     "DEFAULT_MAX_WIDTH",
     "MIN_WIDTH",
     "DEFAULT_LIMIT",
@@ -409,6 +410,506 @@ def human(
 
 
 # ---------------------------------------------------------------------------
+# Safe-access helpers
+# ---------------------------------------------------------------------------
+
+
+def _safe_get(payload: Any, *path: Any, default: Any = None) -> Any:
+    """Walk ``payload`` along ``path`` and return the resolved value.
+
+    Returns ``default`` (which itself defaults to ``None``) on any
+    ``KeyError``, ``IndexError``, ``TypeError``, or ``AttributeError``
+    encountered along the walk -- this covers:
+
+    * missing dict keys,
+    * list / tuple indices out of range,
+    * scalars / ``None`` intermediates where a subscript is attempted,
+    * attribute access on a non-object value.
+
+    The defensive no-raise contract is what guarantees that a malformed
+    payload (e.g. an empty list, a missing nested field) produces a
+    well-formed JSON value instead of a crash (REQ-1 AC4, REQ-5 AC5).
+
+    Parameters
+    ----------
+    payload:
+        The starting value (typically a dict decoded from JSON).
+    *path:
+        One or more lookup keys. Dict lookups (``payload[path[0]]``)
+        are attempted first; when the current value is a ``Mapping``
+        or ``list`` and the next segment is a string, dict lookup is
+        used; otherwise sequence lookup via ``[int(segment)]``.
+    default:
+        Returned when the walk fails for any reason. Callers may
+        pass ``0`` for int fields, ``False`` for bool fields, ``""``
+        for string fields, etc., per the per-command summary spec.
+    """
+    current = payload
+    for segment in path:
+        if current is None:
+            return default
+        if isinstance(current, Mapping):
+            try:
+                current = current[segment]
+                continue
+            except (KeyError, TypeError):
+                return default
+        if isinstance(current, (list, tuple)):
+            try:
+                index = int(segment)
+            except (TypeError, ValueError):
+                return default
+            try:
+                current = current[index]
+                continue
+            except IndexError:
+                return default
+        return default
+    return current if current is not None else default
+
+
+def _safe_getattr(obj: Any, name: str, default: Any = None) -> Any:
+    """Attribute-flavoured sibling of :func:`_safe_get`.
+
+    Returns ``default`` on any ``AttributeError`` / ``TypeError``
+    (e.g. when ``obj`` is ``None``). Mirrors the human-renderer
+    helpers' tolerance for missing fields; service payloads are
+    JSON-decoded so ``_safe_get`` is the common path, but this is
+    here for parity.
+    """
+    if obj is None:
+        return default
+    try:
+        return getattr(obj, name)
+    except AttributeError:
+        return default
+
+
+# ---------------------------------------------------------------------------
+# Per-command summary renderers
+# ---------------------------------------------------------------------------
+
+
+def _summary_jellyfin_now(payload: Any) -> list[dict[str, Any]]:
+    """Render a Jellyfin ``/Sessions`` payload as the curated summary.
+
+    Top-level shape: list of session objects (one per active
+    session); ``[]`` when no sessions are active. ``playing``
+    collapses to ``None`` when the session has no ``NowPlayingItem``
+    (REQ-4 AC4).
+    """
+    if not isinstance(payload, list):
+        return []
+    sessions: list[dict[str, Any]] = []
+    for session in payload:
+        if not isinstance(session, Mapping):
+            continue
+        now_playing = session.get("NowPlayingItem")
+        if isinstance(now_playing, Mapping):
+            playing: dict[str, Any] | None = {
+                "type": _safe_get(now_playing, "Type", default=None),
+                "name": _safe_get(now_playing, "Name", default=None),
+                "series": _safe_get(now_playing, "SeriesName", default=None),
+                "season": _safe_get(now_playing, "ParentIndexNumber", default=0),
+                "episode": _safe_get(now_playing, "IndexNumber", default=0),
+            }
+        else:
+            playing = None
+        play_state = session.get("PlayState")
+        progress: dict[str, Any] = {
+            "position_ticks": _safe_get(
+                play_state, "PositionTicks", default=0
+            ),
+            "is_paused": _safe_get(
+                play_state, "IsPaused", default=False
+            ),
+        }
+        sessions.append(
+            {
+                "user": _safe_get(session, "UserName", default=None),
+                "device": _safe_get(session, "DeviceName", default=None),
+                "client": _safe_get(session, "Client", default=None),
+                "playing": playing,
+                "progress": progress,
+            }
+        )
+    return sessions
+
+
+def _summary_jellyfin_recent(payload: Any) -> list[dict[str, Any]]:
+    """Render a Jellyfin ``recent`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "Name": _safe_get(item, "Name", default=None),
+            "Type": _safe_get(item, "Type", default=None),
+            "ProductionYear": _safe_get(item, "ProductionYear", default=0),
+            "SeriesName": _safe_get(item, "SeriesName", default=None),
+            "UserData.LastPlayedDate": _safe_get(
+                item, "UserData", "LastPlayedDate", default=None
+            ),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_jellyfin_favorites(payload: Any) -> list[dict[str, Any]]:
+    """Render a Jellyfin ``favorites`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "Name": _safe_get(item, "Name", default=None),
+            "Type": _safe_get(item, "Type", default=None),
+            "ProductionYear": _safe_get(item, "ProductionYear", default=0),
+            "SeriesName": _safe_get(item, "SeriesName", default=None),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_jellyfin_resume(payload: Any) -> list[dict[str, Any]]:
+    """Render a Jellyfin ``resume`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "Name": _safe_get(item, "Name", default=None),
+            "Type": _safe_get(item, "Type", default=None),
+            "ProductionYear": _safe_get(item, "ProductionYear", default=0),
+            "SeriesName": _safe_get(item, "SeriesName", default=None),
+            "UserData.PlaybackPositionTicks": _safe_get(
+                item, "UserData", "PlaybackPositionTicks", default=0
+            ),
+            "UserData.PlayCount": _safe_get(
+                item, "UserData", "PlayCount", default=0
+            ),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_jellyfin_latest(payload: Any) -> list[dict[str, Any]]:
+    """Render a Jellyfin ``latest`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "Name": _safe_get(item, "Name", default=None),
+            "Type": _safe_get(item, "Type", default=None),
+            "ProductionYear": _safe_get(item, "ProductionYear", default=0),
+            "SeriesName": _safe_get(item, "SeriesName", default=None),
+            "DateCreated": _safe_get(item, "DateCreated", default=None),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_radarr_wanted(payload: Any) -> list[dict[str, Any]]:
+    """Render a Radarr ``wanted`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "tmdbId": _safe_get(item, "tmdbId", default=0),
+            "monitored": _safe_get(item, "monitored", default=False),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
+    """Render a Radarr ``queue`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "status": _safe_get(item, "status", default=None),
+            "trackedDownloadStatus": _safe_get(
+                item, "trackedDownloadStatus", default=None
+            ),
+            "size": _safe_get(item, "size", default=0),
+            "sizeleft": _safe_get(item, "sizeleft", default=0),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
+    """Render a Radarr ``recent`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        movie = item.get("movie")
+        if isinstance(movie, Mapping):
+            movie_obj: dict[str, Any] = {
+                "title": _safe_get(movie, "title", default=None),
+                "year": _safe_get(movie, "year", default=0),
+            }
+        else:
+            movie_obj = {"title": None, "year": 0}
+        summaries.append(
+            {
+                "movie": movie_obj,
+                "eventType": _safe_get(item, "eventType", default=None),
+                "date": _safe_get(item, "date", default=None),
+            }
+        )
+    return summaries
+
+
+def _summary_sonarr_wanted(payload: Any) -> list[dict[str, Any]]:
+    """Render a Sonarr ``wanted`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "seasonNumber": _safe_get(item, "seasonNumber", default=0),
+            "episodeNumber": _safe_get(item, "episodeNumber", default=0),
+            "airDate": _safe_get(item, "airDate", default=None),
+            "monitored": _safe_get(item, "monitored", default=False),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
+    """Render a Sonarr ``queue`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "status": _safe_get(item, "status", default=None),
+            "trackedDownloadStatus": _safe_get(
+                item, "trackedDownloadStatus", default=None
+            ),
+            "size": _safe_get(item, "size", default=0),
+            "sizeleft": _safe_get(item, "sizeleft", default=0),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
+    """Render a Sonarr ``recent`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        series = item.get("series")
+        series_obj: dict[str, Any] = (
+            {"title": _safe_get(series, "title", default=None)}
+            if isinstance(series, Mapping)
+            else {"title": None}
+        )
+        episode = item.get("episode")
+        episode_obj: dict[str, Any] = (
+            {"title": _safe_get(episode, "title", default=None)}
+            if isinstance(episode, Mapping)
+            else {"title": None}
+        )
+        summaries.append(
+            {
+                "series": series_obj,
+                "episode": episode_obj,
+                "eventType": _safe_get(item, "eventType", default=None),
+                "date": _safe_get(item, "date", default=None),
+            }
+        )
+    return summaries
+
+
+def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
+    """Render a Seerr ``requests`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        requester = item.get("requestedBy")
+        if isinstance(requester, Mapping):
+            requester_obj: dict[str, Any] = {
+                "displayName": _safe_get(
+                    requester, "displayName", default=None
+                ),
+            }
+        else:
+            requester_obj = {"displayName": None}
+        summaries.append(
+            {
+                "title": _safe_get(item, "title", default=None),
+                "type": _safe_get(item, "type", default=None),
+                "status": _safe_get(item, "status", default=None),
+                "createdAt": _safe_get(item, "createdAt", default=None),
+                "requestedBy": requester_obj,
+            }
+        )
+    return summaries
+
+
+def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
+    """Render a Seerr ``search`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        media_info = item.get("mediaInfo")
+        if isinstance(media_info, Mapping):
+            media_info_obj: dict[str, Any] = {
+                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
+            }
+        else:
+            media_info_obj = {"tmdbId": 0}
+        summaries.append(
+            {
+                "title": _safe_get(item, "title", default=None),
+                "mediaType": _safe_get(item, "mediaType", default=None),
+                "releaseDate": _safe_get(
+                    item, "releaseDate", default=None
+                ),
+                "mediaInfo": media_info_obj,
+            }
+        )
+    return summaries
+
+
+def _summary_seerr_available(payload: Any) -> list[dict[str, Any]]:
+    """Render a Seerr ``available`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        media_info = item.get("mediaInfo")
+        if isinstance(media_info, Mapping):
+            media_info_obj: dict[str, Any] = {
+                "status": _safe_get(media_info, "status", default=0),
+            }
+        else:
+            media_info_obj = {"status": 0}
+        summaries.append(
+            {
+                "title": _safe_get(item, "title", default=None),
+                "mediaType": _safe_get(item, "mediaType", default=None),
+                "releaseDate": _safe_get(
+                    item, "releaseDate", default=None
+                ),
+                "mediaInfo": media_info_obj,
+            }
+        )
+    return summaries
+
+
+def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
+    """Render a Maintainerr ``pending`` payload as the curated summary."""
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "mediaCount": _safe_get(item, "mediaCount", default=0),
+            "deleteAfterDays": _safe_get(
+                item, "deleteAfterDays", default=0
+            ),
+            "isOnHold": _safe_get(item, "isOnHold", default=False),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Renderer dispatch table
+# ---------------------------------------------------------------------------
+
+
+# Add a new size-to-summary candidate by appending one
+# ``_summary_<service>_<command>`` function above and one entry here
+# (REQ-3 AC6). The 14 safe-to-leave-alone commands are intentionally
+# absent; their ``_emit`` calls still pass ``service`` / ``command``
+# but the lookup misses and ``emit`` falls through to the default
+# verbatim pass-through (REQ-5 AC3).
+_SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
+    ("jellyfin", "now"): _summary_jellyfin_now,
+    ("jellyfin", "recent"): _summary_jellyfin_recent,
+    ("jellyfin", "favorites"): _summary_jellyfin_favorites,
+    ("jellyfin", "resume"): _summary_jellyfin_resume,
+    ("jellyfin", "latest"): _summary_jellyfin_latest,
+    ("radarr", "wanted"): _summary_radarr_wanted,
+    ("radarr", "queue"): _summary_radarr_queue,
+    ("radarr", "recent"): _summary_radarr_recent,
+    ("sonarr", "wanted"): _summary_sonarr_wanted,
+    ("sonarr", "queue"): _summary_sonarr_queue,
+    ("sonarr", "recent"): _summary_sonarr_recent,
+    ("seerr", "requests"): _summary_seerr_requests,
+    ("seerr", "search"): _summary_seerr_search,
+    ("seerr", "available"): _summary_seerr_available,
+    ("maintainerr", "pending"): _summary_maintainerr_pending,
+}
+
+
+def summarize(service: str, command: str, payload: Any) -> Any:
+    """Apply the per-command summary renderer to ``payload``.
+
+    Looks up ``(service, command)`` in :data:`_SUMMARY_RENDERERS`;
+    returns the renderer's output when found, otherwise returns
+    ``payload`` unchanged (graceful default). The empty key
+    ``("", "")`` is not in the table, so a caller that does not
+    populate both fields also observes the graceful default.
+
+    This function is pure: no I/O, no logging, no ``print`` (REQ-5
+    AC5). Adding a new size-to-summary candidate is a one-line
+    registration in :data:`_SUMMARY_RENDERERS` plus the
+    renderer function (REQ-3 AC6).
+
+    Parameters
+    ----------
+    service:
+        The per-service identifier (``"jellyfin"``, ``"radarr"``,
+        ``"sonarr"``, ``"maintainerr"``, ``"seerr"``).
+    command:
+        The subcommand name (``"now"``, ``"wanted"``, ...).
+    payload:
+        The verbatim service response (already JSON-decoded).
+
+    Returns
+    -------
+    Any
+        Either the curated summary shape (a JSON-serializable
+        structure) or ``payload`` unchanged when no renderer is
+        registered for the key.
+    """
+    key = (service, command)
+    renderer = _SUMMARY_RENDERERS.get(key)
+    if renderer is None:
+        return payload
+    return renderer(payload)
+
+
+# ---------------------------------------------------------------------------
 # emit
 # ---------------------------------------------------------------------------
 
@@ -417,12 +918,24 @@ def emit(
     payload: Any,
     *,
     human_mode: bool,
+    verbose_mode: bool = False,
+    service: str = "",
+    command: str = "",
     columns: Sequence[str] | None = None,
     limit: int = DEFAULT_LIMIT,
     max_width: int = DEFAULT_MAX_WIDTH,
     stream: Any | None = None,
 ) -> None:
-    """Write ``payload`` to stdout as JSON or human-readable text.
+    """Write ``payload`` to stdout.
+
+    Priority chain (REQ-3 AC1-AC4):
+
+    1. ``human_mode`` -- render via :func:`human` (tabular).
+    2. ``verbose_mode`` -- emit verbatim JSON.
+    3. ``service`` and ``command`` both non-empty and the
+       ``(service, command)`` key is registered in
+       :data:`_SUMMARY_RENDERERS` -- emit the curated summary.
+    4. Otherwise -- emit verbatim JSON (the pre-change default).
 
     Parameters
     ----------
@@ -435,6 +948,18 @@ def emit(
         a single line of compact JSON (REQ-3 AC1); UTF-8 characters
         pass through verbatim thanks to ``ensure_ascii=False``
         (REQ-3 AC5).
+    verbose_mode:
+        When True (and ``human_mode`` is False) the verbatim service
+        payload is emitted on stdout (REQ-2 AC1). Has no effect
+        when ``human_mode`` is True (REQ-3 AC1).
+    service:
+        Per-service identifier used for the renderer dispatch table
+        lookup. Defaults to ``""`` so callers that do not thread
+        this value continue to observe the verbatim default
+        (REQ-5 AC3).
+    command:
+        Subcommand name used for the renderer dispatch table
+        lookup. Same empty-string default as ``service``.
     columns:
         Forwarded to :func:`human` when ``human_mode`` is True.
     limit:
@@ -461,19 +986,29 @@ def emit(
 
     out = stream if stream is not None else sys.stdout
 
-    if not human_mode:
-        # JSON pass-through: compact (no indent), UTF-8 preserved.
-        # The requirements explicitly state that the top-level
-        # structure is the verbatim service payload, so we do NOT
-        # wrap it in an envelope (REQ-3 AC1).
-        text = json.dumps(payload, ensure_ascii=False)
-        print(text, file=out)
+    if human_mode:
+        rendered = human(
+            payload,
+            columns=columns,
+            limit=limit,
+            max_width=max_width,
+        )
+        print(rendered, file=out)
         return
 
-    rendered = human(
-        payload,
-        columns=columns,
-        limit=limit,
-        max_width=max_width,
-    )
-    print(rendered, file=out)
+    if verbose_mode:
+        # Verbatim pass-through: same call as the default branch,
+        # kept separate so the dispatch order is auditable in source.
+        print(json.dumps(payload, ensure_ascii=False), file=out)
+        return
+
+    if service and command and (service, command) in _SUMMARY_RENDERERS:
+        rendered_summary = summarize(service, command, payload)
+        print(json.dumps(rendered_summary, ensure_ascii=False), file=out)
+        return
+
+    # Default verbatim pass-through: byte-identical to the pre-change
+    # behaviour for any caller that does not pass ``service`` /
+    # ``command`` (or whose command is not a size-to-summary
+    # candidate) -- REQ-5 AC3 / NFR-Reliability.
+    print(json.dumps(payload, ensure_ascii=False), file=out)

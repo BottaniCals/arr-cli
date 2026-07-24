@@ -727,7 +727,7 @@ class TestMainEntryPoint(unittest.TestCase):
         ):
             stdout, _ = _capture_stderr_stdout(
                 main,
-                ["--config", str(self.cfg_path), "pending"],
+                ["--config", str(self.cfg_path), "--verbose", "pending"],
             )
         self.assertEqual(json.loads(stdout), payload)
 

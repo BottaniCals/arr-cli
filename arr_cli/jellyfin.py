@@ -119,6 +119,9 @@ def _emit(
     output.emit(
         payload,
         human_mode=bool(getattr(args, "human", False)),
+        verbose_mode=bool(getattr(args, "verbose", False)),
+        service=SERVICE_NAME,
+        command=str(getattr(args, "command", "") or ""),
         columns=columns,
         limit=int(getattr(args, "limit", 20) or 20),
     )
