@@ -372,11 +372,11 @@ class TestLoadConfigYAML(unittest.TestCase):
             """
             jellyfin:
               url: https://jellyfin.example
-              api_key: ***:
+              api_key: "***"
               user_id: <user-id>
             radarr:
               url: https://radarr.example
-              api_key: ***:
+              api_key: "***"
             """
         ) as path:
             cfg = load_config(path)
