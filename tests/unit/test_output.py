@@ -43,7 +43,10 @@ from arr_cli.facade.output import (  # noqa: E402 - sys.path tweak above
     emit,
     human,
     resolve_width,
+    summarize,
     _column_widths,
+    _safe_get,
+    _SUMMARY_RENDERERS,
     _truncate,
 )
 
@@ -452,6 +455,775 @@ class TestDefaults(unittest.TestCase):
             human([{"a": 1}], limit=0)
         with self.assertRaises(ValueError):
             human([{"a": 1}], limit=-1)
+
+
+# ---------------------------------------------------------------------------
+# Verbose-flag priority chain (REQ-3 AC1-AC5)
+# ---------------------------------------------------------------------------
+
+
+class TestEmitPriorityChain(unittest.TestCase):
+    """``emit`` enforces the documented --human > --verbose > summary > verbatim chain."""
+
+    def test_human_mode_wins(self) -> None:
+        # REQ-3 AC1: ``--human`` always renders the tabular view.
+        payload = [{"a": 1, "b": 2}]
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=True,
+            verbose_mode=False,
+            columns=["a", "b"],
+        )
+        # The tabular view carries the header row.
+        first_line = out.splitlines()[0]
+        self.assertIn("a", first_line)
+        self.assertIn("b", first_line)
+
+    def test_verbose_mode_emits_verbatim_on_candidate(self) -> None:
+        # REQ-3 AC2: ``--verbose`` on a size-to-summary candidate
+        # emits the verbatim payload.
+        payload = [{"UserName": "alice"}]
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=False,
+            verbose_mode=True,
+            service="jellyfin",
+            command="now",
+        )
+        self.assertEqual(
+            out,
+            json.dumps(payload, ensure_ascii=False) + "\n",
+        )
+
+    def test_default_summary_on_candidate(self) -> None:
+        # REQ-3 AC3: no flags on a size-to-summary candidate emits
+        # the curated summary shape.
+        payload = [{"UserName": "alice", "DeviceName": "TV"}]
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=False,
+            verbose_mode=False,
+            service="jellyfin",
+            command="now",
+        )
+        rendered = json.loads(out)
+        self.assertIsInstance(rendered, list)
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["user"], "alice")
+        self.assertEqual(rendered[0]["device"], "TV")
+
+    def test_default_verbatim_on_non_candidate(self) -> None:
+        # REQ-3 AC4: a non-candidate command without flags stays on
+        # verbatim JSON.
+        payload = {"foo": "bar"}
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=False,
+            verbose_mode=False,
+            service="jellyfin",
+            command="item",
+        )
+        self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
+
+    def test_human_and_verbose_human_wins(self) -> None:
+        # REQ-3 AC5: when both flags are set ``--human`` wins and
+        # ``--verbose`` has no effect on the rendered table.
+        payload = [{"a": 1}]
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=True,
+            verbose_mode=True,
+            columns=["a"],
+        )
+        # Tabular view: header row + at least one data row, not
+        # the JSON serialised payload.
+        first_line = out.splitlines()[0]
+        self.assertIn("a", first_line)
+        self.assertNotIn("[{", out)
+
+
+# ---------------------------------------------------------------------------
+# summarize() graceful default (REQ-1 AC4, REQ-5 AC5)
+# ---------------------------------------------------------------------------
+
+
+class TestSummarizeGracefulDefault(unittest.TestCase):
+    """``summarize`` returns ``payload`` unchanged when no renderer is registered."""
+
+    def test_known_key_invokes_renderer(self) -> None:
+        payload = [{"UserName": "alice"}]
+        rendered = summarize("jellyfin", "now", payload)
+        # Curated summary: list of session objects with the documented keys.
+        self.assertIsInstance(rendered, list)
+        self.assertEqual(rendered[0]["user"], "alice")
+        self.assertEqual(rendered[0]["playing"], None)
+
+    def test_unknown_key_returns_payload_unchanged(self) -> None:
+        # REQ-1 AC4: unknown key returns payload verbatim (graceful default).
+        payload = {"a": 1}
+        rendered = summarize("unknown_service", "unknown_command", payload)
+        self.assertEqual(rendered, payload)
+
+    def test_empty_key_returns_payload_unchanged(self) -> None:
+        # Empty key ``("", "")`` is not in the table; ``summarize``
+        # returns the payload unchanged (graceful default).
+        payload = {"a": 1}
+        rendered = summarize("", "", payload)
+        self.assertEqual(rendered, payload)
+
+
+# ---------------------------------------------------------------------------
+# (service, command) threading seam (REQ-3 AC6)
+# ---------------------------------------------------------------------------
+
+
+class TestServiceCommandThreading(unittest.TestCase):
+    """``(service, command)`` reaches the dispatch table from ``emit``."""
+
+    def test_emit_invokes_renderer_when_keys_match(self) -> None:
+        # When ``(service, command)`` is a registered key the renderer
+        # is invoked and the curated summary reaches stdout.
+        payload = [{"UserName": "alice"}]
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=False,
+            verbose_mode=False,
+            service="jellyfin",
+            command="now",
+        )
+        rendered = json.loads(out)
+        self.assertEqual(rendered[0]["user"], "alice")
+
+    def test_emit_without_keys_emits_verbatim(self) -> None:
+        # Without ``service`` / ``command`` the lookup is skipped and
+        # the payload is emitted verbatim (REQ-5 AC3).
+        payload = {"foo": "bar"}
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=False,
+            verbose_mode=False,
+        )
+        self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
+
+    def test_emit_with_non_candidate_key_emits_verbatim(self) -> None:
+        # A non-candidate command (e.g. ``jellyfin item``) falls
+        # through to verbatim even though ``service`` / ``command``
+        # are non-empty.
+        payload = {"Name": "Foo"}
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=False,
+            verbose_mode=False,
+            service="jellyfin",
+            command="item",
+        )
+        self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
+
+    def test_summarize_unknown_key_passthrough(self) -> None:
+        # Same seam as TestSummarizeGracefulDefault; pinned here so
+        # the threading narrative stays co-located.
+        payload = {"a": 1}
+        self.assertEqual(summarize("u", "u", payload), payload)
+
+    def test_summarize_empty_key_passthrough(self) -> None:
+        payload = {"a": 1}
+        self.assertEqual(summarize("", "", payload), payload)
+
+    def test_per_service_emit_threads_service_and_command(self) -> None:
+        # Per-service ``_emit`` must forward ``service`` and
+        # ``command`` kwargs into ``output.emit`` so the dispatch
+        # table lookup fires end-to-end.
+        import argparse
+        from unittest.mock import patch
+        from arr_cli import jellyfin
+
+        args = argparse.Namespace(
+            human=False,
+            verbose=False,
+            command="now",
+            limit=20,
+        )
+        with patch("arr_cli.jellyfin.output.emit") as mock_emit:
+            jellyfin._emit([{"UserName": "alice"}], args)
+        mock_emit.assert_called_once()
+        kwargs = mock_emit.call_args.kwargs
+        self.assertEqual(kwargs["service"], "jellyfin")
+        self.assertEqual(kwargs["command"], "now")
+        self.assertFalse(kwargs["verbose_mode"])
+        self.assertFalse(kwargs["human_mode"])
+
+
+# ---------------------------------------------------------------------------
+# Per-command summary renderer tests (REQ-1, REQ-4)
+# ---------------------------------------------------------------------------
+
+
+class TestSummaryJellyfinNow(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("jellyfin", "now")]`` matches the spec."""
+
+    def test_session_with_now_playing(self) -> None:
+        payload = [
+            {
+                "UserName": "alice",
+                "DeviceName": "Living Room TV",
+                "Client": "Jellyfin Web",
+                "NowPlayingItem": {
+                    "Type": "Episode",
+                    "Name": "The Pilot",
+                    "SeriesName": "Show",
+                    "ParentIndexNumber": 1,
+                    "IndexNumber": 1,
+                },
+                "PlayState": {"PositionTicks": 12345, "IsPaused": False},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "now")](payload)
+        self.assertEqual(len(rendered), 1)
+        session = rendered[0]
+        self.assertEqual(session["user"], "alice")
+        self.assertEqual(session["device"], "Living Room TV")
+        self.assertEqual(session["client"], "Jellyfin Web")
+        self.assertEqual(session["playing"]["type"], "Episode")
+        self.assertEqual(session["playing"]["name"], "The Pilot")
+        self.assertEqual(session["playing"]["series"], "Show")
+        self.assertEqual(session["playing"]["season"], 1)
+        self.assertEqual(session["playing"]["episode"], 1)
+        self.assertEqual(session["progress"]["position_ticks"], 12345)
+        self.assertFalse(session["progress"]["is_paused"])
+
+    def test_no_sessions_returns_empty_list(self) -> None:
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "now")]([])
+        self.assertEqual(rendered, [])
+
+    def test_now_playing_null_collapses_to_none(self) -> None:
+        payload = [
+            {
+                "UserName": "alice",
+                "DeviceName": "Idle Device",
+                "Client": "Jellyfin",
+                "PlayState": {"PositionTicks": 0, "IsPaused": True},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "now")](payload)
+        self.assertIsNone(rendered[0]["playing"])
+
+    def test_non_list_payload_returns_empty_list(self) -> None:
+        # Defensive: non-list payload must not raise.
+        self.assertEqual(_SUMMARY_RENDERERS[("jellyfin", "now")](None), [])
+        self.assertEqual(_SUMMARY_RENDERERS[("jellyfin", "now")]({}), [])
+
+
+class TestSummaryJellyfinRecent(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("jellyfin", "recent")]`` matches the spec."""
+
+    def test_recent_shape(self) -> None:
+        payload = [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": None,
+                "UserData": {"LastPlayedDate": "2024-01-01"},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "recent")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": None,
+                "UserData.LastPlayedDate": "2024-01-01",
+            },
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("jellyfin", "recent")](None),
+            [],
+        )
+
+    def test_missing_user_data_defaults_to_none(self) -> None:
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "recent")](
+            [{"Name": "Foo", "Type": "Movie", "ProductionYear": 2020}]
+        )
+        self.assertIsNone(rendered[0]["UserData.LastPlayedDate"])
+
+
+class TestSummaryJellyfinFavorites(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("jellyfin", "favorites")]`` matches the spec."""
+
+    def test_favorites_shape(self) -> None:
+        payload = [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2020,
+                "SeriesName": None,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "favorites")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2020,
+                "SeriesName": None,
+            },
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("jellyfin", "favorites")](None),
+            [],
+        )
+
+
+class TestSummaryJellyfinResume(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("jellyfin", "resume")]`` matches the spec."""
+
+    def test_resume_shape(self) -> None:
+        payload = [
+            {
+                "Name": "Foo",
+                "Type": "Episode",
+                "ProductionYear": 2020,
+                "SeriesName": "Show",
+                "UserData": {"PlaybackPositionTicks": 100, "PlayCount": 2},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "resume")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "Name": "Foo",
+                "Type": "Episode",
+                "ProductionYear": 2020,
+                "SeriesName": "Show",
+                "UserData.PlaybackPositionTicks": 100,
+                "UserData.PlayCount": 2,
+            },
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("jellyfin", "resume")](None),
+            [],
+        )
+
+
+class TestSummaryJellyfinLatest(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("jellyfin", "latest")]`` matches the spec."""
+
+    def test_latest_shape(self) -> None:
+        payload = [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2025,
+                "SeriesName": None,
+                "DateCreated": "2025-06-01T00:00:00Z",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "latest")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2025,
+                "SeriesName": None,
+                "DateCreated": "2025-06-01T00:00:00Z",
+            },
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("jellyfin", "latest")](None),
+            [],
+        )
+
+
+class TestSummaryRadarrWanted(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("radarr", "wanted")]`` matches the spec."""
+
+    def test_wanted_shape(self) -> None:
+        payload = [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "tmdbId": 999,
+                "monitored": True,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "wanted")](payload)
+        self.assertEqual(
+            rendered[0],
+            {"title": "Foo", "year": 2024, "tmdbId": 999, "monitored": True},
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("radarr", "wanted")](None),
+            [],
+        )
+
+
+class TestSummaryRadarrQueue(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("radarr", "queue")]`` matches the spec."""
+
+    def test_queue_shape(self) -> None:
+        payload = [
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+            },
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("radarr", "queue")](None),
+            [],
+        )
+
+
+class TestSummaryRadarrRecent(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("radarr", "recent")]`` matches the spec."""
+
+    def test_recent_with_movie(self) -> None:
+        payload = [
+            {
+                "movie": {"title": "Foo", "year": 2024},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "recent")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "movie": {"title": "Foo", "year": 2024},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            },
+        )
+
+    def test_recent_missing_movie(self) -> None:
+        # Defensive: missing ``movie`` object returns placeholder dict.
+        payload = [{"eventType": "x", "date": "y"}]
+        rendered = _SUMMARY_RENDERERS[("radarr", "recent")](payload)
+        self.assertEqual(
+            rendered[0]["movie"],
+            {"title": None, "year": 0},
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("radarr", "recent")](None),
+            [],
+        )
+
+
+class TestSummarySonarrWanted(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("sonarr", "wanted")]`` matches the spec."""
+
+    def test_wanted_shape(self) -> None:
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "monitored": True,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "wanted")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "monitored": True,
+            },
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("sonarr", "wanted")](None),
+            [],
+        )
+
+
+class TestSummarySonarrQueue(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("sonarr", "queue")]`` matches the spec."""
+
+    def test_queue_shape(self) -> None:
+        payload = [
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "queue")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+            },
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("sonarr", "queue")](None),
+            [],
+        )
+
+
+class TestSummarySonarrRecent(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("sonarr", "recent")]`` matches the spec."""
+
+    def test_recent_with_nested_objects(self) -> None:
+        payload = [
+            {
+                "series": {"title": "Show"},
+                "episode": {"title": "Pilot"},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "series": {"title": "Show"},
+                "episode": {"title": "Pilot"},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            },
+        )
+
+    def test_recent_missing_nested_objects(self) -> None:
+        payload = [{"eventType": "x", "date": "y"}]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
+        self.assertEqual(rendered[0]["series"], {"title": None})
+        self.assertEqual(rendered[0]["episode"], {"title": None})
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("sonarr", "recent")](None),
+            [],
+        )
+
+
+class TestSummarySeerrRequests(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "requests")]`` matches the spec."""
+
+    def test_requests_shape(self) -> None:
+        payload = [
+            {
+                "title": "Foo",
+                "type": "movie",
+                "status": "pending",
+                "createdAt": "2024-01-01",
+                "requestedBy": {"displayName": "alice"},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Foo",
+                "type": "movie",
+                "status": "pending",
+                "createdAt": "2024-01-01",
+                "requestedBy": {"displayName": "alice"},
+            },
+        )
+
+    def test_requests_missing_requester(self) -> None:
+        payload = [{"title": "Foo", "type": "movie", "status": "x", "createdAt": "y"}]
+        rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
+        self.assertEqual(rendered[0]["requestedBy"], {"displayName": None})
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "requests")](None),
+            [],
+        )
+
+
+class TestSummarySeerrSearch(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "search")]`` matches the spec."""
+
+    def test_search_shape(self) -> None:
+        payload = [
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 999},
+            },
+        )
+
+    def test_search_missing_media_info(self) -> None:
+        payload = [
+            {"title": "Foo", "mediaType": "movie", "releaseDate": "y"}
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
+        self.assertEqual(rendered[0]["mediaInfo"], {"tmdbId": 0})
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "search")](None),
+            [],
+        )
+
+
+class TestSummarySeerrAvailable(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "available")]`` matches the spec."""
+
+    def test_available_shape(self) -> None:
+        payload = [
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"status": 5},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "available")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"status": 5},
+            },
+        )
+
+    def test_available_missing_media_info(self) -> None:
+        payload = [
+            {"title": "Foo", "mediaType": "movie", "releaseDate": "y"}
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "available")](payload)
+        self.assertEqual(rendered[0]["mediaInfo"], {"status": 0})
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "available")](None),
+            [],
+        )
+
+
+class TestSummaryMaintainerrPending(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("maintainerr", "pending")]`` matches the spec."""
+
+    def test_pending_shape(self) -> None:
+        payload = [
+            {
+                "title": "Old Movies",
+                "mediaCount": 42,
+                "deleteAfterDays": 14,
+                "isOnHold": False,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("maintainerr", "pending")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Old Movies",
+                "mediaCount": 42,
+                "deleteAfterDays": 14,
+                "isOnHold": False,
+            },
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("maintainerr", "pending")](None),
+            [],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Safe-access helpers
+# ---------------------------------------------------------------------------
+
+
+class TestSafeGet(unittest.TestCase):
+    """``_safe_get`` tolerates missing keys, list-index OOB, and ``None``."""
+
+    def test_simple_dict_lookup(self) -> None:
+        self.assertEqual(_safe_get({"a": 1}, "a"), 1)
+
+    def test_nested_dict_lookup(self) -> None:
+        self.assertEqual(_safe_get({"a": {"b": 2}}, "a", "b"), 2)
+
+    def test_missing_key_returns_default(self) -> None:
+        self.assertIsNone(_safe_get({}, "a"))
+        self.assertEqual(_safe_get({}, "a", default=42), 42)
+
+    def test_missing_nested_returns_default(self) -> None:
+        self.assertEqual(
+            _safe_get({"a": {}}, "a", "b", default=0), 0
+        )
+
+    def test_walk_into_none_returns_default(self) -> None:
+        # Walking into ``None`` returns the default instead of raising.
+        self.assertIsNone(_safe_get({"a": None}, "a", "b"))
+        self.assertEqual(
+            _safe_get({"a": None}, "a", "b", default=False), False
+        )
+
+    def test_list_index_lookup(self) -> None:
+        self.assertEqual(_safe_get([10, 20, 30], 1), 20)
+
+    def test_list_index_out_of_range(self) -> None:
+        self.assertIsNone(_safe_get([1, 2], 5))
 
 
 if __name__ == "__main__":

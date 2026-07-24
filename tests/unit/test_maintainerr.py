@@ -353,7 +353,9 @@ class TestCmdPending(unittest.TestCase):
 
     def test_pending_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
-        args = _namespace(human=False)
+        # ``--verbose`` preserves the pre-change verbatim pass-through
+        # for the size-to-summary candidate ``maintainerr pending``.
+        args = _namespace(human=False, verbose=True, command="pending")
         payload = [{"title": "Old Movies", "mediaCount": 42}]
         with _patched_get_payload(payload):
             output = _capture_stdout(cmd_pending, args, cfg)
@@ -871,6 +873,42 @@ class TestMissingSection(unittest.TestCase):
                 cmd_pending(args, cfg)
         self.assertEqual(ctx.exception.exit_code, 2)
         self.assertIn("section missing", ctx.exception.message)
+
+
+# ---------------------------------------------------------------------------
+# Test: --verbose flag flip for cmd_pending
+# ---------------------------------------------------------------------------
+
+
+class TestVerboseFlagCmdPending(unittest.TestCase):
+    """REQ-6 AC4: ``cmd_pending`` summary vs verbose paths."""
+
+    def test_cmd_pending_default_emits_summary(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="pending")
+        payload = [
+            {
+                "title": "Old Movies",
+                "mediaCount": 42,
+                "deleteAfterDays": 14,
+                "isOnHold": False,
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_pending, args, cfg)
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["title"], "Old Movies")
+        self.assertEqual(rendered[0]["mediaCount"], 42)
+        self.assertEqual(rendered[0]["deleteAfterDays"], 14)
+        self.assertFalse(rendered[0]["isOnHold"])
+
+    def test_cmd_pending_verbose_emits_verbatim(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="pending", verbose=True)
+        payload = [{"title": "Old Movies", "mediaCount": 42}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_pending, args, cfg)
+        self.assertEqual(json.loads(output), payload)
 
 
 if __name__ == "__main__":

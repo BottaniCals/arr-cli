@@ -290,7 +290,9 @@ class TestCmdNow(unittest.TestCase):
 
     def test_now_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
-        args = _namespace(human=False)
+        # ``--verbose`` preserves the pre-change verbatim pass-through
+        # behaviour for the now-summary candidate ``jellyfin now``.
+        args = _namespace(human=False, verbose=True)
         payload = [{"DeviceName": "Living Room TV", "UserName": "operator"}]
         with _patched_get_payload(payload):
             output = _capture_stdout(cmd_now, args, cfg)
@@ -956,6 +958,52 @@ class TestAuthHeaderPolicy(unittest.TestCase):
                 "jellyfin",
                 msg=f"{handler.__name__} did not use jellyfin service",
             )
+
+
+# ---------------------------------------------------------------------------
+# Test: --verbose flag flip for cmd_now
+# ---------------------------------------------------------------------------
+
+
+class TestVerboseFlagCmdNow(unittest.TestCase):
+    """REQ-6 AC4(a)/(b): ``cmd_now`` summary vs verbose paths."""
+
+    def test_cmd_now_default_emits_summary(self) -> None:
+        # Without ``--verbose`` the default for the size-to-summary
+        # candidate ``jellyfin now`` is the curated summary shape.
+        cfg = _service_config()
+        args = _namespace(command="now")
+        payload = [
+            {
+                "UserName": "alice",
+                "DeviceName": "Living Room TV",
+                "Client": "Jellyfin Web",
+                "NowPlayingItem": {
+                    "Type": "Episode",
+                    "Name": "Pilot",
+                    "SeriesName": "Show",
+                    "ParentIndexNumber": 1,
+                    "IndexNumber": 1,
+                },
+                "PlayState": {"PositionTicks": 100, "IsPaused": False},
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_now, args, cfg)
+        rendered = json.loads(output)
+        self.assertIsInstance(rendered, list)
+        self.assertEqual(rendered[0]["user"], "alice")
+        self.assertEqual(rendered[0]["device"], "Living Room TV")
+        self.assertEqual(rendered[0]["playing"]["name"], "Pilot")
+
+    def test_cmd_now_verbose_emits_verbatim(self) -> None:
+        # ``--verbose`` restores the pre-change verbatim pass-through.
+        cfg = _service_config()
+        args = _namespace(command="now", verbose=True)
+        payload = [{"DeviceName": "Living Room TV", "UserName": "operator"}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_now, args, cfg)
+        self.assertEqual(json.loads(output), payload)
 
 
 if __name__ == "__main__":
