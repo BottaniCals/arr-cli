@@ -447,7 +447,9 @@ class TestCmdWanted(unittest.TestCase):
 
     def test_wanted_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
-        args = _namespace(human=False)
+        # ``--verbose`` preserves the pre-change verbatim pass-through
+        # for the size-to-summary candidate ``sonarr wanted``.
+        args = _namespace(human=False, verbose=True, command="wanted")
         payload = [
             {
                 "title": "S02E03",
@@ -963,6 +965,50 @@ class TestAuthHeaderPolicy(unittest.TestCase):
                 "sonarr",
                 msg=f"{handler.__name__} did not use sonarr service",
             )
+
+
+# ---------------------------------------------------------------------------
+# Test: --verbose flag flip for cmd_wanted
+# ---------------------------------------------------------------------------
+
+
+class TestVerboseFlagCmdWanted(unittest.TestCase):
+    """REQ-6 AC4: ``cmd_wanted`` summary vs verbose paths."""
+
+    def test_cmd_wanted_default_emits_summary(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="wanted")
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "monitored": True,
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_wanted, args, cfg)
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["title"], "Pilot")
+        self.assertEqual(rendered[0]["seasonNumber"], 1)
+        self.assertEqual(rendered[0]["episodeNumber"], 1)
+        self.assertTrue(rendered[0]["monitored"])
+
+    def test_cmd_wanted_verbose_emits_verbatim(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="wanted", verbose=True)
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "monitored": True,
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_wanted, args, cfg)
+        self.assertEqual(json.loads(output), payload)
 
 
 if __name__ == "__main__":

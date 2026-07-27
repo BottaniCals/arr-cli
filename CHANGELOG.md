@@ -5,6 +5,39 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 within the pre-1.0 contract documented in `README.md`.
 
+## [Unreleased]
+
+### Changed
+
+- The default JSON output for the 15 size-to-summary candidate commands is
+  now a curated per-command summary sized for chat-agent consumption
+  (workboard ticket `6a4dfded-9944-47e7-ad86-59a712e93fb0`, option (a)):
+  - `jellyfin`: `now`, `recent`, `favorites`, `resume`, `latest`
+  - `radarr`: `wanted`, `queue`, `recent`
+  - `sonarr`: `wanted`, `queue`, `recent`
+  - `seerr`: `requests`, `search`, `available`
+  - `maintainerr`: `pending`
+- The remaining 14 commands (`jellyfin item`/`search`/`nextup`,
+  `radarr calendar`/`lookup`/`movie`, `sonarr calendar`/`lookup`/`series`,
+  `seerr request-count`/`media`/`user`, `maintainerr health`/`storage`)
+  continue to emit verbatim service JSON unchanged.
+
+### Added
+
+- `--verbose` universal flag (registered on every per-service CLI) — emits
+  the verbatim service JSON payload on stdout instead of the curated
+  summary. The renderer priority chain is `--human` > `--verbose` >
+  default summary > verbatim JSON.
+- `arr_cli.facade.output.summarize(service, command, payload)` public
+  function and the underlying `_SUMMARY_RENDERERS` dispatch table --
+  single audit point for per-command summary rendering.
+
+### Breaking
+
+- Default JSON output for the 15 size-to-summary candidate commands is no
+  longer verbatim; pass `--verbose` to restore the pre-change behaviour.
+  Workboard ticket `6a4dfded-9944-47e7-ad86-59a712e93fb0` option (a).
+
 ## [MVP] - 2026-07-22
 
 The first shippable release of `arr-cli`. Five thin, read-only Python CLIs

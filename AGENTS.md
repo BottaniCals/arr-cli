@@ -22,10 +22,20 @@ total) that wraps a self-hosted media server stack:
 All commands are HTTP `GET`. There are **no write endpoints** in MVP. Every
 command must:
 
-- emit verbatim service JSON on stdout by default,
+- emit a curated per-command summary on stdout by default for the 15
+  size-to-summary candidate commands; pass `--verbose` for the verbatim
+  service payload,
+- emit the verbatim service JSON on stdout for the 14
+  safe-to-leave-alone commands (no summary renderer is registered for
+  these, so `--verbose` is a no-op on them),
 - emit a tabular readable view on `--human` / `-h`,
 - emit diagnostics on stderr (so `stdout` is pipe-clean JSON),
 - return one of the five stable exit codes documented in `README.md §7`.
+
+The renderer priority chain (`--human` > `--verbose` > default summary)
+is documented in the docstring of `arr_cli.facade.output.emit`; the
+dispatch table `_SUMMARY_RENDERERS` is the single registration point for
+new size-to-summary candidates.
 
 The shared HTTP, config, auth, and output code lives in `arr_cli.facade/`.
 Per-service CLIs in `arr_cli/{jellyfin,radarr,sonarr,maintainerr,seerr}.py`

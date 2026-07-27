@@ -207,6 +207,11 @@ class TestBuildParserDefaults(unittest.TestCase):
         args = self.parser.parse_args([])
         self.assertFalse(args.human)
 
+    def test_default_verbose_is_false(self) -> None:
+        # REQ-2 AC5: ``--verbose`` defaults to ``False``.
+        args = self.parser.parse_args([])
+        self.assertFalse(args.verbose)
+
     def test_default_connect_timeout(self) -> None:
         args = self.parser.parse_args([])
         self.assertEqual(args.connect_timeout, DEFAULT_CONNECT_TIMEOUT)
@@ -306,6 +311,36 @@ class TestBuildParserHumanAlias(unittest.TestCase):
         # The argparse output starts with "usage:" so we use that
         # as a stable anchor across argparse versions.
         self.assertIn("usage:", stdout)
+
+
+# ---------------------------------------------------------------------------
+# build_parser: --verbose flag
+# ---------------------------------------------------------------------------
+
+
+class TestBuildParserVerboseFlag(unittest.TestCase):
+    """``--verbose`` defaults to False and has no short alias (REQ-2 AC5)."""
+
+    def setUp(self) -> None:
+        self.parser = build_parser("radarr", "Radarr CLI")
+
+    def test_verbose_enables(self) -> None:
+        # REQ-2 AC5: ``--verbose`` flips ``args.verbose`` to True.
+        args = self.parser.parse_args(["--verbose"])
+        self.assertTrue(args.verbose)
+
+    def test_verbose_default_is_false(self) -> None:
+        # REQ-2 AC5: ``--verbose`` defaults to False.
+        args = self.parser.parse_args([])
+        self.assertFalse(args.verbose)
+
+    def test_verbose_and_human_coexist(self) -> None:
+        # The priority chain resolves at emit time; both flags must
+        # coexist on the parsed namespace without conflict so the
+        # ``--human`` branch can win the dispatch.
+        args = self.parser.parse_args(["--verbose", "--human"])
+        self.assertTrue(args.verbose)
+        self.assertTrue(args.human)
 
 
 # ---------------------------------------------------------------------------

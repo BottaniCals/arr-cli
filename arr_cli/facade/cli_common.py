@@ -155,6 +155,11 @@ def build_parser(
       ``--help`` form remains available. This matches the design
       contract; users wanting the standard ``-h`` help can still use
       ``--help``.
+    * ``--verbose`` -- emit the verbatim service JSON payload instead
+      of the curated summary (default for size-to-summary commands).
+      No short alias. The renderer priority chain is
+      ``--human`` > ``--verbose`` > default summary (REQ-3 AC1-AC4,
+      REQ-6 AC2).
     * ``--connect-timeout <float>`` -- per-call connect timeout
       (seconds). Default :data:`DEFAULT_CONNECT_TIMEOUT` (5.0).
     * ``--read-timeout <float>`` -- per-call read timeout (seconds).
@@ -245,6 +250,15 @@ def build_parser(
         help=(
             "render a tabular human-readable view instead of JSON "
             "(REQ-3 AC2); pagination is controlled by --limit"
+        ),
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        default=False,
+        help=(
+            "emit the verbatim service JSON payload instead of the "
+            "curated summary (default for size-to-summary commands)"
         ),
     )
 

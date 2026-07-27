@@ -7,8 +7,19 @@ CLI. Uses ``unittest`` + ``unittest.mock`` (no pytest, no ``responses``).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
+import json
 import unittest
 from unittest.mock import patch
+
+
+def _capture_stdout(callable_: object, *args: object, **kwargs: object) -> str:
+    """Invoke ``callable_`` with stdout redirected to a StringIO buffer."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        callable_(*args, **kwargs)  # type: ignore[operator]
+    return buffer.getvalue()
 
 
 class TestSeerrModule(unittest.TestCase):
@@ -78,6 +89,75 @@ class TestSeerrModule(unittest.TestCase):
         # "exits cleanly with code 0".
         exit_code = seerr.main(["--help"])
         self.assertEqual(exit_code, 0)
+
+
+# ---------------------------------------------------------------------------
+# Test: --verbose flag flip for cmd_requests
+# ---------------------------------------------------------------------------
+
+
+class TestVerboseFlagCmdRequests(unittest.TestCase):
+    """REQ-6 AC4: ``cmd_requests`` summary vs verbose paths."""
+
+    def test_cmd_requests_default_emits_summary(self) -> None:
+        from arr_cli.seerr import cmd_requests
+
+        args = argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=False,
+            verbose=False,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="requests",
+        )
+        payload = [
+            {
+                "title": "Foo",
+                "type": "movie",
+                "status": "pending",
+                "createdAt": "2024-01-01",
+                "requestedBy": {"displayName": "alice"},
+            }
+        ]
+        with patch("arr_cli.seerr.transport.get", return_value=payload):
+            output = _capture_stdout(cmd_requests, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(rendered[0]["type"], "movie")
+        self.assertEqual(rendered[0]["status"], "pending")
+        self.assertEqual(rendered[0]["requestedBy"]["displayName"], "alice")
+
+    def test_cmd_requests_verbose_emits_verbatim(self) -> None:
+        from arr_cli.seerr import cmd_requests
+
+        args = argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=False,
+            verbose=True,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="requests",
+        )
+        payload = [
+            {
+                "title": "Foo",
+                "type": "movie",
+                "status": "pending",
+            }
+        ]
+        with patch("arr_cli.seerr.transport.get", return_value=payload):
+            output = _capture_stdout(cmd_requests, args, None)
+        self.assertEqual(json.loads(output), payload)
 
 
 if __name__ == "__main__":
