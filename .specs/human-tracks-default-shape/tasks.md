@@ -61,13 +61,13 @@ Implementation order:
     - Also assert the docstring references `:func:`summarize`` so a future revert that drops the summary-shape language fails (REQ-2 AC1).
     - _Requirements: REQ-4 AC3, REQ-2 AC1_
 
-- [ ] 3. Verify CI gates and untouched-files contract
-  - [ ] 3.1 Run `make ci` and `make lint` locally and confirm both pass with the patched `emit()` and the new tests
+- [x] 3. Verify CI gates and untouched-files contract
+  - [x] 3.1 Run `make ci` and `make lint` locally and confirm both pass with the patched `emit()` and the new tests
     - Execute `make ci` (= `make test && make secret-scan && make smoke-dry`) and confirm all three stages exit 0.
     - Execute `make lint` and confirm the `py_compile` sweep stays green for the patched `arr_cli/facade/output.py`.
     - If any test fails, fix it in the same patch (do not loosen assertions).
     - _Requirements: REQ-5 AC2, REQ-5 AC3, NFR-Reliability_
-  - [ ] 3.2 Confirm no file outside `arr_cli/facade/output.py` and `tests/unit/test_output.py` was modified
+  - [x] 3.2 Confirm no file outside `arr_cli/facade/output.py` and `tests/unit/test_output.py` was modified
     - `git status --porcelain` should list exactly those two files (plus possibly `CHANGELOG.md` if the contributor chose to log the fix in the Unreleased section; otherwise untouched).
     - No per-service CLI (`arr_cli/{jellyfin,radarr,sonarr,maintainerr,seerr}.py`) is modified; no `_summary_*` renderer is modified; no `pyproject.toml` change; no transport / config / retry module change.
     - Verify with `git diff --stat HEAD~1 -- arr_cli/` that only `output.py` appears.
