@@ -282,7 +282,22 @@ def _row_from_mapping(
     columns: Sequence[str],
 ) -> list[str]:
     """Project a mapping onto the configured columns."""
-    return [_stringify(item.get(column)) for column in columns]
+    row: list[str] = []
+    for column in columns:
+        current: Any = item
+        try:
+            for seg in column.split("."):
+                if isinstance(current, Mapping):
+                    current = current[seg]
+                elif isinstance(current, Sequence):
+                    current = current[int(seg)]
+                else:
+                    current = None
+                    break
+        except (KeyError, IndexError, TypeError):
+            current = None
+        row.append(_stringify(current))
+    return row
 
 
 def _row_from_sequence(

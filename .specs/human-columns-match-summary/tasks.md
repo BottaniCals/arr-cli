@@ -13,8 +13,8 @@ Implementation order:
 
 ## Tasks
 
-- [ ] 1. Add dot-path traversal to `human._row_from_mapping`
-  - [ ] 1.1 Modify `_row_from_mapping` in `arr_cli/facade/output.py` to walk dot-separated column tokens
+- [x] 1. Add dot-path traversal to `human._row_from_mapping`
+  - [x] 1.1 Modify `_row_from_mapping` in `arr_cli/facade/output.py` to walk dot-separated column tokens
     - Open `/workspace/projects/media-cli/arr_cli/facade/output.py` and locate `_row_from_mapping` (current location: line 280).
     - Current body: `return [_stringify(item.get(column)) for column in columns]`.
     - Replace with a walk: for each column token, split on `.`; for each segment, if current is a `Mapping` subscript `current[segment]`; if a `Sequence` parse the segment as `int(segment)` and subscript `current[int(segment)]`; on `KeyError`/`IndexError`/`TypeError` return `None` (rendered as `<null>` by `_stringify`).
@@ -23,7 +23,7 @@ Implementation order:
     - Use a small private walker helper inside the function (e.g. local `_walk(item, segments, idx)` or just a `for` loop) — do NOT introduce a new module-level function. Keep the change ≤ 10 lines.
     - Two-space indent, type hints on any new local binding, no new imports.
     - _Requirements: REQ-16 (dot-path traversal; mapping/sequence/error semantics)_
-  - [ ] 1.2 Add unit tests for the dot-path traversal in `tests/unit/test_output.py`
+  - [x] 1.2 Add unit tests for the dot-path traversal in `tests/unit/test_output.py`
     - Open `/workspace/projects/media-cli/tests/unit/test_output.py` and append a new class `TestDotPathTraversal` (alongside the existing `TestEmitHumanSummarizeRoute`, `TestEmitHumanVerbatimFallback`, etc.).
     - Reuse the existing `_capture_stdout` helper and the existing `human` import.
     - Five test methods (per Req 16 AC3-AC6 + Req 18 AC3 AC5):

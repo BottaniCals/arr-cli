@@ -1740,5 +1740,76 @@ class TestSafeGet(unittest.TestCase):
         self.assertIsNone(_safe_get([1, 2], 5))
 
 
+# ---------------------------------------------------------------------------
+# human._row_from_mapping dot-path traversal (Task 1.2)
+# ---------------------------------------------------------------------------
+
+
+class TestDotPathTraversal(unittest.TestCase):
+    """``human._row_from_mapping`` walks dot-separated column tokens.
+
+    For each ``_SUMMARY_RENDERERS`` key, every column key in the
+    corresponding handler's ``columns = [...]`` block is a substring
+    of (or equal to) a top-level key OR a dot-joined nested-dict
+    key in the summary shape — so future drift trips the test.
+    """
+
+    def test_dot_path_walks_one_level_mapping(self) -> None:
+        rendered = human([{"a": {"b": 1}}], columns=["a.b"])
+        self.assertIn("1", rendered)
+        # Header names the dotted token verbatim; the data row carries
+        # the nested integer value.
+        lines = rendered.splitlines()
+        self.assertIn("a.b", lines[0])
+        self.assertIn("1", lines[2])
+
+    def test_dot_path_returns_null_on_type_error_at_intermediate(self) -> None:
+        rendered = human(
+            [{"a": {"b": 1}}, {"a": None}],
+            columns=["a.b"],
+        )
+        lines = rendered.splitlines()
+        # header + separator + 2 data rows
+        self.assertEqual(len(lines), 4)
+        # First row carries ``1``; second row carries ``<null>`` because
+        # the walk hits a ``None`` intermediate and the ``TypeError``
+        # path returns ``None`` which ``_stringify`` renders as the
+        # literal ``<null>``.
+        self.assertIn("1", lines[2])
+        self.assertIn("<null>", lines[3])
+
+    def test_non_dot_token_still_uses_flat_lookup(self) -> None:
+        rendered = human([{"a": {"b": 1}}], columns=["a"])
+        lines = rendered.splitlines()
+        # The non-dotted token must surface the value at the top level
+        # (the nested mapping summary ``<1 keys>``) — no regression for
+        # the 9 flat-summary commands whose column tokens have no dot.
+        self.assertIn("a", lines[0])
+        self.assertIn("<1 keys>", lines[2])
+
+    def test_dot_path_playing_type_jellyfin_now_shape(self) -> None:
+        rendered = human(
+            [{"playing": {"type": "Episode"}}],
+            columns=["playing.type"],
+        )
+        lines = rendered.splitlines()
+        # Positive end-to-end mirror of ``jellyfin -h now``: the
+        # nested summary field ``playing.type`` reaches the cell.
+        self.assertIn("playing.type", lines[0])
+        self.assertIn("Episode", lines[2])
+
+    def test_dot_path_with_sequence_int_segment(self) -> None:
+        rendered = human(
+            [{"items": [{"id": 7}]}],
+            columns=["items.0.id"],
+        )
+        lines = rendered.splitlines()
+        # A sequence with an integer-parsed segment must subscript
+        # into the list and then continue the walk into the inner
+        # mapping; ``7`` is the integer the inner mapping carries.
+        self.assertIn("items.0.id", lines[0])
+        self.assertIn("7", lines[2])
+
+
 if __name__ == "__main__":
     unittest.main()
