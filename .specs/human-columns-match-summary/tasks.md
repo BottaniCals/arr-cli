@@ -95,13 +95,13 @@ Implementation order:
     - In `tests/unit/test_output.py`, add a one-line class docstring (or leading comment) on each of `TestColumnsBlockMatchesSummaryShape`, `TestHumanRendersNonNullRowsForSizeToSummary`, and `TestDotPathTraversal` documenting the rationale: "for each `_SUMMARY_RENDERERS` key, every column key in the corresponding handler's `columns = [...]` block is a substring of (or equal to) a top-level key OR a dot-joined nested-dict key in the summary shape — so future drift trips the test".
     - _Requirements: REQ-18 AC4_
 
-- [ ] 4. Verify CI gates and untouched-files contract
-  - [ ] 4.1 Run `make ci` and `make lint` locally and confirm both pass
+- [x] 4. Verify CI gates and untouched-files contract
+  - [x] 4.1 Run `make ci` and `make lint` locally and confirm both pass
     - Execute `make ci` (== `make test && make secret-scan && make smoke-dry`) and confirm all three stages exit 0.
     - Execute `make lint` and confirm the `py_compile` sweep stays green for the touched files (`arr_cli/facade/output.py`, `arr_cli/{jellyfin,radarr,sonarr,seerr}.py`, `tests/unit/test_output.py`).
     - If any test fails, fix it in the same patch (do NOT loosen assertions).
     - _Requirements: REQ-17 AC4, NFR-Reliability_
-  - [ ] 4.2 Confirm the touched-files list matches the design's scope
+  - [x] 4.2 Confirm the touched-files list matches the design's scope
     - `git status --porcelain` SHALL list exactly: `arr_cli/facade/output.py`, `arr_cli/jellyfin.py`, `arr_cli/radarr.py`, `arr_cli/sonarr.py`, `arr_cli/seerr.py`, `tests/unit/test_output.py` (plus possibly the three new spec files under `.specs/human-columns-match-summary/`).
     - `arr_cli/maintainerr.py` SHALL NOT appear in the diff (its columns block is already aligned per Req 15).
     - `_SUMMARY_RENDERERS` dispatch table body SHALL NOT change (same 15 entries).
