@@ -281,21 +281,34 @@ def _row_from_mapping(
     item: Mapping[str, Any],
     columns: Sequence[str],
 ) -> list[str]:
-    """Project a mapping onto the configured columns."""
+    """Project a mapping onto the configured columns.
+
+    For each column token the lookup tries ``item.get(column)`` first
+    so flat-with-dots keys (e.g. ``UserData.PlaybackPositionTicks``,
+    emitted as a literal top-level key by the jellyfin resume /
+    recent summary renderers) resolve without needing a nested
+    ``UserData`` mapping. When the flat lookup misses AND the token
+    contains a ``.``, the fallback walks the dot-separated path so
+    nested-summary tokens (e.g. ``playing.type``, ``movie.title``)
+    still reach the nested field. Per REQ-16 AC2 the non-dotted
+    branch is a strict subset of the pre-change flat-key lookup.
+    """
     row: list[str] = []
     for column in columns:
-        current: Any = item
-        try:
-            for seg in column.split("."):
-                if isinstance(current, Mapping):
-                    current = current[seg]
-                elif isinstance(current, Sequence):
-                    current = current[int(seg)]
-                else:
-                    current = None
-                    break
-        except (KeyError, IndexError, TypeError):
-            current = None
+        current: Any = item.get(column)
+        if current is None and "." in column:
+            current = item
+            try:
+                for seg in column.split("."):
+                    if isinstance(current, Mapping):
+                        current = current[seg]
+                    elif isinstance(current, Sequence):
+                        current = current[int(seg)]
+                    else:
+                        current = None
+                        break
+            except (KeyError, IndexError, TypeError):
+                current = None
         row.append(_stringify(current))
     return row
 

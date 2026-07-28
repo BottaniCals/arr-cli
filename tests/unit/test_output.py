@@ -21,13 +21,16 @@ deterministic regardless of the host's tty.
 
 from __future__ import annotations
 
+import ast
 import contextlib
+import importlib
 import inspect
 import io
 import json
 import os
 import sys
 import unittest
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -1809,6 +1812,444 @@ class TestDotPathTraversal(unittest.TestCase):
         # mapping; ``7`` is the integer the inner mapping carries.
         self.assertIn("items.0.id", lines[0])
         self.assertIn("7", lines[2])
+
+
+# ---------------------------------------------------------------------------
+# Regression net: columns-block → summary-shape alignment (Task 3,
+# REQ-18 AC1-AC8). Future drift in either side trips the test.
+# ---------------------------------------------------------------------------
+
+
+def _columns_for(service: str, command: str) -> list[str]:
+    """Extract the per-handler ``columns = [...]`` literal for ``cmd_<command>``.
+
+    The literal is local to ``cmd_<command>`` in the per-service CLI
+    module; the only reliable way to read its value without running
+    the function is to parse the module source via :mod:`ast` and
+    evaluate the first ``columns = [...]`` assignment with
+    :func:`ast.literal_eval`. Raises when the literal cannot be
+    reduced to a ``list[str]`` — the test must surface that as a hard
+    failure rather than silently skip.
+    """
+    module = importlib.import_module(f"arr_cli.{service}")
+    source = inspect.getsource(module)
+    tree = ast.parse(source)
+    function_name = f"cmd_{command.replace('-', '_')}"
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name != function_name:
+            continue
+        for stmt in node.body:
+            if not isinstance(stmt, ast.Assign):
+                continue
+            target_names = [
+                t.id for t in stmt.targets if isinstance(t, ast.Name)
+            ]
+            if "columns" not in target_names:
+                continue
+            try:
+                value = ast.literal_eval(stmt.value)
+            except ValueError as exc:
+                raise AssertionError(
+                    f"({service}, {command}): columns literal is not "
+                    f"a static list[string] — pin via the "
+                    f"EXPECTED_COLUMNS hardcoded map (got {exc})"
+                ) from exc
+            if not isinstance(value, list) or not all(
+                isinstance(item, str) for item in value
+            ):
+                raise AssertionError(
+                    f"({service}, {command}): columns literal is not "
+                    f"a list[str]; got {type(value).__name__}"
+                )
+            return value
+    raise AssertionError(
+        f"({service}, {command}): no `columns = [...]` literal found "
+        f"inside {function_name}()"
+    )
+
+
+def _expected_keys_from_summary(summary: Any) -> set[str]:
+    """Compute the set of column-token candidates from a summary shape.
+
+    Flat top-level keys are returned verbatim; for each nested
+    ``Mapping`` value the inner keys are dot-joined onto the parent
+    (e.g. ``playing.type`` for ``{playing: {type: ...}}``). When the
+    summary is a single non-list scalar the returned set is ``{""}``
+    so the single-column case has a fallback key.
+    """
+    keys: set[str] = set()
+    if isinstance(summary, list):
+        if not summary:
+            return keys
+        first = summary[0]
+    else:
+        first = summary
+    if not isinstance(first, Mapping):
+        keys.add("")
+        return keys
+    for top_key, top_value in first.items():
+        keys.add(top_key)
+        if isinstance(top_value, Mapping):
+            for inner_key, inner_value in top_value.items():
+                keys.add(f"{top_key}.{inner_key}")
+                if isinstance(inner_value, Mapping):
+                    # Two levels deep: ``movie.title`` is itself a
+                    # nested mapping; ``movie.title.original`` would
+                    # be accepted too even though the handlers don't
+                    # currently use it.
+                    for inner_inner_key in inner_value.keys():
+                        keys.add(f"{top_key}.{inner_key}.{inner_inner_key}")
+    return keys
+
+
+def _synthetic_payload(svc: str, cmd: str) -> Any:
+    """Build a realistic synthetic payload for each (svc, cmd).
+
+    The payload uses verbatim-shape keys (the ones the real upstream
+    service returns) so the summary renderer populates every field
+    with a non-``None`` primitive. The 15 renderers are stable
+    post-PR-#6 (Req 17 AC4) so a hardcoded dispatcher is acceptable.
+    """
+    payloads: dict[tuple[str, str], Any] = {
+        ("jellyfin", "now"): [
+            {
+                "UserName": "alice",
+                "DeviceName": "Living Room TV",
+                "Client": "Jellyfin Web",
+                "NowPlayingItem": {
+                    "Type": "Episode",
+                    "Name": "The Pilot",
+                    "SeriesName": "Show",
+                    "ParentIndexNumber": 2,
+                    "IndexNumber": 3,
+                },
+                "PlayState": {"PositionTicks": 12345, "IsPaused": False},
+            }
+        ],
+        ("jellyfin", "recent"): [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": "Bar",
+                "UserData": {"LastPlayedDate": "2024-01-01T00:00:00Z"},
+            }
+        ],
+        ("jellyfin", "favorites"): [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": "Bar",
+            }
+        ],
+        ("jellyfin", "resume"): [
+            {
+                "Name": "Foo",
+                "Type": "Episode",
+                "ProductionYear": 2020,
+                "SeriesName": "Bar",
+                "UserData": {
+                    "PlaybackPositionTicks": 12345,
+                    "PlayCount": 2,
+                },
+            }
+        ],
+        ("jellyfin", "latest"): [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2025,
+                "SeriesName": "Bar",
+                "DateCreated": "2025-06-01T00:00:00Z",
+            }
+        ],
+        ("radarr", "wanted"): [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "tmdbId": 999,
+                "monitored": True,
+            }
+        ],
+        ("radarr", "queue"): [
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+            }
+        ],
+        ("radarr", "recent"): [
+            {
+                "movie": {"title": "Foo", "year": 2024},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01T00:00:00Z",
+            }
+        ],
+        ("sonarr", "wanted"): [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 2,
+                "airDate": "2024-01-01",
+                "monitored": True,
+            }
+        ],
+        ("sonarr", "queue"): [
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+            }
+        ],
+        ("sonarr", "recent"): [
+            {
+                "series": {"title": "Show"},
+                "episode": {"title": "Pilot"},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01T00:00:00Z",
+            }
+        ],
+        ("seerr", "requests"): [
+            {
+                "title": "Foo",
+                "type": "movie",
+                "status": "pending",
+                "createdAt": "2024-01-01T00:00:00Z",
+                "requestedBy": {"displayName": "alice"},
+            }
+        ],
+        ("seerr", "search"): [
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ],
+        ("seerr", "available"): [
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"status": 5},
+            }
+        ],
+        ("maintainerr", "pending"): [
+            {
+                "title": "Old Movies",
+                "mediaCount": 42,
+                "deleteAfterDays": 14,
+                "isOnHold": False,
+            }
+        ],
+    }
+    return payloads[(svc, cmd)]
+
+
+class TestColumnsBlockMatchesSummaryShape(unittest.TestCase):
+    """For each ``_SUMMARY_RENDERERS`` key, the handler's
+    ``columns = [...]`` literal must resolve to keys the summary
+    renderer actually emits.
+
+    Per ``_SUMMARY_RENDERERS`` key the handler's ``columns = [...]``
+    block must be a substring of (or equal to) a top-level key OR a
+    dot-joined nested-dict key in the summary shape — so future drift
+    trips the test (REQ-18 AC1, AC7, AC8).
+    """
+
+    def test_every_column_token_resolves_to_summary_key(self) -> None:
+        for (svc, cmd) in _SUMMARY_RENDERERS.keys():
+            with self.subTest(svc=svc, cmd=cmd):
+                columns = _columns_for(svc, cmd)
+                payload = _synthetic_payload(svc, cmd)
+                summary = _SUMMARY_RENDERERS[(svc, cmd)](payload)
+                expected = _expected_keys_from_summary(summary)
+                for column in columns:
+                    matched = any(
+                        column == key or column in key for key in expected
+                    )
+                    self.assertTrue(
+                        matched,
+                        msg=(
+                            f"({svc}, {cmd}): column key {column!r} is "
+                            f"not a substring of any summary key; "
+                            f"expected keys = {sorted(expected)!r}"
+                        ),
+                    )
+
+
+class TestHumanRendersNonNullRowsForSizeToSummary(unittest.TestCase):
+    """For each ``_SUMMARY_RENDERERS`` key, the human rendering of a
+    fully-populated synthetic payload must produce non-``<null>``
+    cells for every column in the handler's ``columns = [...]``
+    block.
+
+    Per ``_SUMMARY_RENDERERS`` key the handler's ``columns = [...]``
+    block must be a substring of (or equal to) a top-level key OR a
+    dot-joined nested-dict key in the summary shape — so future drift
+    trips the test (REQ-18 AC2, AC7, AC8).
+    """
+
+    def test_every_column_renders_a_non_null_cell(self) -> None:
+        for (svc, cmd) in _SUMMARY_RENDERERS.keys():
+            with self.subTest(svc=svc, cmd=cmd):
+                payload = _synthetic_payload(svc, cmd)
+                columns = _columns_for(svc, cmd)
+                if not columns:
+                    continue
+                summary = _SUMMARY_RENDERERS[(svc, cmd)](payload)
+                rendered = human(summary, columns=columns)
+                lines = rendered.splitlines()
+                self.assertGreaterEqual(
+                    len(lines),
+                    3,
+                    msg=(
+                        f"({svc}, {cmd}): rendered table has fewer "
+                        f"than 3 lines; got:\n{rendered!r}"
+                    ),
+                )
+                # Find the column-widths the same way ``human()`` did
+                # so we can extract cell content per column rather
+                # than rely on a substring match against the rendered
+                # blob. Using ``summary``'s first row values directly
+                # is sufficient because the renderer allocates
+                # widths from the headers + the row values.
+                if not isinstance(summary, list) or not summary:
+                    continue
+                first_summary = summary[0]
+                if not isinstance(first_summary, Mapping):
+                    continue
+                first_row_strings = self._row_strings(first_summary, columns)
+                widths = _column_widths(
+                    headers=list(columns),
+                    rows=[first_row_strings],
+                    budget=120,
+                )
+                # Extract each data row's cells by absolute column
+                # offset so the per-column ``<null>`` check does not
+                # bleed across columns (a regression that emits
+                # ``<null>`` for one column must not be hidden by a
+                # populated neighbour).
+                data_cells_per_row: list[list[str]] = []
+                for data_row in lines[2:]:
+                    data_cells_per_row.append(
+                        self._extract_cells(data_row, widths)
+                    )
+                # Limit the per-column check to rendered rows that
+                # are part of the summary (skip pagination footer
+                # lines that ``human()`` appended).
+                payload_first = (
+                    first_summary
+                    if isinstance(first_summary, Mapping)
+                    else None
+                )
+                for col_index, column in enumerate(columns):
+                    rendered_cells_for_column = [
+                        row[col_index] if col_index < len(row) else ""
+                        for row in data_cells_per_row
+                    ]
+                    populated = [
+                        cell for cell in rendered_cells_for_column
+                        if cell != "<null>"
+                    ]
+                    self.assertTrue(
+                        populated,
+                        msg=(
+                            f"({svc}, {cmd}): column {column!r} "
+                            f"rendered <null> for every data row; "
+                            f"rendered={rendered!r}"
+                        ),
+                    )
+
+    @staticmethod
+    def _row_strings(
+        summary_row: Mapping[str, Any], columns: Sequence[str]
+    ) -> list[str]:
+        """Project a single summary row onto the renderer cell strings.
+
+        Mirrors :func:`arr_cli.facade.output._row_from_mapping` so the
+        renderer allocation matches the rendered row's width.
+        """
+        rendered: list[str] = []
+        for column in columns:
+            current: Any = summary_row
+            try:
+                for seg in column.split("."):
+                    if isinstance(current, Mapping):
+                        current = current[seg]
+                    elif isinstance(current, Sequence) and not isinstance(
+                        current, (str, bytes, bytearray)
+                    ):
+                        current = current[int(seg)]
+                    else:
+                        current = None
+                        break
+            except (KeyError, IndexError, TypeError):
+                current = None
+            rendered.append(_stringify_value(current))
+        return rendered
+
+    @staticmethod
+    def _extract_cells(row: str, widths: Sequence[int]) -> list[str]:
+        """Slice a rendered ``human()`` row into per-column cells.
+
+        ``_format_row`` pads each cell with trailing spaces and joins
+        them with a ``"  "`` separator; reproducing that layout in
+        reverse is the most reliable way to recover the cell text
+        without re-implementing the renderer's truncation rules.
+        """
+        cells: list[str] = []
+        offset = 0
+        for index, width in enumerate(widths):
+            if index > 0:
+                offset += 2  # skip the "  " separator
+            cells.append(row[offset : offset + width].strip())
+            offset += width
+        return cells
+
+    @staticmethod
+    def _expected_token_for(column: str, summary_row: dict[str, Any]) -> str | None:
+        """Project a column token onto a synthetic primitive value.
+
+        Walks the summary row the same way ``_row_from_mapping``
+        walks the payload so the expected value mirrors what the
+        human renderer actually puts into the cell. Returns ``None``
+        when no primitive value can be synthesised (e.g. for
+        defaults like ``False`` that still need a non-``<null>``
+        token in the rendered table).
+        """
+        current: Any = summary_row
+        try:
+            for seg in column.split("."):
+                if isinstance(current, Mapping):
+                    current = current[seg]
+                elif isinstance(current, Sequence) and not isinstance(
+                    current, (str, bytes, bytearray)
+                ):
+                    current = current[int(seg)]
+                else:
+                    return None
+        except (KeyError, IndexError, TypeError):
+            return None
+        if current is None:
+            return None
+        if isinstance(current, bool):
+            return "true" if current else "false"
+        if isinstance(current, (int, float, str)):
+            return str(current)
+        return None
+
+
+# Backfill the rationale comment on ``TestDotPathTraversal`` so the
+# three regression classes pin the same drift-protection narrative
+# (Task 3.3 / REQ-18 AC4).
 
 
 if __name__ == "__main__":

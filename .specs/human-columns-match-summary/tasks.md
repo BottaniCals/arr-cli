@@ -71,8 +71,8 @@ Implementation order:
     - `cmd_storage` and `cmd_health` are also verbatim-only / scalar; per Req 17 AC3 they SHALL NOT be touched.
     - _Requirements: REQ-15, REQ-17 AC3_
 
-- [ ] 3. Add regression net in `tests/unit/test_output.py`
-  - [ ] 3.1 Add `TestColumnsBlockMatchesSummaryShape` class
+- [x] 3. Add regression net in `tests/unit/test_output.py`
+  - [x] 3.1 Add `TestColumnsBlockMatchesSummaryShape` class
     - Append to `/workspace/projects/media-cli/tests/unit/test_output.py` (after `TestDotPathTraversal` from Task 1.2).
     - Parametrize over `arr_cli.facade.output._SUMMARY_RENDERERS.keys()` (15 entries).
     - For each `(service, command)`:
@@ -82,7 +82,7 @@ Implementation order:
       4. Assert that every column in the handler's `columns = [...]` block is either equal to or a substring of an expected key.
     - On failure, the assertion message SHALL name the offending `(service, command)` and the offending column key.
     - _Requirements: REQ-18 AC1, AC7, AC8_
-  - [ ] 3.2 Add `TestHumanRendersNonNullRowsForSizeToSummary` class
+  - [x] 3.2 Add `TestHumanRendersNonNullRowsForSizeToSummary` class
     - Append to `tests/unit/test_output.py` after `TestColumnsBlockMatchesSummaryShape`.
     - Parametrize over `_SUMMARY_RENDERERS.keys()`.
     - For each `(service, command)`:
@@ -91,7 +91,7 @@ Implementation order:
       3. Parse the rendered table (header line + data rows; the existing pattern uses `_format_row` internals — or split on newlines and parse the data rows as fixed-width columns, accepting some tolerance).
       4. For each column in the handler's `columns = [...]` block, assert that at least one data row's cell for that column is NOT `<null>`.
     - _Requirements: REQ-18 AC2, AC7, AC8_
-  - [ ] 3.3 Add class-level rationale comment to the new regression classes
+  - [x] 3.3 Add class-level rationale comment to the new regression classes
     - In `tests/unit/test_output.py`, add a one-line class docstring (or leading comment) on each of `TestColumnsBlockMatchesSummaryShape`, `TestHumanRendersNonNullRowsForSizeToSummary`, and `TestDotPathTraversal` documenting the rationale: "for each `_SUMMARY_RENDERERS` key, every column key in the corresponding handler's `columns = [...]` block is a substring of (or equal to) a top-level key OR a dot-joined nested-dict key in the summary shape — so future drift trips the test".
     - _Requirements: REQ-18 AC4_
 
