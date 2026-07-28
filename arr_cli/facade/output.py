@@ -281,8 +281,36 @@ def _row_from_mapping(
     item: Mapping[str, Any],
     columns: Sequence[str],
 ) -> list[str]:
-    """Project a mapping onto the configured columns."""
-    return [_stringify(item.get(column)) for column in columns]
+    """Project a mapping onto the configured columns.
+
+    For each column token the lookup tries ``item.get(column)`` first
+    so flat-with-dots keys (e.g. ``UserData.PlaybackPositionTicks``,
+    emitted as a literal top-level key by the jellyfin resume /
+    recent summary renderers) resolve without needing a nested
+    ``UserData`` mapping. When the flat lookup misses AND the token
+    contains a ``.``, the fallback walks the dot-separated path so
+    nested-summary tokens (e.g. ``playing.type``, ``movie.title``)
+    still reach the nested field. Per REQ-16 AC2 the non-dotted
+    branch is a strict subset of the pre-change flat-key lookup.
+    """
+    row: list[str] = []
+    for column in columns:
+        current: Any = item.get(column)
+        if current is None and "." in column:
+            current = item
+            try:
+                for seg in column.split("."):
+                    if isinstance(current, Mapping):
+                        current = current[seg]
+                    elif isinstance(current, Sequence):
+                        current = current[int(seg)]
+                    else:
+                        current = None
+                        break
+            except (KeyError, IndexError, TypeError):
+                current = None
+        row.append(_stringify(current))
+    return row
 
 
 def _row_from_sequence(
@@ -941,7 +969,10 @@ def emit(
 
     Priority chain (REQ-3 AC1-AC4):
 
-    1. ``human_mode`` -- render via :func:`human` (tabular).
+    1. ``human_mode`` -- render via :func:`human` over the summary
+       shape (the same shape the no-flag default emits, courtesy of
+       :func:`summarize`); ``--verbose`` together with ``--human``
+       bypasses :func:`summarize` and renders the verbatim payload.
     2. ``verbose_mode`` -- emit verbatim JSON.
     3. ``service`` and ``command`` both non-empty and the
        ``(service, command)`` key is registered in
@@ -961,8 +992,12 @@ def emit(
         (REQ-3 AC5).
     verbose_mode:
         When True (and ``human_mode`` is False) the verbatim service
-        payload is emitted on stdout (REQ-2 AC1). Has no effect
-        when ``human_mode`` is True (REQ-3 AC1).
+        payload is emitted on stdout (REQ-2 AC1). When ``human_mode``
+        is also True, ``verbose_mode`` keeps its effect: the
+        verbatim payload is rendered as a table and
+        :func:`summarize` is bypassed; verbose wins for the data
+        shape, ``human_mode`` wins for the rendering format
+        (REQ-3 AC1, REQ-4 AC3).
     service:
         Per-service identifier used for the renderer dispatch table
         lookup. Defaults to ``""`` so callers that do not thread
@@ -998,8 +1033,12 @@ def emit(
     out = stream if stream is not None else sys.stdout
 
     if human_mode:
+        if verbose_mode:
+            shaped = payload
+        else:
+            shaped = summarize(service, command, payload)
         rendered = human(
-            payload,
+            shaped,
             columns=columns,
             limit=limit,
             max_width=max_width,

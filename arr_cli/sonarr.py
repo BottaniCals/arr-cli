@@ -223,6 +223,10 @@ def cmd_wanted(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="wanted",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_sonarr_wanted`` (flat top-level keys); the summary
+    # renderer does not emit ``seriesId`` so it is intentionally
+    # absent from the column list.
     columns = [
         "title",
         "seasonNumber",
@@ -241,6 +245,8 @@ def cmd_queue(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="queue",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_sonarr_queue`` (flat top-level keys).
     columns = [
         "title",
         "status",
@@ -266,6 +272,10 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="recent",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_sonarr_recent``: nested ``series.title`` /
+    # ``episode.title`` are resolved via dot-path traversal in
+    # ``_row_from_mapping``.
     columns = [
         "series.title",
         "episode.title",

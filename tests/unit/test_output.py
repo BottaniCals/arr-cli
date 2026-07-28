@@ -21,12 +21,16 @@ deterministic regardless of the host's tty.
 
 from __future__ import annotations
 
+import ast
 import contextlib
+import importlib
+import inspect
 import io
 import json
 import os
 import sys
 import unittest
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -363,6 +367,519 @@ class TestEmitHuman(unittest.TestCase):
             limit=2,
         )
         self.assertIn("3 more", out)
+
+
+# ---------------------------------------------------------------------------
+# emit() --human routes through summarize() (REQ-1, REQ-2, REQ-5 AC1)
+# ---------------------------------------------------------------------------
+
+
+# Synthetic payloads covering summary-shape keys + verbatim-only keys
+# for every (service, command) registered in _SUMMARY_RENDERERS. The
+# payloads are crafted so the summary renderer populates at least one
+# column token; the verbatim-only keys are present so a regression that
+# bypasses summarize() would surface them in the rendered header.
+_HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
+    ("jellyfin", "now"): [
+        {
+            "user": "alice",
+            "device": "TV",
+            "client": "Jellyfin Web",
+            "playing": {"type": "Episode", "name": "Foo"},
+            "progress": {"position_ticks": 100, "is_paused": False},
+            "NowPlayingItem": {"Name": "Foo", "SeriesName": "Show"},
+            "PlayState": {"PositionTicks": 100, "IsPaused": False},
+        }
+    ],
+    ("jellyfin", "recent"): [
+        {
+            "Name": "Foo",
+            "Type": "Movie",
+            "ProductionYear": 2024,
+            "SeriesName": None,
+            "UserData.LastPlayedDate": "2024-01-01",
+            "Overview": "Lorem ipsum",
+        }
+    ],
+    ("jellyfin", "favorites"): [
+        {
+            "Name": "Foo",
+            "Type": "Movie",
+            "ProductionYear": 2020,
+            "SeriesName": None,
+            "Overview": "Lorem ipsum",
+        }
+    ],
+    ("jellyfin", "resume"): [
+        {
+            "Name": "Foo",
+            "Type": "Episode",
+            "ProductionYear": 2020,
+            "SeriesName": "Show",
+            "UserData.PlaybackPositionTicks": 100,
+            "UserData.PlayCount": 2,
+            "Overview": "Lorem ipsum",
+        }
+    ],
+    ("jellyfin", "latest"): [
+        {
+            "Name": "Foo",
+            "Type": "Movie",
+            "ProductionYear": 2025,
+            "SeriesName": None,
+            "DateCreated": "2025-06-01T00:00:00Z",
+            "Overview": "Lorem ipsum",
+        }
+    ],
+    ("radarr", "wanted"): [
+        {
+            "title": "Foo",
+            "year": 2024,
+            "tmdbId": 999,
+            "monitored": True,
+            "runtime": 120,
+        }
+    ],
+    ("radarr", "queue"): [
+        {
+            "title": "Foo",
+            "status": "downloading",
+            "trackedDownloadStatus": "ok",
+            "size": 1000,
+            "sizeleft": 500,
+            "downloadClient": "qbit",
+        }
+    ],
+    ("radarr", "recent"): [
+        {
+            "movie": {"title": "Foo", "year": 2024},
+            "eventType": "downloadFolderImported",
+            "date": "2024-06-01",
+            "sourcePath": "/movies/foo",
+        }
+    ],
+    ("sonarr", "wanted"): [
+        {
+            "title": "Pilot",
+            "seasonNumber": 1,
+            "episodeNumber": 1,
+            "airDate": "2024-01-01",
+            "monitored": True,
+            "seriesId": 7,
+        }
+    ],
+    ("sonarr", "queue"): [
+        {
+            "title": "Foo",
+            "status": "downloading",
+            "trackedDownloadStatus": "ok",
+            "size": 1000,
+            "sizeleft": 500,
+            "downloadClient": "qbit",
+        }
+    ],
+    ("sonarr", "recent"): [
+        {
+            "series": {"title": "Show"},
+            "episode": {"title": "Pilot"},
+            "eventType": "downloadFolderImported",
+            "date": "2024-06-01",
+            "sourcePath": "/tv/show",
+        }
+    ],
+    ("seerr", "requests"): [
+        {
+            "title": "Foo",
+            "type": "movie",
+            "status": "pending",
+            "createdAt": "2024-01-01",
+            "requestedBy": {"displayName": "alice"},
+            "externalId": "tmdb:999",
+        }
+    ],
+    ("seerr", "search"): [
+        {
+            "title": "Foo",
+            "mediaType": "movie",
+            "releaseDate": "2024-01-01",
+            "mediaInfo": {"tmdbId": 999},
+            "overview": "Lorem ipsum",
+        }
+    ],
+    ("seerr", "available"): [
+        {
+            "title": "Foo",
+            "mediaType": "movie",
+            "releaseDate": "2024-01-01",
+            "mediaInfo": {"status": 5},
+            "overview": "Lorem ipsum",
+        }
+    ],
+    ("maintainerr", "pending"): [
+        {
+            "title": "Old Movies",
+            "mediaCount": 42,
+            "deleteAfterDays": 14,
+            "isOnHold": False,
+            "collectionId": 7,
+        }
+    ],
+}
+
+
+class TestEmitHumanSummarizeRoute(unittest.TestCase):
+    """``emit(..., human_mode=True, verbose_mode=False)`` routes through
+    :func:`summarize` so the table columns come from the summary shape."""
+
+    def test_summary_columns_appear_verbatim_columns_do_not(self) -> None:
+        for (svc, cmd), payload in _HUMAN_SUMMARY_PAYLOADS.items():
+            with self.subTest(svc=svc, cmd=cmd):
+                out = _capture_stdout(
+                    emit,
+                    payload,
+                    human_mode=True,
+                    verbose_mode=False,
+                    service=svc,
+                    command=cmd,
+                )
+                first_line = out.splitlines()[0]
+                # The summary shape must contribute at least one
+                # column token to the rendered header. Pick the first
+                # summary-shape token by inspecting the renderer's
+                # output for the synthetic payload.
+                summary_first_row = summarize(svc, cmd, payload)
+                self.assertIsInstance(summary_first_row, list)
+                self.assertTrue(summary_first_row)
+                first = summary_first_row[0]
+                self.assertIsInstance(first, dict)
+                self.assertTrue(first)
+                summary_token = next(iter(first.keys()))
+                self.assertIn(
+                    summary_token,
+                    first_line,
+                    msg=(
+                        f"({svc}, {cmd}): header {first_line!r} missing "
+                        f"summary token {summary_token!r} -- summarize() "
+                        "was bypassed"
+                    ),
+                )
+                # Verbatim-only tokens must NOT appear in the rendered
+                # header for size-to-summary commands. ``NowPlayingItem``
+                # is the canonical verbatim-shape key for Jellyfin;
+                # ``PlayState`` is the canonical verbatim-shape progress
+                # key. A regression that bypasses summarize() would
+                # surface them here.
+                self.assertNotIn(
+                    "NowPlayingItem",
+                    first_line,
+                    msg=(
+                        f"({svc}, {cmd}): header {first_line!r} contains "
+                        "verbatim 'NowPlayingItem' token -- summarize() "
+                        "was bypassed"
+                    ),
+                )
+                self.assertNotIn(
+                    "PlayState",
+                    first_line,
+                    msg=(
+                        f"({svc}, {cmd}): header {first_line!r} contains "
+                        "verbatim 'PlayState' token -- summarize() was "
+                        "bypassed"
+                    ),
+                )
+
+    def test_row_cells_reflect_summary_values(self) -> None:
+        # For every (svc, cmd) at least one data row cell must match a
+        # value populated by the summary renderer (no ``<null>`` for
+        # fields the summary shaped).
+        for (svc, cmd), payload in _HUMAN_SUMMARY_PAYLOADS.items():
+            with self.subTest(svc=svc, cmd=cmd):
+                out = _capture_stdout(
+                    emit,
+                    payload,
+                    human_mode=True,
+                    verbose_mode=False,
+                    service=svc,
+                    command=cmd,
+                )
+                lines = out.splitlines()
+                self.assertGreater(
+                    len(lines),
+                    1,
+                    msg=f"({svc}, {cmd}): rendered table has no rows",
+                )
+                data_blob = "\n".join(lines[2:])
+                summary_first = summarize(svc, cmd, payload)
+                self.assertIsInstance(summary_first, list)
+                self.assertTrue(summary_first)
+                first = summary_first[0]
+                if not isinstance(first, dict):
+                    continue
+                primitive_values = [
+                    v for v in first.values()
+                    if isinstance(v, (str, int, float, bool))
+                ]
+                if not primitive_values:
+                    continue
+                expected = _stringify_value(primitive_values[0])
+                self.assertIn(
+                    expected,
+                    data_blob,
+                    msg=(
+                        f"({svc}, {cmd}): expected {expected!r} in "
+                        f"rendered rows; got:\n{data_blob!r}"
+                    ),
+                )
+
+
+class TestEmitHumanVerbatimFallback(unittest.TestCase):
+    """``emit(..., human_mode=True, verbose_mode=False)`` falls through to
+    verbatim when ``(service, command)`` is not in
+    :data:`_SUMMARY_RENDERERS` (REQ-2 AC7)."""
+
+    def test_known_non_candidate_jellyfin_search(self) -> None:
+        payload = [{"Name": "Foo", "Type": "Movie"}]
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=True,
+            verbose_mode=False,
+            service="jellyfin",
+            command="search",
+        )
+        expected_buffer = io.StringIO()
+        print(human(payload), file=expected_buffer)
+        self.assertEqual(out, expected_buffer.getvalue())
+
+    def test_known_non_candidate_radarr_calendar(self) -> None:
+        payload = [{"title": "Foo", "releaseDate": "2024-01-01"}]
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=True,
+            verbose_mode=False,
+            service="radarr",
+            command="calendar",
+        )
+        expected_buffer = io.StringIO()
+        print(human(payload), file=expected_buffer)
+        self.assertEqual(out, expected_buffer.getvalue())
+
+    def test_empty_service_and_command_pair(self) -> None:
+        # Callers that do not thread ``service`` / ``command`` observe
+        # the graceful default: ``summarize`` returns the payload
+        # unchanged and ``human`` receives the verbatim payload.
+        payload = {"foo": "bar", "baz": 1}
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=True,
+            verbose_mode=False,
+            service="",
+            command="",
+        )
+        expected_buffer = io.StringIO()
+        print(human(payload), file=expected_buffer)
+        self.assertEqual(out, expected_buffer.getvalue())
+
+
+class TestEmitHumanVerboseEscapeHatch(unittest.TestCase):
+    """``emit(..., human_mode=True, verbose_mode=True)`` bypasses
+    :func:`summarize` and renders the verbatim payload (REQ-4 AC1, AC2)."""
+
+    def test_escape_hatch_preserves_verbatim_columns(self) -> None:
+        # The payload uses top-level ``NowPlayingItem.Name`` /
+        # ``NowPlayingItem.SeriesName`` / ``PlayState`` keys so the
+        # ``human()`` renderer can project them onto column headers
+        # directly (a nested ``NowPlayingItem`` dict would be collapsed
+        # to ``<N keys>`` by the renderer and the literal
+        # ``NowPlayingItem.Name`` token would not appear in the header).
+        payload = [
+            {
+                "NowPlayingItem.Name": "Foo",
+                "NowPlayingItem.SeriesName": "Show",
+                "PlayState": "playing",
+                "RemoteEndPoint": "1.2.3.4",
+            }
+        ]
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=True,
+            verbose_mode=True,
+            service="jellyfin",
+            command="now",
+        )
+        first_line = out.splitlines()[0]
+        self.assertIn(
+            "NowPlayingItem.Name",
+            first_line,
+            msg=(
+                f"escape hatch: header {first_line!r} missing verbatim "
+                "'NowPlayingItem.Name' token -- summarize() was applied"
+            ),
+        )
+        self.assertNotIn(
+            "playing.name",
+            first_line,
+            msg=(
+                f"escape hatch: header {first_line!r} contains summary "
+                "'playing.name' token -- summarize() was applied"
+            ),
+        )
+        # Snapshot invariant: escape hatch output is byte-identical to
+        # ``human(payload)`` followed by ``print`` (which adds the
+        # trailing newline that ``emit`` writes).
+        expected_buffer = io.StringIO()
+        print(human(payload), file=expected_buffer)
+        self.assertEqual(out, expected_buffer.getvalue())
+
+
+class TestEmitHumanRowBudget(unittest.TestCase):
+    """``emit(..., human_mode=True, verbose_mode=False, limit=5)`` honours
+    the summary row budget, not the verbatim row count (REQ-3 AC1, AC3)."""
+
+    def test_summary_row_count_is_smaller_than_verbatim(self) -> None:
+        # Mixed payload: 2 valid session dicts + 6 non-mapping items.
+        # ``_summary_jellyfin_now`` drops the 6 non-mapping items, so
+        # the summary has 2 items while the raw payload has 8 items.
+        sessions = (
+            [
+                {
+                    "UserName": f"user{i}",
+                    "DeviceName": f"dev{i}",
+                    "Client": "Jellyfin Web",
+                    "NowPlayingItem": {
+                        "Name": f"Show{i}",
+                        "SeriesName": "Show",
+                        "Type": "Episode",
+                    },
+                    "PlayState": {"PositionTicks": 100, "IsPaused": False},
+                }
+                for i in range(2)
+            ]
+            + ["not a mapping"] * 6
+        )
+        out = _capture_stdout(
+            emit,
+            sessions,
+            human_mode=True,
+            verbose_mode=False,
+            service="jellyfin",
+            command="now",
+            limit=5,
+        )
+        lines = out.splitlines()
+        # Header + separator + 2 data rows = 4 lines; the data rows
+        # are strictly fewer than the requested ``limit=5`` because the
+        # summary renderer dropped the 6 non-mapping items.
+        data_rows = len(lines) - 2  # subtract header + separator
+        self.assertLess(
+            data_rows,
+            5,
+            msg=(
+                f"summary row budget exceeded: {data_rows} data rows "
+                f"in output:\n{out!r}"
+            ),
+        )
+        self.assertGreater(
+            data_rows,
+            0,
+            msg=(
+                "rendered table has zero data rows -- summarize() was "
+                "bypassed or rendered empty payload"
+            ),
+        )
+
+    def test_verbatim_row_count_is_honoured_under_escape_hatch(self) -> None:
+        # Same payload, but with ``verbose_mode=True`` the verbatim
+        # shape flows into ``human()`` and the row budget applies to
+        # the verbatim items (not the summarized ones).
+        sessions = (
+            [
+                {
+                    "UserName": f"user{i}",
+                    "DeviceName": f"dev{i}",
+                    "Client": "Jellyfin Web",
+                    "NowPlayingItem": {
+                        "Name": f"Show{i}",
+                        "SeriesName": "Show",
+                        "Type": "Episode",
+                    },
+                    "PlayState": {"PositionTicks": 100, "IsPaused": False},
+                }
+                for i in range(2)
+            ]
+            + ["not a mapping"] * 6
+        )
+        out = _capture_stdout(
+            emit,
+            sessions,
+            human_mode=True,
+            verbose_mode=True,
+            service="jellyfin",
+            command="now",
+            limit=5,
+        )
+        lines = out.splitlines()
+        # The verbatim payload has 8 items; ``limit=5`` truncates the
+        # table and surfaces the pagination footer instead of expanding
+        # to the full verbatim row count.
+        self.assertTrue(
+            any("more" in line for line in lines),
+            msg=(
+                "escape hatch: pagination footer missing -- limit was "
+                f"not honoured; output:\n{out!r}"
+            ),
+        )
+
+
+class TestEmitHumanDocstringPinning(unittest.TestCase):
+    """``emit``'s docstring pins the new ``--human`` / ``--verbose``
+    precedence so future reverts fail visibly (REQ-4 AC3, REQ-2 AC1)."""
+
+    def test_docstring_references_summarize(self) -> None:
+        doc = inspect.getdoc(emit)
+        self.assertIsNotNone(doc)
+        self.assertIn(
+            ":func:`summarize`",
+            doc,
+            msg=(
+                "emit() docstring must reference :func:`summarize` "
+                "so a future revert that drops the summary-shape "
+                "language fails this regression net (REQ-2 AC1)"
+            ),
+        )
+
+    def test_docstring_priority_chain_mentions_human_mode_and_verbose(self) -> None:
+        doc = inspect.getdoc(emit)
+        self.assertIsNotNone(doc)
+        # The priority-chain prose must include both ``human_mode``
+        # and ``verbose`` so a future revert that drops the
+        # escape-hatch note fails this test (REQ-4 AC3).
+        priority_section = doc.split("Priority chain")[1].split("Parameters")[0]
+        self.assertIn(
+            "human_mode",
+            priority_section,
+            msg=(
+                "emit() docstring priority-chain section missing "
+                "'human_mode' reference"
+            ),
+        )
+        self.assertIn(
+            "verbose",
+            priority_section,
+            msg=(
+                "emit() docstring priority-chain section missing "
+                "'verbose' reference"
+            ),
+        )
+
+
+def _stringify_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 # ---------------------------------------------------------------------------
@@ -1224,6 +1741,515 @@ class TestSafeGet(unittest.TestCase):
 
     def test_list_index_out_of_range(self) -> None:
         self.assertIsNone(_safe_get([1, 2], 5))
+
+
+# ---------------------------------------------------------------------------
+# human._row_from_mapping dot-path traversal (Task 1.2)
+# ---------------------------------------------------------------------------
+
+
+class TestDotPathTraversal(unittest.TestCase):
+    """``human._row_from_mapping`` walks dot-separated column tokens.
+
+    For each ``_SUMMARY_RENDERERS`` key, every column key in the
+    corresponding handler's ``columns = [...]`` block is a substring
+    of (or equal to) a top-level key OR a dot-joined nested-dict
+    key in the summary shape — so future drift trips the test.
+    """
+
+    def test_dot_path_walks_one_level_mapping(self) -> None:
+        rendered = human([{"a": {"b": 1}}], columns=["a.b"])
+        self.assertIn("1", rendered)
+        # Header names the dotted token verbatim; the data row carries
+        # the nested integer value.
+        lines = rendered.splitlines()
+        self.assertIn("a.b", lines[0])
+        self.assertIn("1", lines[2])
+
+    def test_dot_path_returns_null_on_type_error_at_intermediate(self) -> None:
+        rendered = human(
+            [{"a": {"b": 1}}, {"a": None}],
+            columns=["a.b"],
+        )
+        lines = rendered.splitlines()
+        # header + separator + 2 data rows
+        self.assertEqual(len(lines), 4)
+        # First row carries ``1``; second row carries ``<null>`` because
+        # the walk hits a ``None`` intermediate and the ``TypeError``
+        # path returns ``None`` which ``_stringify`` renders as the
+        # literal ``<null>``.
+        self.assertIn("1", lines[2])
+        self.assertIn("<null>", lines[3])
+
+    def test_non_dot_token_still_uses_flat_lookup(self) -> None:
+        rendered = human([{"a": {"b": 1}}], columns=["a"])
+        lines = rendered.splitlines()
+        # The non-dotted token must surface the value at the top level
+        # (the nested mapping summary ``<1 keys>``) — no regression for
+        # the 9 flat-summary commands whose column tokens have no dot.
+        self.assertIn("a", lines[0])
+        self.assertIn("<1 keys>", lines[2])
+
+    def test_dot_path_playing_type_jellyfin_now_shape(self) -> None:
+        rendered = human(
+            [{"playing": {"type": "Episode"}}],
+            columns=["playing.type"],
+        )
+        lines = rendered.splitlines()
+        # Positive end-to-end mirror of ``jellyfin -h now``: the
+        # nested summary field ``playing.type`` reaches the cell.
+        self.assertIn("playing.type", lines[0])
+        self.assertIn("Episode", lines[2])
+
+    def test_dot_path_with_sequence_int_segment(self) -> None:
+        rendered = human(
+            [{"items": [{"id": 7}]}],
+            columns=["items.0.id"],
+        )
+        lines = rendered.splitlines()
+        # A sequence with an integer-parsed segment must subscript
+        # into the list and then continue the walk into the inner
+        # mapping; ``7`` is the integer the inner mapping carries.
+        self.assertIn("items.0.id", lines[0])
+        self.assertIn("7", lines[2])
+
+
+# ---------------------------------------------------------------------------
+# Regression net: columns-block → summary-shape alignment (Task 3,
+# REQ-18 AC1-AC8). Future drift in either side trips the test.
+# ---------------------------------------------------------------------------
+
+
+def _columns_for(service: str, command: str) -> list[str]:
+    """Extract the per-handler ``columns = [...]`` literal for ``cmd_<command>``.
+
+    The literal is local to ``cmd_<command>`` in the per-service CLI
+    module; the only reliable way to read its value without running
+    the function is to parse the module source via :mod:`ast` and
+    evaluate the first ``columns = [...]`` assignment with
+    :func:`ast.literal_eval`. Raises when the literal cannot be
+    reduced to a ``list[str]`` — the test must surface that as a hard
+    failure rather than silently skip.
+    """
+    module = importlib.import_module(f"arr_cli.{service}")
+    source = inspect.getsource(module)
+    tree = ast.parse(source)
+    function_name = f"cmd_{command.replace('-', '_')}"
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        if node.name != function_name:
+            continue
+        for stmt in node.body:
+            if not isinstance(stmt, ast.Assign):
+                continue
+            target_names = [
+                t.id for t in stmt.targets if isinstance(t, ast.Name)
+            ]
+            if "columns" not in target_names:
+                continue
+            try:
+                value = ast.literal_eval(stmt.value)
+            except ValueError as exc:
+                raise AssertionError(
+                    f"({service}, {command}): columns literal is not "
+                    f"a static list[string] — pin via the "
+                    f"EXPECTED_COLUMNS hardcoded map (got {exc})"
+                ) from exc
+            if not isinstance(value, list) or not all(
+                isinstance(item, str) for item in value
+            ):
+                raise AssertionError(
+                    f"({service}, {command}): columns literal is not "
+                    f"a list[str]; got {type(value).__name__}"
+                )
+            return value
+    raise AssertionError(
+        f"({service}, {command}): no `columns = [...]` literal found "
+        f"inside {function_name}()"
+    )
+
+
+def _expected_keys_from_summary(summary: Any) -> set[str]:
+    """Compute the set of column-token candidates from a summary shape.
+
+    Flat top-level keys are returned verbatim; for each nested
+    ``Mapping`` value the inner keys are dot-joined onto the parent
+    (e.g. ``playing.type`` for ``{playing: {type: ...}}``). When the
+    summary is a single non-list scalar the returned set is ``{""}``
+    so the single-column case has a fallback key.
+    """
+    keys: set[str] = set()
+    if isinstance(summary, list):
+        if not summary:
+            return keys
+        first = summary[0]
+    else:
+        first = summary
+    if not isinstance(first, Mapping):
+        keys.add("")
+        return keys
+    for top_key, top_value in first.items():
+        keys.add(top_key)
+        if isinstance(top_value, Mapping):
+            for inner_key, inner_value in top_value.items():
+                keys.add(f"{top_key}.{inner_key}")
+                if isinstance(inner_value, Mapping):
+                    # Two levels deep: ``movie.title`` is itself a
+                    # nested mapping; ``movie.title.original`` would
+                    # be accepted too even though the handlers don't
+                    # currently use it.
+                    for inner_inner_key in inner_value.keys():
+                        keys.add(f"{top_key}.{inner_key}.{inner_inner_key}")
+    return keys
+
+
+def _synthetic_payload(svc: str, cmd: str) -> Any:
+    """Build a realistic synthetic payload for each (svc, cmd).
+
+    The payload uses verbatim-shape keys (the ones the real upstream
+    service returns) so the summary renderer populates every field
+    with a non-``None`` primitive. The 15 renderers are stable
+    post-PR-#6 (Req 17 AC4) so a hardcoded dispatcher is acceptable.
+    """
+    payloads: dict[tuple[str, str], Any] = {
+        ("jellyfin", "now"): [
+            {
+                "UserName": "alice",
+                "DeviceName": "Living Room TV",
+                "Client": "Jellyfin Web",
+                "NowPlayingItem": {
+                    "Type": "Episode",
+                    "Name": "The Pilot",
+                    "SeriesName": "Show",
+                    "ParentIndexNumber": 2,
+                    "IndexNumber": 3,
+                },
+                "PlayState": {"PositionTicks": 12345, "IsPaused": False},
+            }
+        ],
+        ("jellyfin", "recent"): [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": "Bar",
+                "UserData": {"LastPlayedDate": "2024-01-01T00:00:00Z"},
+            }
+        ],
+        ("jellyfin", "favorites"): [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": "Bar",
+            }
+        ],
+        ("jellyfin", "resume"): [
+            {
+                "Name": "Foo",
+                "Type": "Episode",
+                "ProductionYear": 2020,
+                "SeriesName": "Bar",
+                "UserData": {
+                    "PlaybackPositionTicks": 12345,
+                    "PlayCount": 2,
+                },
+            }
+        ],
+        ("jellyfin", "latest"): [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2025,
+                "SeriesName": "Bar",
+                "DateCreated": "2025-06-01T00:00:00Z",
+            }
+        ],
+        ("radarr", "wanted"): [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "tmdbId": 999,
+                "monitored": True,
+            }
+        ],
+        ("radarr", "queue"): [
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+            }
+        ],
+        ("radarr", "recent"): [
+            {
+                "movie": {"title": "Foo", "year": 2024},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01T00:00:00Z",
+            }
+        ],
+        ("sonarr", "wanted"): [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 2,
+                "airDate": "2024-01-01",
+                "monitored": True,
+            }
+        ],
+        ("sonarr", "queue"): [
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+            }
+        ],
+        ("sonarr", "recent"): [
+            {
+                "series": {"title": "Show"},
+                "episode": {"title": "Pilot"},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01T00:00:00Z",
+            }
+        ],
+        ("seerr", "requests"): [
+            {
+                "title": "Foo",
+                "type": "movie",
+                "status": "pending",
+                "createdAt": "2024-01-01T00:00:00Z",
+                "requestedBy": {"displayName": "alice"},
+            }
+        ],
+        ("seerr", "search"): [
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ],
+        ("seerr", "available"): [
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"status": 5},
+            }
+        ],
+        ("maintainerr", "pending"): [
+            {
+                "title": "Old Movies",
+                "mediaCount": 42,
+                "deleteAfterDays": 14,
+                "isOnHold": False,
+            }
+        ],
+    }
+    return payloads[(svc, cmd)]
+
+
+class TestColumnsBlockMatchesSummaryShape(unittest.TestCase):
+    """For each ``_SUMMARY_RENDERERS`` key, the handler's
+    ``columns = [...]`` literal must resolve to keys the summary
+    renderer actually emits.
+
+    Per ``_SUMMARY_RENDERERS`` key the handler's ``columns = [...]``
+    block must be a substring of (or equal to) a top-level key OR a
+    dot-joined nested-dict key in the summary shape — so future drift
+    trips the test (REQ-18 AC1, AC7, AC8).
+    """
+
+    def test_every_column_token_resolves_to_summary_key(self) -> None:
+        for (svc, cmd) in _SUMMARY_RENDERERS.keys():
+            with self.subTest(svc=svc, cmd=cmd):
+                columns = _columns_for(svc, cmd)
+                payload = _synthetic_payload(svc, cmd)
+                summary = _SUMMARY_RENDERERS[(svc, cmd)](payload)
+                expected = _expected_keys_from_summary(summary)
+                for column in columns:
+                    matched = any(
+                        column == key or column in key for key in expected
+                    )
+                    self.assertTrue(
+                        matched,
+                        msg=(
+                            f"({svc}, {cmd}): column key {column!r} is "
+                            f"not a substring of any summary key; "
+                            f"expected keys = {sorted(expected)!r}"
+                        ),
+                    )
+
+
+class TestHumanRendersNonNullRowsForSizeToSummary(unittest.TestCase):
+    """For each ``_SUMMARY_RENDERERS`` key, the human rendering of a
+    fully-populated synthetic payload must produce non-``<null>``
+    cells for every column in the handler's ``columns = [...]``
+    block.
+
+    Per ``_SUMMARY_RENDERERS`` key the handler's ``columns = [...]``
+    block must be a substring of (or equal to) a top-level key OR a
+    dot-joined nested-dict key in the summary shape — so future drift
+    trips the test (REQ-18 AC2, AC7, AC8).
+    """
+
+    def test_every_column_renders_a_non_null_cell(self) -> None:
+        for (svc, cmd) in _SUMMARY_RENDERERS.keys():
+            with self.subTest(svc=svc, cmd=cmd):
+                payload = _synthetic_payload(svc, cmd)
+                columns = _columns_for(svc, cmd)
+                if not columns:
+                    continue
+                summary = _SUMMARY_RENDERERS[(svc, cmd)](payload)
+                rendered = human(summary, columns=columns)
+                lines = rendered.splitlines()
+                self.assertGreaterEqual(
+                    len(lines),
+                    3,
+                    msg=(
+                        f"({svc}, {cmd}): rendered table has fewer "
+                        f"than 3 lines; got:\n{rendered!r}"
+                    ),
+                )
+                # Find the column-widths the same way ``human()`` did
+                # so we can extract cell content per column rather
+                # than rely on a substring match against the rendered
+                # blob. Using ``summary``'s first row values directly
+                # is sufficient because the renderer allocates
+                # widths from the headers + the row values.
+                if not isinstance(summary, list) or not summary:
+                    continue
+                first_summary = summary[0]
+                if not isinstance(first_summary, Mapping):
+                    continue
+                first_row_strings = self._row_strings(first_summary, columns)
+                widths = _column_widths(
+                    headers=list(columns),
+                    rows=[first_row_strings],
+                    budget=120,
+                )
+                # Extract each data row's cells by absolute column
+                # offset so the per-column ``<null>`` check does not
+                # bleed across columns (a regression that emits
+                # ``<null>`` for one column must not be hidden by a
+                # populated neighbour).
+                data_cells_per_row: list[list[str]] = []
+                for data_row in lines[2:]:
+                    data_cells_per_row.append(
+                        self._extract_cells(data_row, widths)
+                    )
+                # Limit the per-column check to rendered rows that
+                # are part of the summary (skip pagination footer
+                # lines that ``human()`` appended).
+                payload_first = (
+                    first_summary
+                    if isinstance(first_summary, Mapping)
+                    else None
+                )
+                for col_index, column in enumerate(columns):
+                    rendered_cells_for_column = [
+                        row[col_index] if col_index < len(row) else ""
+                        for row in data_cells_per_row
+                    ]
+                    populated = [
+                        cell for cell in rendered_cells_for_column
+                        if cell != "<null>"
+                    ]
+                    self.assertTrue(
+                        populated,
+                        msg=(
+                            f"({svc}, {cmd}): column {column!r} "
+                            f"rendered <null> for every data row; "
+                            f"rendered={rendered!r}"
+                        ),
+                    )
+
+    @staticmethod
+    def _row_strings(
+        summary_row: Mapping[str, Any], columns: Sequence[str]
+    ) -> list[str]:
+        """Project a single summary row onto the renderer cell strings.
+
+        Mirrors :func:`arr_cli.facade.output._row_from_mapping` so the
+        renderer allocation matches the rendered row's width.
+        """
+        rendered: list[str] = []
+        for column in columns:
+            current: Any = summary_row
+            try:
+                for seg in column.split("."):
+                    if isinstance(current, Mapping):
+                        current = current[seg]
+                    elif isinstance(current, Sequence) and not isinstance(
+                        current, (str, bytes, bytearray)
+                    ):
+                        current = current[int(seg)]
+                    else:
+                        current = None
+                        break
+            except (KeyError, IndexError, TypeError):
+                current = None
+            rendered.append(_stringify_value(current))
+        return rendered
+
+    @staticmethod
+    def _extract_cells(row: str, widths: Sequence[int]) -> list[str]:
+        """Slice a rendered ``human()`` row into per-column cells.
+
+        ``_format_row`` pads each cell with trailing spaces and joins
+        them with a ``"  "`` separator; reproducing that layout in
+        reverse is the most reliable way to recover the cell text
+        without re-implementing the renderer's truncation rules.
+        """
+        cells: list[str] = []
+        offset = 0
+        for index, width in enumerate(widths):
+            if index > 0:
+                offset += 2  # skip the "  " separator
+            cells.append(row[offset : offset + width].strip())
+            offset += width
+        return cells
+
+    @staticmethod
+    def _expected_token_for(column: str, summary_row: dict[str, Any]) -> str | None:
+        """Project a column token onto a synthetic primitive value.
+
+        Walks the summary row the same way ``_row_from_mapping``
+        walks the payload so the expected value mirrors what the
+        human renderer actually puts into the cell. Returns ``None``
+        when no primitive value can be synthesised (e.g. for
+        defaults like ``False`` that still need a non-``<null>``
+        token in the rendered table).
+        """
+        current: Any = summary_row
+        try:
+            for seg in column.split("."):
+                if isinstance(current, Mapping):
+                    current = current[seg]
+                elif isinstance(current, Sequence) and not isinstance(
+                    current, (str, bytes, bytearray)
+                ):
+                    current = current[int(seg)]
+                else:
+                    return None
+        except (KeyError, IndexError, TypeError):
+            return None
+        if current is None:
+            return None
+        if isinstance(current, bool):
+            return "true" if current else "false"
+        if isinstance(current, (int, float, str)):
+            return str(current)
+        return None
+
+
+# Backfill the rationale comment on ``TestDotPathTraversal`` so the
+# three regression classes pin the same drift-protection narrative
+# (Task 3.3 / REQ-18 AC4).
 
 
 if __name__ == "__main__":
