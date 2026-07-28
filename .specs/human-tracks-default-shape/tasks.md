@@ -29,33 +29,33 @@ Implementation order:
     - No code change here — this is a read-back verification of the patch from task 1.1.
     - _Requirements: REQ-2 AC7, REQ-4 AC1, NFR-Reliability_
 
-- [ ] 2. Add hermetic unit tests for the new `--human` → `summarize()` → `human()` path
-  - [ ] 2.1 Add a parametrized regression net in `tests/unit/test_output.py` that pins the `--human` branch through `summarize()` for every size-to-summary command
+- [x] 2. Add hermetic unit tests for the new `--human` → `summarize()` → `human()` path
+  - [x] 2.1 Add a parametrized regression net in `tests/unit/test_output.py` that pins the `--human` branch through `summarize()` for every size-to-summary command
     - File: `tests/unit/test_output.py` (extend the existing test classes; reuse `_capture_stdout` and the existing `_SUMMARY_RENDERERS` import already in the module).
     - For every key in `_SUMMARY_RENDERERS.keys()`, call `emit(synthetic_payload, human_mode=True, verbose_mode=False, service=svc, command=cmd, stream=io.StringIO(), columns=...)` against a payload that contains both summary-shape keys (e.g. `playing`, `progress`, `wanted`, `queue`, `requests`, `pending`) and verbatim-only keys (e.g. `NowPlayingItem`, `PlayState`).
     - Assert the captured stdout's first line (the header row) contains at least one summary-shape token and does NOT contain `NowPlayingItem.` or `PlayState`.
     - Assert at least one row cell equals a value present in the synthetic payload's summary (no `<null>` for fields the summary populated).
     - Use `io.StringIO` capture, mirror the `TestEmitHuman` pattern; `responses` is already a dev dep but these tests do not exercise HTTP at all (REQ-5 AC2).
     - _Requirements: REQ-1, REQ-2, REQ-5_
-  - [ ] 2.2 Add a verbatim-only fallback test in `tests/unit/test_output.py` to pin the graceful default for non-candidate commands
+  - [x] 2.2 Add a verbatim-only fallback test in `tests/unit/test_output.py` to pin the graceful default for non-candidate commands
     - File: `tests/unit/test_output.py` (extend `TestSummarizeGracefulDefault` or add a sibling class).
     - Call `emit(small_payload, human_mode=True, verbose_mode=False, service="jellyfin", command="search", stream=io.StringIO())` for any verbatim-only command (e.g. `jellyfin search`, `radarr calendar`, `maintainerr health`).
     - Assert the captured stdout is byte-identical to `human(small_payload, ...)` invoked directly (the existing verbatim-table behaviour is preserved).
     - Confirm at least one test covers an empty `("","")` service/command pair as a regression guard for callers that do not thread both kwargs.
     - _Requirements: REQ-2 AC7, REQ-5_
-  - [ ] 2.3 Add a `--verbose --human` escape-hatch test in `tests/unit/test_output.py` to pin the verbatim-shape table
+  - [x] 2.3 Add a `--verbose --human` escape-hatch test in `tests/unit/test_output.py` to pin the verbatim-shape table
     - File: `tests/unit/test_output.py` (add a new test method to `TestEmitPriorityChain` or a dedicated class).
     - Call `emit(verbatim_payload, human_mode=True, verbose_mode=True, service="jellyfin", command="now", stream=io.StringIO())` against a payload that includes both summary-shape keys and `NowPlayingItem.Name`, `NowPlayingItem.SeriesName`, `PlayState`.
     - Assert the captured stdout's first line contains `NowPlayingItem.Name` and does NOT contain `playing.name` (proves `_summary_jellyfin_now` was not applied).
     - Assert `human(verbatim_payload, ...) == captured_output` (snapshot invariant for the escape hatch).
     - _Requirements: REQ-4 AC1, REQ-4 AC2_
-  - [ ] 2.4 Add a summary-row-budget assertion in `tests/unit/test_output.py` that pins REQ-3 AC1 / AC3
+  - [x] 2.4 Add a summary-row-budget assertion in `tests/unit/test_output.py` that pins REQ-3 AC1 / AC3
     - File: `tests/unit/test_output.py` (add a new test method).
     - Construct a `verbatim_payload` whose `_summary_jellyfin_now`-shaped summary has fewer than 5 items but whose raw `/Sessions` shape has more than 5 items.
     - Call `emit(payload, human_mode=True, verbose_mode=False, service="jellyfin", command="now", limit=5, stream=io.StringIO())`; assert the captured table contains fewer than 5 data rows plus 1 header row and does NOT expand to the verbatim row count.
     - Call the same payload with `human_mode=True, verbose_mode=True, limit=5`; assert the verbatim row count is honored (escape hatch is not summary-bound by `limit`).
     - _Requirements: REQ-3 AC1, REQ-3 AC3_
-  - [ ] 2.5 Add a docstring-pinning regression net in `tests/unit/test_output.py` that verifies `emit()`'s docstring mentions the precedence
+  - [x] 2.5 Add a docstring-pinning regression net in `tests/unit/test_output.py` that verifies `emit()`'s docstring mentions the precedence
     - File: `tests/unit/test_output.py` (add a new test method).
     - Use `inspect.getdoc(emit)`; assert the docstring contains the substring tokens `human_mode` near `verbose` so a future revert that drops the escape-hatch note fails this test (REQ-4 AC3).
     - Also assert the docstring references `:func:`summarize`` so a future revert that drops the summary-shape language fails (REQ-2 AC1).
