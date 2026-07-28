@@ -941,7 +941,10 @@ def emit(
 
     Priority chain (REQ-3 AC1-AC4):
 
-    1. ``human_mode`` -- render via :func:`human` (tabular).
+    1. ``human_mode`` -- render via :func:`human` over the summary
+       shape (the same shape the no-flag default emits, courtesy of
+       :func:`summarize`); ``--verbose`` together with ``--human``
+       bypasses :func:`summarize` and renders the verbatim payload.
     2. ``verbose_mode`` -- emit verbatim JSON.
     3. ``service`` and ``command`` both non-empty and the
        ``(service, command)`` key is registered in
@@ -961,8 +964,12 @@ def emit(
         (REQ-3 AC5).
     verbose_mode:
         When True (and ``human_mode`` is False) the verbatim service
-        payload is emitted on stdout (REQ-2 AC1). Has no effect
-        when ``human_mode`` is True (REQ-3 AC1).
+        payload is emitted on stdout (REQ-2 AC1). When ``human_mode``
+        is also True, ``verbose_mode`` keeps its effect: the
+        verbatim payload is rendered as a table and
+        :func:`summarize` is bypassed; verbose wins for the data
+        shape, ``human_mode`` wins for the rendering format
+        (REQ-3 AC1, REQ-4 AC3).
     service:
         Per-service identifier used for the renderer dispatch table
         lookup. Defaults to ``""`` so callers that do not thread
@@ -998,8 +1005,12 @@ def emit(
     out = stream if stream is not None else sys.stdout
 
     if human_mode:
+        if verbose_mode:
+            shaped = payload
+        else:
+            shaped = summarize(service, command, payload)
         rendered = human(
-            payload,
+            shaped,
             columns=columns,
             limit=limit,
             max_width=max_width,

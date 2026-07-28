@@ -12,18 +12,18 @@ Implementation order:
 
 ## Tasks
 
-- [ ] 1. Patch `emit()` to route the `--human` branch through `summarize()`
-  - [ ] 1.1 Modify `arr_cli/facade/output.py` `emit()` body so the `human_mode=True, verbose_mode=False` branch calls `summarize(service, command, payload)` first, then `human(summarized, columns=..., limit=..., max_width=...)`
+- [x] 1. Patch `emit()` to route the `--human` branch through `summarize()`
+  - [x] 1.1 Modify `arr_cli/facade/output.py` `emit()` body so the `human_mode=True, verbose_mode=False` branch calls `summarize(service, command, payload)` first, then `human(summarized, columns=..., limit=..., max_width=...)`
     - Rewrite the single `if human_mode:` branch in `emit()` (currently at `arr_cli/facade/output.py:928`): when `verbose_mode` is False, pass `summarize(service, command, payload)` into `human()`; when `verbose_mode` is True, keep the existing verbatim pass-through (escape hatch).
     - Forward the existing `limit` / `max_width` / `columns` kwargs unchanged into `human()` so summary-row budgets are enforced (REQ-3 AC1).
     - Keep the function signature unchanged; the fix is inside the body.
     - _Requirements: REQ-1, REQ-2, REQ-3, REQ-4_
-  - [ ] 1.2 Update `emit()`'s docstring to spell out the `--human` vs `--verbose` precedence
+  - [x] 1.2 Update `emit()`'s docstring to spell out the `--human` vs `--verbose` precedence
     - Edit the priority-chain prose in the `emit()` docstring (currently at `arr_cli/facade/output.py:928`) to state: "`human_mode` -- render via :func:`human` over the summary shape (same shape the no-flag default emits, courtesy of :func:`summarize`); `--verbose` together with `--human` bypasses :func:`summarize` and renders the verbatim payload".
     - Replace the line "Has no effect when `human_mode` is True" with the new escape-hatch semantics ("verbose wins for the data shape; human wins for the rendering format") per REQ-4 AC3.
     - Do not add unrelated prose or commentary; two-space indent; no module-level comment noise (AGENTS.md §4.1).
     - _Requirements: REQ-4 AC3_
-  - [ ] 1.3 Sanity-check the patched `emit()` body against `summarize()`'s graceful default
+  - [x] 1.3 Sanity-check the patched `emit()` body against `summarize()`'s graceful default
     - Confirm `emit()` still falls through to `human(payload, ...)` unchanged for the 14 verbatim-only commands (because `summarize()` returns `payload` unchanged when `(service, command)` is not in `_SUMMARY_RENDERERS`).
     - Confirm callers that omit `service` / `command` (empty strings) keep their verbatim `--human` behaviour.
     - No code change here — this is a read-back verification of the patch from task 1.1.
