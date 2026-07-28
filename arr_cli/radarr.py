@@ -205,10 +205,14 @@ def cmd_wanted(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="wanted",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_radarr_wanted`` (flat top-level keys); the summary
+    # renderer does not emit ``movieFile`` so it is intentionally
+    # absent from the column list.
     columns = [
         "title",
         "year",
-        "movieFile",
+        "tmdbId",
         "monitored",
     ]
     return _emit(payload, args, columns=columns)
@@ -222,6 +226,8 @@ def cmd_queue(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="queue",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_radarr_queue`` (flat top-level keys).
     columns = [
         "title",
         "status",
@@ -245,6 +251,10 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="recent",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_radarr_recent``: nested ``movie.title`` /
+    # ``movie.year`` are resolved via dot-path traversal in
+    # ``_row_from_mapping``.
     columns = [
         "movie.title",
         "movie.year",

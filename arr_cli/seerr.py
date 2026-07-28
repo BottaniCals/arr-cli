@@ -313,6 +313,9 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="requests",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_requests``: nested ``requestedBy.displayName``
+    # is resolved via dot-path traversal in ``_row_from_mapping``.
     columns = [
         "title",
         "type",
@@ -355,6 +358,9 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params={"query": query},
         op="search",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_search``: nested ``mediaInfo.tmdbId`` is
+    # resolved via dot-path traversal in ``_row_from_mapping``.
     columns = [
         "title",
         "mediaType",
@@ -380,6 +386,9 @@ def cmd_available(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params={"query": query},
         op="available",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_available``: nested ``mediaInfo.status`` is
+    # resolved via dot-path traversal in ``_row_from_mapping``.
     columns = [
         "title",
         "mediaType",

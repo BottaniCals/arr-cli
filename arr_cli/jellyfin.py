@@ -165,16 +165,23 @@ def cmd_now(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     endpoint returns all sessions across all users.
     """
     payload = _get("/Sessions", args, cfg, op="now")
-    # Tabular columns surface the most useful fields for ad-hoc
-    # inspection: device name, user, now-playing title + series,
-    # play-state. The empty list when no sessions are active is
-    # rendered as ``(empty list)`` by the human renderer.
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_jellyfin_now`` (flat top-level keys plus nested
+    # ``playing.*`` and ``progress.*`` dot-paths; see
+    # ``arr_cli.facade.output._SUMMARY_RENDERERS``). The empty list
+    # when no sessions are active is rendered as ``(empty list)`` by
+    # the human renderer.
     columns = [
-        "DeviceName",
-        "UserName",
-        "NowPlayingItem.Name",
-        "NowPlayingItem.SeriesName",
-        "PlayState",
+        "user",
+        "device",
+        "client",
+        "playing.type",
+        "playing.name",
+        "playing.series",
+        "playing.season",
+        "playing.episode",
+        "progress.position_ticks",
+        "progress.is_paused",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -188,7 +195,19 @@ def cmd_resume(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="resume",
     )
-    columns = ["Name", "Type", "ProductionYear", "SeriesName", "UserData"]
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_jellyfin_resume``: the renderer flattens
+    # ``UserData.PlaybackPositionTicks`` and ``UserData.PlayCount``
+    # as top-level keys with ``.`` so the human renderer resolves
+    # them via dot-path traversal in ``_row_from_mapping``.
+    columns = [
+        "Name",
+        "Type",
+        "ProductionYear",
+        "SeriesName",
+        "UserData.PlaybackPositionTicks",
+        "UserData.PlayCount",
+    ]
     return _emit(payload, args, columns=columns)
 
 
@@ -207,7 +226,18 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params={"SortBy": "DatePlayed", "Filters": "IsPlayed"},
         op="recent",
     )
-    columns = ["Name", "Type", "ProductionYear", "SeriesName", "UserData"]
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_jellyfin_recent``: the renderer flattens
+    # ``UserData.LastPlayedDate`` as a top-level key with ``.`` so
+    # the human renderer resolves it via dot-path traversal in
+    # ``_row_from_mapping``.
+    columns = [
+        "Name",
+        "Type",
+        "ProductionYear",
+        "SeriesName",
+        "UserData.LastPlayedDate",
+    ]
     return _emit(payload, args, columns=columns)
 
 
@@ -264,6 +294,8 @@ def cmd_latest(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="latest",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_jellyfin_latest`` (flat top-level keys).
     columns = ["Name", "Type", "ProductionYear", "SeriesName", "DateCreated"]
     return _emit(payload, args, columns=columns)
 
@@ -317,6 +349,8 @@ def cmd_favorites(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         cfg,
         op="favorites",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_jellyfin_favorites`` (flat top-level keys).
     columns = ["Name", "Type", "ProductionYear", "SeriesName"]
     return _emit(payload, args, columns=columns)
 

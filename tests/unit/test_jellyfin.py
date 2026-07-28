@@ -661,14 +661,23 @@ class TestHumanMode(unittest.TestCase):
                 patch("arr_cli.jellyfin.output.emit") as mock_emit:
             cmd_now(args, cfg)
         kwargs = mock_emit.call_args.kwargs
+        # Columns are the summary-shape keys (REQ-1): the human
+        # renderer projects each row onto the named columns; the
+        # summary shape (``_summary_jellyfin_now``) is what feeds the
+        # table, not the verbatim ``/Sessions`` payload.
         self.assertEqual(
             kwargs["columns"],
             [
-                "DeviceName",
-                "UserName",
-                "NowPlayingItem.Name",
-                "NowPlayingItem.SeriesName",
-                "PlayState",
+                "user",
+                "device",
+                "client",
+                "playing.type",
+                "playing.name",
+                "playing.series",
+                "playing.season",
+                "playing.episode",
+                "progress.position_ticks",
+                "progress.is_paused",
             ],
         )
 
