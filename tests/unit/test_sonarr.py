@@ -584,6 +584,44 @@ class TestCmdLookup(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(kwargs["params"], {"term": ""})
 
+    def test_lookup_human_default_monitored_column(self) -> None:
+        # REQ-4 AC1, REQ-4 AC3, REQ-7 AC5: the --human column list
+        # on lookup carries ``defaultMonitored`` (the source-default
+        # flag, TVDB for Sonarr) and MUST NOT carry the bare
+        # ``monitored`` column (which would conflate the source
+        # default with the operator's library state).
+        cfg = _service_config()
+        args = _namespace(term="the expanse", human=True)
+        payload = [
+            {
+                "title": "X",
+                "monitored": True,
+                "tvdbId": 1,
+                "year": 2020,
+            }
+        ]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.sonarr.output.emit") as mock_emit:
+            cmd_lookup(args, cfg)
+        columns = mock_emit.call_args.kwargs["columns"]
+        self.assertIn("defaultMonitored", columns)
+        self.assertNotIn("monitored", columns)
+
+    def test_lookup_json_keeps_monitored_key(self) -> None:
+        # REQ-4 AC4: the JSON path (no --human) preserves the raw
+        # ``monitored`` key exactly as the upstream API returns it;
+        # the rename to ``defaultMonitored`` applies only to the
+        # --human column header.
+        cfg = _service_config()
+        args = _namespace(term="the expanse", human=False)
+        payload = [{"title": "X", "monitored": True, "tvdbId": 1}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        rendered = json.loads(output)
+        self.assertEqual(rendered, payload)
+        self.assertIn("monitored", rendered[0])
+        self.assertTrue(rendered[0]["monitored"])
+
 
 # ---------------------------------------------------------------------------
 # Test: cmd_series (REQ-8 AC7)
@@ -635,6 +673,86 @@ class TestCmdSeries(unittest.TestCase):
         with _patched_get_payload(payload):
             output = _capture_stdout(cmd_series, args, cfg)
         self.assertEqual(json.loads(output), payload)
+
+    def test_series_no_id_hits_series_list_path(self) -> None:
+        # REQ-1 AC1, REQ-7 AC1: ``sonarr series`` with no id MUST
+        # call transport.get with ``"/api/v3/series"`` and no
+        # ``params`` argument (the library-list endpoint takes no
+        # query parameters).
+        cfg = _service_config()
+        args = _namespace(series_id=None)
+        with _patched_get_payload([]) as mock_get:
+            cmd_series(args, cfg)
+        positional = mock_get.call_args.args
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(positional[0], "sonarr")
+        self.assertEqual(positional[1], "/api/v3/series")
+        # No params on the library-list endpoint -- ``_get`` defaults
+        # ``params`` to None when the caller omits it.
+        self.assertIsNone(kwargs.get("params"))
+
+    def test_series_no_id_emits_list_payload(self) -> None:
+        # REQ-1 AC3: the canned array round-trips through output
+        # unchanged under the default (non-human) JSON path.
+        cfg = _service_config()
+        args = _namespace(series_id=None, human=False)
+        payload = [{"title": "X"}, {"title": "Y"}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_series, args, cfg)
+        self.assertEqual(json.loads(output), payload)
+
+    def test_series_no_id_human_renders_table(self) -> None:
+        # REQ-1 AC2: the --human column list for the no-id branch
+        # is exactly these six columns in this order. ``monitored``
+        # here is the operator's library flag (NOT the source-default
+        # column that REQ-4 renames on lookup).
+        cfg = _service_config()
+        args = _namespace(series_id=None, human=True)
+        payload = [{"title": "X", "year": 2020}]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.sonarr.output.emit") as mock_emit:
+            cmd_series(args, cfg)
+        kwargs = mock_emit.call_args.kwargs
+        self.assertEqual(
+            kwargs["columns"],
+            ["title", "year", "monitored", "status", "tvdbId", "seasons"],
+        )
+
+    def test_series_no_id_row_count_matches_payload(self) -> None:
+        # REQ-1 AC3: a canned payload of N items renders N data rows.
+        # The ``human`` renderer emits a header row, a separator row,
+        # then one row per item; counting non-empty lines and
+        # subtracting the two header lines gives the row count.
+        cfg = _service_config()
+        n = 5
+        payload = [
+            {
+                "title": f"Show {i}",
+                "year": 2020 + i,
+                "monitored": True,
+                "status": "continuing",
+                "tvdbId": 1000 + i,
+                "seasons": [],
+            }
+            for i in range(n)
+        ]
+        args = _namespace(series_id=None, human=True)
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_series, args, cfg)
+        lines = [line for line in output.splitlines() if line.strip()]
+        # Header + separator + N data rows.
+        self.assertEqual(len(lines), n + 2)
+        # The header carries the six required column names.
+        header = lines[0]
+        for column in (
+            "title",
+            "year",
+            "monitored",
+            "status",
+            "tvdbId",
+            "seasons",
+        ):
+            self.assertIn(column, header)
 
 
 # ---------------------------------------------------------------------------
