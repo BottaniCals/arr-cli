@@ -124,17 +124,17 @@ follow-up because no `media-cli/SKILL.md` exists in this sandbox.
     - No code change; documentation follow-up only
     - _Requirements: REQ-6 AC2_
 
-- [ ] 8. Run the full CI gate to confirm no regressions
-  - [ ] 8.1 Run `make ci` from the repo root (`/workspace/projects/media-cli`)
+- [x] 8. Run the full CI gate to confirm no regressions
+  - [x] 8.1 Run `make ci` from the repo root (`/workspace/projects/media-cli`)
     - Equivalent to `make test && make secret-scan && make smoke-dry`
     - All three must exit 0 before the change is considered done (REQ-8 AC1, REQ-8 AC4)
     - No new dependencies, no new console scripts, no new config keys (REQ-8 NFRs)
     - _Requirements: REQ-8 AC1, REQ-8 AC4_
-  - [ ] 8.2 Run `make lint` from the repo root
+  - [x] 8.2 Run `make lint` from the repo root
     - `py_compile` sweep over `arr_cli/` and `tests/`
     - Must exit 0; confirms the new branches use only existing Python ≥ 3.11 syntax (REQ-8 AC2)
     - _Requirements: REQ-8 AC2_
-  - [ ] 8.3 Run `scripts/smoke.sh --dry-run` (or `make smoke-dry`)
+  - [x] 8.3 Run `scripts/smoke.sh --dry-run` (or `make smoke-dry`)
     - The grammar check invokes `sonarr --help` and `radarr --help`; both must list `series` and `movie` (REQ-8 AC3)
     - Verify the help text for `series` / `movie` reads as a single description covering both the no-id and with-id invocations (mirrors the existing `calendar` help text shape)
     - _Requirements: REQ-8 AC3_
