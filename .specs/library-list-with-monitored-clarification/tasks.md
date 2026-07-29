@@ -94,8 +94,8 @@ follow-up because no `media-cli/SKILL.md` exists in this sandbox.
     - Update the existing `test_series_requires_id` (currently asserts `SystemExit`) so it now asserts that `parse_args(["series"])` succeeds (REQ-3 AC1) — OR keep it removed and rely on `test_series_parses_without_id` as the new pin; do not duplicate assertions
     - _Requirements: REQ-3 AC1, REQ-7 AC2_
 
-- [ ] 6. Extend Radarr unit tests for new routing, columns, and parser
-  - [ ] 6.1 Add no-id tests to `TestCmdMovie` in `tests/unit/test_radarr.py` (currently lines ~568–642; insert new tests adjacent to existing ones)
+- [x] 6. Extend Radarr unit tests for new routing, columns, and parser
+  - [x] 6.1 Add no-id tests to `TestCmdMovie` in `tests/unit/test_radarr.py` (currently lines ~568–642; insert new tests adjacent to existing ones)
     - `test_movie_no_id_hits_movie_list_path`: `args = _namespace(movie_id=None)`; assert `transport.get` called with `"radarr"` and `"/api/v3/movie"`; assert no `params` arg (REQ-2 AC1, REQ-7 AC3)
     - `test_movie_no_id_emits_list_payload`: canned array `[{"title": "A"}, {"title": "B"}]` round-trips through `output.emit` verbatim (REQ-2 AC3)
     - `test_movie_no_id_human_renders_table`: `human=True`; patch `arr_cli.radarr.output.emit`; assert `columns` is exactly `["title", "year", "monitored", "status", "tmdbId", "imdbId"]` (REQ-2 AC2)
@@ -103,12 +103,12 @@ follow-up because no `media-cli/SKILL.md` exists in this sandbox.
     - Keep the existing `test_movie_hits_movie_path` as the single-fetch regression pin (REQ-3 AC2, REQ-7 AC4)
     - Reuse the existing helpers in `tests/unit/test_radarr.py`; do NOT introduce new helpers
     - _Requirements: REQ-2 AC1–AC3, REQ-3 AC2, REQ-7 AC3, REQ-7 AC4, REQ-7 AC7_
-  - [ ] 6.2 Add `defaultMonitored`-column tests to `TestCmdLookup` in `tests/unit/test_radarr.py` (currently lines ~510–565; append new tests to the class)
+  - [x] 6.2 Add `defaultMonitored`-column tests to `TestCmdLookup` in `tests/unit/test_radarr.py` (currently lines ~510–565; append new tests to the class)
     - `test_lookup_human_default_monitored_column`: canned payload `[{"title": "X", "monitored": true, "tmdbId": 1, "year": 1999}]`; patch `arr_cli.radarr.output.emit`; assert `kwargs["columns"]` contains `"defaultMonitored"` and does NOT contain the bare string `"monitored"` (REQ-4 AC2, REQ-4 AC3, REQ-7 AC6)
     - `test_lookup_json_keeps_monitored_key`: `human=False`; canned payload with `{"monitored": True}` round-trips unchanged through the JSON path (REQ-4 AC4)
     - Reuse the existing helpers; do NOT introduce new helpers
     - _Requirements: REQ-4 AC2, REQ-4 AC3, REQ-4 AC4, REQ-7 AC6_
-  - [ ] 6.3 Add the parser regression test to `TestBuildRadarrParser` in `tests/unit/test_radarr.py` (currently lines ~659–758; insert next to existing `test_movie_parses_with_id`)
+  - [x] 6.3 Add the parser regression test to `TestBuildRadarrParser` in `tests/unit/test_radarr.py` (currently lines ~659–758; insert next to existing `test_movie_parses_with_id`)
     - `test_movie_parses_without_id`: `parser.parse_args(["movie"])` succeeds; `args.movie_id is None` (REQ-3 AC2, REQ-7 AC4)
     - Update the existing `test_movie_requires_id` (currently asserts `SystemExit`) so it now asserts that `parse_args(["movie"])` succeeds — OR remove it and rely on `test_movie_parses_without_id`; do not duplicate assertions
     - _Requirements: REQ-3 AC2, REQ-7 AC4_

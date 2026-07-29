@@ -559,6 +559,44 @@ class TestCmdLookup(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(kwargs["params"], {"term": ""})
 
+    def test_lookup_human_default_monitored_column(self) -> None:
+        # REQ-4 AC2, REQ-4 AC3, REQ-7 AC6: the --human column list
+        # on lookup carries ``defaultMonitored`` (the source-default
+        # flag, TMDB for Radarr) and MUST NOT carry the bare
+        # ``monitored`` column (which would conflate the source
+        # default with the operator's library state).
+        cfg = _service_config()
+        args = _namespace(term="the matrix", human=True)
+        payload = [
+            {
+                "title": "X",
+                "monitored": True,
+                "tmdbId": 1,
+                "year": 1999,
+            }
+        ]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.radarr.output.emit") as mock_emit:
+            cmd_lookup(args, cfg)
+        columns = mock_emit.call_args.kwargs["columns"]
+        self.assertIn("defaultMonitored", columns)
+        self.assertNotIn("monitored", columns)
+
+    def test_lookup_json_keeps_monitored_key(self) -> None:
+        # REQ-4 AC4: the JSON path (no --human) preserves the raw
+        # ``monitored`` key exactly as the upstream API returns it;
+        # the rename to ``defaultMonitored`` applies only to the
+        # --human column header.
+        cfg = _service_config()
+        args = _namespace(term="the matrix", human=False)
+        payload = [{"title": "X", "monitored": True, "tmdbId": 1}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        rendered = json.loads(output)
+        self.assertEqual(rendered, payload)
+        self.assertIn("monitored", rendered[0])
+        self.assertTrue(rendered[0]["monitored"])
+
 
 # ---------------------------------------------------------------------------
 # Test: cmd_movie (REQ-7 AC7)
@@ -610,6 +648,86 @@ class TestCmdMovie(unittest.TestCase):
         with _patched_get_payload(payload):
             output = _capture_stdout(cmd_movie, args, cfg)
         self.assertEqual(json.loads(output), payload)
+
+    def test_movie_no_id_hits_movie_list_path(self) -> None:
+        # REQ-2 AC1, REQ-7 AC3: ``radarr movie`` with no id MUST
+        # call transport.get with ``"/api/v3/movie"`` and no
+        # ``params`` argument (the library-list endpoint takes no
+        # query parameters).
+        cfg = _service_config()
+        args = _namespace(movie_id=None)
+        with _patched_get_payload([]) as mock_get:
+            cmd_movie(args, cfg)
+        positional = mock_get.call_args.args
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(positional[0], "radarr")
+        self.assertEqual(positional[1], "/api/v3/movie")
+        # No params on the library-list endpoint -- ``_get`` defaults
+        # ``params`` to None when the caller omits it.
+        self.assertIsNone(kwargs.get("params"))
+
+    def test_movie_no_id_emits_list_payload(self) -> None:
+        # REQ-2 AC3: the canned array round-trips through output
+        # unchanged under the default (non-human) JSON path.
+        cfg = _service_config()
+        args = _namespace(movie_id=None, human=False)
+        payload = [{"title": "A"}, {"title": "B"}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_movie, args, cfg)
+        self.assertEqual(json.loads(output), payload)
+
+    def test_movie_no_id_human_renders_table(self) -> None:
+        # REQ-2 AC2: the --human column list for the no-id branch
+        # is exactly these six columns in this order. ``monitored``
+        # here is the operator's library flag (NOT the source-default
+        # column that REQ-4 renames on lookup).
+        cfg = _service_config()
+        args = _namespace(movie_id=None, human=True)
+        payload = [{"title": "A", "year": 1999}]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.radarr.output.emit") as mock_emit:
+            cmd_movie(args, cfg)
+        kwargs = mock_emit.call_args.kwargs
+        self.assertEqual(
+            kwargs["columns"],
+            ["title", "year", "monitored", "status", "tmdbId", "imdbId"],
+        )
+
+    def test_movie_no_id_row_count_matches_payload(self) -> None:
+        # REQ-2 AC3: a canned payload of N items renders N data rows.
+        # The ``human`` renderer emits a header row, a separator row,
+        # then one row per item; counting non-empty lines and
+        # subtracting the two header lines gives the row count.
+        cfg = _service_config()
+        n = 5
+        payload = [
+            {
+                "title": f"Movie {i}",
+                "year": 1990 + i,
+                "monitored": True,
+                "status": "released",
+                "tmdbId": 1000 + i,
+                "imdbId": f"tt{1000 + i:07d}",
+            }
+            for i in range(n)
+        ]
+        args = _namespace(movie_id=None, human=True)
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_movie, args, cfg)
+        lines = [line for line in output.splitlines() if line.strip()]
+        # Header + separator + N data rows.
+        self.assertEqual(len(lines), n + 2)
+        # The header carries the six required column names.
+        header = lines[0]
+        for column in (
+            "title",
+            "year",
+            "monitored",
+            "status",
+            "tmdbId",
+            "imdbId",
+        ):
+            self.assertIn(column, header)
 
 
 # ---------------------------------------------------------------------------
@@ -735,10 +853,14 @@ class TestBuildRadarrParser(unittest.TestCase):
         self.assertEqual(args.command, "movie")
         self.assertEqual(args.movie_id, "42")
 
-    def test_movie_requires_id(self) -> None:
-        with self.assertRaises(SystemExit) as ctx:
-            self.parser.parse_args(["movie"])
-        self.assertEqual(ctx.exception.code, 2)
+    def test_movie_parses_without_id(self) -> None:
+        # ``movie_id`` is an OPTIONAL positional; invoking
+        # ``radarr movie`` with no id must parse cleanly so the
+        # CLI can branch to GET /api/v3/movie in cmd_movie
+        # (REQ-2 AC1, REQ-3 AC2).
+        args = self.parser.parse_args(["movie"])
+        self.assertEqual(args.command, "movie")
+        self.assertIsNone(args.movie_id)
 
     def test_unknown_subcommand_fails(self) -> None:
         with self.assertRaises(SystemExit) as ctx:
