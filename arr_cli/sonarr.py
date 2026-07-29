@@ -293,7 +293,7 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     transport layer percent-encodes the value so special characters
     (slashes, spaces, ``?``, ``&``) cannot break the URL.
 
-    Note that the `monitored` field on these records is the source default (TVDB for Sonarr, TMDB for Radarr), not the user's library state.
+    the `monitored` field on these records is the source default (TVDB for Sonarr, TMDB for Radarr), not the user's library state
     """
     term = getattr(args, "term", "") or ""
     payload = _get(

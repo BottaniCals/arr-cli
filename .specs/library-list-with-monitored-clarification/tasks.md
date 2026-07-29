@@ -53,13 +53,13 @@ follow-up because no `media-cli/SKILL.md` exists in this sandbox.
     - `monitored` here is the operator's library flag and intentionally keeps its name; REQ-4 rename applies only to `lookup`
     - _Requirements: REQ-2 AC2, REQ-2 AC3_
 
-- [ ] 3. Rename `monitored` → `defaultMonitored` on `sonarr lookup` `--human` output
-  - [ ] 3.1 Update `cmd_lookup` columns in `arr_cli/sonarr.py` (lines ~284–304)
+- [x] 3. Rename `monitored` → `defaultMonitored` on `sonarr lookup` `--human` output
+  - [x] 3.1 Update `cmd_lookup` columns in `arr_cli/sonarr.py` (lines ~284–304)
     - Change the `columns` list from `["title", "year", "tvdbId", "tvMazeId", "monitored"]` to `["title", "year", "tvdbId", "tvMazeId", "defaultMonitored"]`
     - Do NOT modify the JSON path: `_SUMMARY_RENDERERS` has no entry for `("sonarr", "lookup")`, so the unflagged default and `--verbose` continue to emit the verbatim upstream payload with the literal `monitored` key (REQ-4 AC4)
     - Do NOT touch the `_get(...)` call signature or the `params` dict
     - _Requirements: REQ-4 AC1, REQ-4 AC3, REQ-4 AC4_
-  - [ ] 3.2 Append the verbatim REQ-5 phrase to the `cmd_lookup` docstring in `arr_cli/sonarr.py` (lines ~284–290)
+  - [x] 3.2 Append the verbatim REQ-5 phrase to the `cmd_lookup` docstring in `arr_cli/sonarr.py` (lines ~284–290)
     - Add a new paragraph to the existing docstring containing exactly: *"the `monitored` field on these records is the source default (TVDB for Sonarr, TMDB for Radarr), not the user's library state"* (verbatim, with the backticks around `monitored`)
     - Keep all existing wording; append rather than rewrite
     - _Requirements: REQ-5 AC1_
