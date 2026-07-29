@@ -8,7 +8,8 @@ exposes six read-only commands against a live Radarr instance:
 * ``queue``                  -- ``GET /api/v3/queue`` (REQ-7 AC4)
 * ``recent``                 -- ``GET /api/v3/history/movie`` (REQ-7 AC5)
 * ``lookup <term>``          -- ``GET /api/v3/movie/lookup?term=<urlencoded term>`` (REQ-7 AC6)
-* ``movie <id>``             -- ``GET /api/v3/movie/{id}`` (REQ-7 AC7)
+* ``movie [<id>]``           -- ``GET /api/v3/movie`` (REQ-2 AC1) or
+                                ``GET /api/v3/movie/{id}`` (REQ-7 AC7, REQ-3 AC2)
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -264,12 +265,15 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+# TODO(REQ-6): when an operator workspace contains media-cli/SKILL.md, update the Radarr lookup recipe to call out that the monitored column reflects the TMDB source default, not the user's library state.
 def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Radarr ``lookup <term>`` -- lookup a movie by title (REQ-7 AC6).
 
     The ``term`` parameter is forwarded as a query string; the
     transport layer percent-encodes the value so special characters
     (slashes, spaces, ``?``, ``&``) cannot break the URL.
+
+    the `monitored` field on these records is the source default (TVDB for Sonarr, TMDB for Radarr), not the user's library state
     """
     term = getattr(args, "term", "") or ""
     payload = _get(
@@ -284,34 +288,61 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "year",
         "tmdbId",
         "imdbId",
-        "monitored",
+        "defaultMonitored",
     ]
     return _emit(payload, args, columns=columns)
 
 
 def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
-    """Radarr ``movie <id>`` -- fetch a single movie by id (REQ-7 AC7).
+    """Radarr ``movie [<id>]`` -- list every movie, or fetch one by id.
 
-    The transport layer maps a 404 response to
-    :class:`HttpError(exit_code=4)` so the caller doesn't need to
-    inspect the status code; :func:`main_wrapper` then emits the
-    structured stderr line naming the id.
+    When ``movie_id`` is supplied the CLI hits the single-fetch
+    endpoint ``GET /api/v3/movie/{id}`` (REQ-7 AC7, REQ-3 AC2);
+    when omitted it lists every movie in the library via
+    ``GET /api/v3/movie`` (REQ-2 AC1). The transport layer maps a
+    404 on the single-fetch path to :class:`HttpError(exit_code=4)`
+    so the caller doesn't need to inspect the status code;
+    :func:`main_wrapper` then emits the structured stderr line
+    naming the id.
     """
-    raw_id = getattr(args, "movie_id", "")
-    movie_id = transport.encode_path_segment(raw_id)
-    payload = _get(
-        f"/api/v3/movie/{movie_id}",
-        args,
-        cfg,
-        op=f"movie id={raw_id}",
-    )
-    columns = [
-        "title",
-        "year",
-        "runtime",
-        "genres",
-        "monitored",
-    ]
+    raw_id = getattr(args, "movie_id", None)
+    if raw_id:
+        encoded_id = transport.encode_path_segment(raw_id)
+        payload = _get(
+            f"/api/v3/movie/{encoded_id}",
+            args,
+            cfg,
+            op=f"movie id={raw_id}",
+        )
+        # Single-id row is the operator's library row; columns match
+        # the original REQ-7 AC7 contract and stay unchanged here
+        # (REQ-4 only renames the column on the lookup endpoint).
+        columns = [
+            "title",
+            "year",
+            "runtime",
+            "genres",
+            "monitored",
+        ]
+    else:
+        payload = _get(
+            "/api/v3/movie",
+            args,
+            cfg,
+            op="movie",
+        )
+        # Library-list columns are pinned by REQ-2 AC2: the rendered
+        # table MUST show exactly these six columns in this order.
+        # ``monitored`` here is the operator's library flag on a
+        # library row, not the source default that REQ-4 renames.
+        columns = [
+            "title",
+            "year",
+            "monitored",
+            "status",
+            "tmdbId",
+            "imdbId",
+        ]
     return _emit(payload, args, columns=columns)
 
 
@@ -367,7 +398,8 @@ def build_radarr_parser() -> argparse.ArgumentParser:
         description=(
             "Read-only CLI for Radarr. Six commands expose upcoming "
             "calendar, missing/wanted movies, the download queue, "
-            "recent history, lookup-by-term, and single movie by id."
+            "recent history, lookup-by-term, and movie by id (or the "
+            "full movie library when no id is given)."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -434,12 +466,20 @@ def build_radarr_parser() -> argparse.ArgumentParser:
 
     movie = subparsers.add_parser(
         "movie",
-        help="fetch a single movie by id (GET /api/v3/movie/{id})",
+        help=(
+            "fetch a single movie by id, or list all movies when no "
+            "id is given (GET /api/v3/movie[/{id}])"
+        ),
     )
     movie.add_argument(
         "movie_id",
+        nargs=argparse.OPTIONAL,
+        default=None,
         metavar="ID",
-        help="Radarr movie id (percent-encoded before being sent)",
+        help=(
+            "optional Radarr movie id (percent-encoded before being "
+            "sent); omit to list every movie in the library"
+        ),
     )
 
     return parser

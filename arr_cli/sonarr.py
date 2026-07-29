@@ -9,7 +9,8 @@ exposes six read-only commands against a live Sonarr instance:
 * ``recent``                 -- ``GET /api/v3/history`` (REQ-8 AC5;
                                 NOT ``/history/movie`` like Radarr)
 * ``lookup <term>``          -- ``GET /api/v3/series/lookup?term=<urlencoded term>`` (REQ-8 AC6)
-* ``series <id>``            -- ``GET /api/v3/series/{id}`` (REQ-8 AC7)
+* ``series [<id>]``          -- ``GET /api/v3/series`` (REQ-1 AC1) or
+                                ``GET /api/v3/series/{id}`` (REQ-8 AC7, REQ-3 AC1)
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -285,12 +286,15 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+# TODO(REQ-6): when an operator workspace contains media-cli/SKILL.md, update the Sonarr lookup recipe to call out that the monitored column reflects the TVDB source default, not the user's library state.
 def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Sonarr ``lookup <term>`` -- lookup a series by title (REQ-8 AC6).
 
     The ``term`` parameter is forwarded as a query string; the
     transport layer percent-encodes the value so special characters
     (slashes, spaces, ``?``, ``&``) cannot break the URL.
+
+    the `monitored` field on these records is the source default (TVDB for Sonarr, TMDB for Radarr), not the user's library state
     """
     term = getattr(args, "term", "") or ""
     payload = _get(
@@ -305,35 +309,62 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "year",
         "tvdbId",
         "tvMazeId",
-        "monitored",
+        "defaultMonitored",
     ]
     return _emit(payload, args, columns=columns)
 
 
 def cmd_series(args: argparse.Namespace, cfg: ServiceConfig) -> int:
-    """Sonarr ``series <id>`` -- fetch a single series by id (REQ-8 AC7).
+    """Sonarr ``series [<id>]`` -- list every series, or fetch one by id.
 
-    The transport layer maps a 404 response to
-    :class:`HttpError(exit_code=4)` so the caller doesn't need to
-    inspect the status code; :func:`main_wrapper` then emits the
-    structured stderr line naming the id.
+    When ``series_id`` is supplied the CLI hits the single-fetch
+    endpoint ``GET /api/v3/series/{id}`` (REQ-8 AC7, REQ-3 AC1);
+    when omitted it lists every series in the library via
+    ``GET /api/v3/series`` (REQ-1 AC1). The transport layer maps a
+    404 on the single-fetch path to :class:`HttpError(exit_code=4)`
+    so the caller doesn't need to inspect the status code;
+    :func:`main_wrapper` then emits the structured stderr line
+    naming the id.
     """
-    raw_id = getattr(args, "series_id", "")
-    series_id = transport.encode_path_segment(raw_id)
-    payload = _get(
-        f"/api/v3/series/{series_id}",
-        args,
-        cfg,
-        op=f"series id={raw_id}",
-    )
-    columns = [
-        "title",
-        "year",
-        "runtime",
-        "genres",
-        "monitored",
-        "status",
-    ]
+    raw_id = getattr(args, "series_id", None)
+    if raw_id:
+        encoded_id = transport.encode_path_segment(raw_id)
+        payload = _get(
+            f"/api/v3/series/{encoded_id}",
+            args,
+            cfg,
+            op=f"series id={raw_id}",
+        )
+        # Single-id row is the operator's library row; columns match
+        # the original REQ-8 AC7 contract and stay unchanged here
+        # (REQ-4 only renames the column on the lookup endpoint).
+        columns = [
+            "title",
+            "year",
+            "runtime",
+            "genres",
+            "monitored",
+            "status",
+        ]
+    else:
+        payload = _get(
+            "/api/v3/series",
+            args,
+            cfg,
+            op="series",
+        )
+        # Library-list columns are pinned by REQ-1 AC2: the rendered
+        # table MUST show exactly these six columns in this order.
+        # ``monitored`` here is the operator's library flag on a
+        # library row, not the source default that REQ-4 renames.
+        columns = [
+            "title",
+            "year",
+            "monitored",
+            "status",
+            "tvdbId",
+            "seasons",
+        ]
     return _emit(payload, args, columns=columns)
 
 
@@ -389,7 +420,8 @@ def build_sonarr_parser() -> argparse.ArgumentParser:
         description=(
             "Read-only CLI for Sonarr. Six commands expose upcoming "
             "calendar, missing/wanted episodes, the download queue, "
-            "recent history, lookup-by-term, and single series by id."
+            "recent history, lookup-by-term, and series by id (or "
+            "the full series library when no id is given)."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -456,12 +488,20 @@ def build_sonarr_parser() -> argparse.ArgumentParser:
 
     series = subparsers.add_parser(
         "series",
-        help="fetch a single series by id (GET /api/v3/series/{id})",
+        help=(
+            "fetch a single series by id, or list all series when no "
+            "id is given (GET /api/v3/series[/{id}])"
+        ),
     )
     series.add_argument(
         "series_id",
+        nargs=argparse.OPTIONAL,
+        default=None,
         metavar="ID",
-        help="Sonarr series id (percent-encoded before being sent)",
+        help=(
+            "optional Sonarr series id (percent-encoded before being "
+            "sent); omit to list every series in the library"
+        ),
     )
 
     return parser
