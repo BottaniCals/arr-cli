@@ -760,10 +760,14 @@ class TestBuildSonarrParser(unittest.TestCase):
         self.assertEqual(args.command, "series")
         self.assertEqual(args.series_id, "42")
 
-    def test_series_requires_id(self) -> None:
-        with self.assertRaises(SystemExit) as ctx:
-            self.parser.parse_args(["series"])
-        self.assertEqual(ctx.exception.code, 2)
+    def test_series_parses_without_id(self) -> None:
+        # ``series_id`` is an OPTIONAL positional; invoking
+        # ``sonarr series`` with no id must parse cleanly so the
+        # CLI can branch to GET /api/v3/series in cmd_series
+        # (REQ-1 AC1, REQ-3 AC1).
+        args = self.parser.parse_args(["series"])
+        self.assertEqual(args.command, "series")
+        self.assertIsNone(args.series_id)
 
     def test_unknown_subcommand_fails(self) -> None:
         with self.assertRaises(SystemExit) as ctx:

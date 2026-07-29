@@ -15,20 +15,20 @@ follow-up because no `media-cli/SKILL.md` exists in this sandbox.
 
 ## Tasks
 
-- [ ] 1. Make `sonarr series_id` an optional positional
-  - [ ] 1.1 Modify `series` subparser in `arr_cli/sonarr.py` (`build_sonarr_parser`, lines ~454–466)
+- [x] 1. Make `sonarr series_id` an optional positional
+  - [x] 1.1 Modify `series` subparser in `arr_cli/sonarr.py` (`build_sonarr_parser`, lines ~454–466)
     - Add `nargs=argparse.OPTIONAL` and `default=None` to the existing `add_argument("series_id", ...)` call
     - Mirror the existing `lookup.term` pattern in the same file
     - Update the subparser `help=` string to describe both invocations (e.g. `fetch a single series by id, or list all series when no id is given (GET /api/v3/series[/{id}])`)
     - Do NOT add new imports; `argparse` is already in scope
     - _Requirements: REQ-1 AC1, REQ-3 AC1_
-  - [ ] 1.2 Branch `cmd_series` in `arr_cli/sonarr.py` (lines ~319–341) on whether `series_id` is supplied
+  - [x] 1.2 Branch `cmd_series` in `arr_cli/sonarr.py` (lines ~319–341) on whether `series_id` is supplied
     - Keep the existing signature `(args: argparse.Namespace, cfg: ServiceConfig) -> int`
     - When `getattr(args, "series_id", None)` is truthy, call `_get(f"/api/v3/series/{transport.encode_path_segment(raw_id)}", args, cfg, op=f"series id={raw_id}")` (preserve existing REQ-3 single-fetch behaviour verbatim)
     - When `None`, call `_get("/api/v3/series", args, cfg, op="series")`
     - Do NOT change the helper imports (`_get`, `_emit`); they already exist in the module
     - _Requirements: REQ-1 AC1, REQ-3 AC1, REQ-3 AC3_
-  - [ ] 1.3 Set the no-id `--human` column list in `cmd_series` (`arr_cli/sonarr.py`)
+  - [x] 1.3 Set the no-id `--human` column list in `cmd_series` (`arr_cli/sonarr.py`)
     - Use exactly `["title", "year", "monitored", "status", "tvdbId", "seasons"]` for the no-id branch (REQ-1 AC2)
     - Keep the existing single-id column list unchanged (operator's library row, NOT a lookup-source default)
     - `monitored` here is the operator's library flag and intentionally keeps its name; REQ-4 rename applies only to `lookup`
