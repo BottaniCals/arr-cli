@@ -113,13 +113,13 @@ follow-up because no `media-cli/SKILL.md` exists in this sandbox.
     - Update the existing `test_movie_requires_id` (currently asserts `SystemExit`) so it now asserts that `parse_args(["movie"])` succeeds — OR remove it and rely on `test_movie_parses_without_id`; do not duplicate assertions
     - _Requirements: REQ-3 AC2, REQ-7 AC4_
 
-- [ ] 7. Document the SKILL.md lookup-recipe follow-up
-  - [ ] 7.1 Add an inline TODO note in `arr_cli/sonarr.py` next to `cmd_lookup` (lines ~284–304)
+- [x] 7. Document the SKILL.md lookup-recipe follow-up
+  - [x] 7.1 Add an inline TODO note in `arr_cli/sonarr.py` next to `cmd_lookup` (lines ~284–304)
     - One-line comment: `# TODO(REQ-6): when an operator workspace contains media-cli/SKILL.md, update the Sonarr lookup recipe to call out that the monitored column reflects the TVDB source default, not the user's library state.`
     - No code change; documentation follow-up only
     - This is a sandbox no-op — `find / -path '*media-cli/SKILL.md'` returns no results in this sandbox
     - _Requirements: REQ-6 AC1_
-  - [ ] 7.2 Add the analogous inline TODO note in `arr_cli/radarr.py` next to `cmd_lookup` (lines ~262–282)
+  - [x] 7.2 Add the analogous inline TODO note in `arr_cli/radarr.py` next to `cmd_lookup` (lines ~262–282)
     - One-line comment: `# TODO(REQ-6): when an operator workspace contains media-cli/SKILL.md, update the Radarr lookup recipe to call out that the monitored column reflects the TMDB source default, not the user's library state.`
     - No code change; documentation follow-up only
     - _Requirements: REQ-6 AC2_

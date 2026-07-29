@@ -265,6 +265,7 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+# TODO(REQ-6): when an operator workspace contains media-cli/SKILL.md, update the Radarr lookup recipe to call out that the monitored column reflects the TMDB source default, not the user's library state.
 def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Radarr ``lookup <term>`` -- lookup a movie by title (REQ-7 AC6).
 

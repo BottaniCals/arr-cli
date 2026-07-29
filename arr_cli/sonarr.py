@@ -286,6 +286,7 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+# TODO(REQ-6): when an operator workspace contains media-cli/SKILL.md, update the Sonarr lookup recipe to call out that the monitored column reflects the TVDB source default, not the user's library state.
 def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Sonarr ``lookup <term>`` -- lookup a series by title (REQ-8 AC6).
 
