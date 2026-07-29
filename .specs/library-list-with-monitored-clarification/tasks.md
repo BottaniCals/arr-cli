@@ -64,13 +64,13 @@ follow-up because no `media-cli/SKILL.md` exists in this sandbox.
     - Keep all existing wording; append rather than rewrite
     - _Requirements: REQ-5 AC1_
 
-- [ ] 4. Rename `monitored` → `defaultMonitored` on `radarr lookup` `--human` output
-  - [ ] 4.1 Update `cmd_lookup` columns in `arr_cli/radarr.py` (lines ~262–282)
+- [x] 4. Rename `monitored` → `defaultMonitored` on `radarr lookup` `--human` output
+  - [x] 4.1 Update `cmd_lookup` columns in `arr_cli/radarr.py` (lines ~262–282)
     - Change the `columns` list from `["title", "year", "tmdbId", "imdbId", "monitored"]` to `["title", "year", "tmdbId", "imdbId", "defaultMonitored"]`
     - Do NOT modify the JSON path: `_SUMMARY_RENDERERS` has no entry for `("radarr", "lookup")`, so the unflagged default and `--verbose` continue to emit the verbatim upstream payload with the literal `monitored` key (REQ-4 AC4)
     - Do NOT touch the `_get(...)` call signature or the `params` dict
     - _Requirements: REQ-4 AC2, REQ-4 AC3, REQ-4 AC4_
-  - [ ] 4.2 Append the verbatim REQ-5 phrase to the `cmd_lookup` docstring in `arr_cli/radarr.py` (lines ~262–268)
+  - [x] 4.2 Append the verbatim REQ-5 phrase to the `cmd_lookup` docstring in `arr_cli/radarr.py` (lines ~262–268)
     - Add a new paragraph to the existing docstring containing exactly: *"the `monitored` field on these records is the source default (TVDB for Sonarr, TMDB for Radarr), not the user's library state"* (verbatim, with the backticks around `monitored`)
     - Keep all existing wording; append rather than rewrite
     - _Requirements: REQ-5 AC2_
