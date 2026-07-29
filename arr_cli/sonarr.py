@@ -292,6 +292,8 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     The ``term`` parameter is forwarded as a query string; the
     transport layer percent-encodes the value so special characters
     (slashes, spaces, ``?``, ``&``) cannot break the URL.
+
+    Note that the `monitored` field on these records is the source default (TVDB for Sonarr, TMDB for Radarr), not the user's library state.
     """
     term = getattr(args, "term", "") or ""
     payload = _get(
@@ -306,7 +308,7 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "year",
         "tvdbId",
         "tvMazeId",
-        "monitored",
+        "defaultMonitored",
     ]
     return _emit(payload, args, columns=columns)
 

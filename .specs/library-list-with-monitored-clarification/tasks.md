@@ -34,20 +34,20 @@ follow-up because no `media-cli/SKILL.md` exists in this sandbox.
     - `monitored` here is the operator's library flag and intentionally keeps its name; REQ-4 rename applies only to `lookup`
     - _Requirements: REQ-1 AC2, REQ-1 AC3_
 
-- [ ] 2. Make `radarr movie_id` an optional positional
-  - [ ] 2.1 Modify `movie` subparser in `arr_cli/radarr.py` (`build_radarr_parser`, lines ~436–448)
+- [x] 2. Make `radarr movie_id` an optional positional
+  - [x] 2.1 Modify `movie` subparser in `arr_cli/radarr.py` (`build_radarr_parser`, lines ~436–448)
     - Add `nargs=argparse.OPTIONAL` and `default=None` to the existing `add_argument("movie_id", ...)` call
     - Mirror the existing `lookup.term` pattern in the same file
     - Update the subparser `help=` string to describe both invocations (e.g. `fetch a single movie by id, or list all movies when no id is given (GET /api/v3/movie[/{id}])`)
     - Do NOT add new imports; `argparse` is already in scope
     - _Requirements: REQ-2 AC1, REQ-3 AC2_
-  - [ ] 2.2 Branch `cmd_movie` in `arr_cli/radarr.py` (lines ~289–311) on whether `movie_id` is supplied
+  - [x] 2.2 Branch `cmd_movie` in `arr_cli/radarr.py` (lines ~289–311) on whether `movie_id` is supplied
     - Keep the existing signature `(args: argparse.Namespace, cfg: ServiceConfig) -> int`
     - When `getattr(args, "movie_id", None)` is truthy, call `_get(f"/api/v3/movie/{transport.encode_path_segment(raw_id)}", args, cfg, op=f"movie id={raw_id}")` (preserve existing REQ-3 single-fetch behaviour verbatim)
     - When `None`, call `_get("/api/v3/movie", args, cfg, op="movie")`
     - Do NOT change the helper imports (`_get`, `_emit`); they already exist in the module
     - _Requirements: REQ-2 AC1, REQ-3 AC2, REQ-3 AC3_
-  - [ ] 2.3 Set the no-id `--human` column list in `cmd_movie` (`arr_cli/radarr.py`)
+  - [x] 2.3 Set the no-id `--human` column list in `cmd_movie` (`arr_cli/radarr.py`)
     - Use exactly `["title", "year", "monitored", "status", "tmdbId", "imdbId"]` for the no-id branch (REQ-2 AC2)
     - Keep the existing single-id column list unchanged (operator's library row, NOT a lookup-source default)
     - `monitored` here is the operator's library flag and intentionally keeps its name; REQ-4 rename applies only to `lookup`
