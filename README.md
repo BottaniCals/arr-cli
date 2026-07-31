@@ -8,6 +8,7 @@ HTTP transport, authentication, error mapping, and output formatting. Together
 they expose **29 read-only commands** (every call is an HTTP `GET`).
 
 The CLIs are intended for two uses:
+
 - shell pipelines that consume the verbatim JSON on stdout (pass `--verbose`
   for the 15 size-to-summary candidate commands; the remaining 14 commands
   emit verbatim by default),
@@ -30,13 +31,6 @@ for the 15 size-to-summary candidate commands; pass `--verbose` for the
 verbatim service payload) and a tabular readable view with `--human` / `-h`.
 There are no write endpoints in MVP: this package cannot mutate the media
 server state under any circumstance.
-
-> **BREAKING:** the default JSON output for the 15 size-to-summary
-> candidate commands is now a curated per-command summary sized for
-> chat-agent consumption; pass `--verbose` to restore the verbatim
-> service payload. Workboard ticket
-> `6a4dfded-9944-47e7-ad86-59a712e93fb0`. The remaining 14 commands
-> continue to emit verbatim service JSON unchanged.
 
 ---
 
@@ -280,18 +274,18 @@ make integration-test
 
 Universal flags (every CLI):
 
-| Flag                     | Description                                                                                             |
-| ------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `--config <path>`        | Override the canonical config path for this invocation only.                                            |
-| `--debug` / `--no-debug` | Enable / disable the full traceback + redacted request/response log.                                    |
-| `--quiet` / `--no-quiet` | Suppress informational stderr lines (e.g. the Maintainerr auth-disabled warning). Errors still surface. |
-| `--human` / `-h`         | Render tabular readable text instead of raw JSON on stdout.                                             |
+| Flag                     | Description                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `--config <path>`        | Override the canonical config path for this invocation only.                                                  |
+| `--debug` / `--no-debug` | Enable / disable the full traceback + redacted request/response log.                                          |
+| `--quiet` / `--no-quiet` | Suppress informational stderr lines (e.g. the Maintainerr auth-disabled warning). Errors still surface.       |
+| `--human` / `-h`         | Render tabular readable text instead of raw JSON on stdout.                                                   |
 | `--verbose`              | Emit the verbatim service JSON payload instead of the curated summary (default for size-to-summary commands). |
-| `--limit <int>`          | Page size for `--human` lists (default `20`).                                                           |
-| `--connect-timeout <s>`  | Override the config's `connect_timeout` (default `5.0`).                                                |
-| `--read-timeout <s>`     | Override the config's `read_timeout` (default `30.0`).                                                  |
-| `--retry <int>`          | Number of retry attempts on `NetworkError` (default `0`).                                               |
-| `--deadline <s>`         | Absolute wall-clock cap for `--retry`, in seconds.                                                      |
+| `--limit <int>`          | Page size for `--human` lists (default `20`).                                                                 |
+| `--connect-timeout <s>`  | Override the config's `connect_timeout` (default `5.0`).                                                      |
+| `--read-timeout <s>`     | Override the config's `read_timeout` (default `30.0`).                                                        |
+| `--retry <int>`          | Number of retry attempts on `NetworkError` (default `0`).                                                     |
+| `--deadline <s>`         | Absolute wall-clock cap for `--retry`, in seconds.                                                            |
 
 Run any subcommand with `--help` for the per-service synopsis and flags.
 

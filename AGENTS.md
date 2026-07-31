@@ -30,7 +30,7 @@ command must:
   these, so `--verbose` is a no-op on them),
 - emit a tabular readable view on `--human` / `-h`,
 - emit diagnostics on stderr (so `stdout` is pipe-clean JSON),
-- return one of the five stable exit codes documented in `README.md §7`.
+- return one of the five stable exit codes documented in `README.md`.
 
 The renderer priority chain (`--human` > `--verbose` > default summary)
 is documented in the docstring of `arr_cli.facade.output.emit`; the
@@ -206,5 +206,15 @@ codes and shapes — do not rename the classes or reorganize the table.
    into `make ci`.
 7. Update the per-service command table in `README.md §4`.
 8. Run `make ci` and `make lint` before considering the change done.
+
+---
+
+## 8. Documentation
+
+This is a pubic project, when updating any documentation or adding comments, do not reference your personal environment or internal board tickets — no one else can access them.
+
+**Do not** reference your personal environment.
+**Do not** reference your internal board tickets.
+**Do not** mention anything sensitive.
 
 ---

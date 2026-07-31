@@ -10,8 +10,7 @@ within the pre-1.0 contract documented in `README.md`.
 ### Changed
 
 - The default JSON output for the 15 size-to-summary candidate commands is
-  now a curated per-command summary sized for chat-agent consumption
-  (workboard ticket `6a4dfded-9944-47e7-ad86-59a712e93fb0`, option (a)):
+  now a curated per-command summary sized for chat-agent consumption:
   - `jellyfin`: `now`, `recent`, `favorites`, `resume`, `latest`
   - `radarr`: `wanted`, `queue`, `recent`
   - `sonarr`: `wanted`, `queue`, `recent`
@@ -36,7 +35,6 @@ within the pre-1.0 contract documented in `README.md`.
 
 - Default JSON output for the 15 size-to-summary candidate commands is no
   longer verbatim; pass `--verbose` to restore the pre-change behaviour.
-  Workboard ticket `6a4dfded-9944-47e7-ad86-59a712e93fb0` option (a).
 
 ## [MVP] - 2026-07-22
 
