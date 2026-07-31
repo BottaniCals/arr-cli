@@ -206,6 +206,61 @@ def _patched_get_raising(exc: BaseException) -> Any:
     )
 
 
+def _parse_human_row(
+    rendered: str, *, data_index: int
+) -> dict[str, str]:
+    """Return the cells of the ``data_index``-th data row as a dict.
+
+    The ``human`` renderer emits a header row, a separator row
+    of dashes, then one data row per payload item. Each cell is
+    right-padded to a column-specific width and joined with a
+    2-space separator. This helper recovers the column widths
+    from the separator row, then slices each data cell at the
+    same boundaries and strips trailing padding.
+    """
+    import re
+
+    lines = [
+        line for line in rendered.splitlines() if line.strip()
+    ]
+    if len(lines) < 2 + data_index + 1:
+        raise AssertionError(
+            f"rendered output has only {len(lines)} lines; "
+            f"data_index={data_index} is out of range"
+        )
+    header_line = lines[0]
+    separator_line = lines[1]
+    data_line = lines[2 + data_index]
+    widths = [
+        len(cell) for cell in re.split(r"  +", separator_line)
+    ]
+    offsets = _column_offsets(widths)
+    headers = [
+        header_line[cursor : cursor + width].strip()
+        for cursor, width in zip(offsets, widths)
+    ]
+    cells = [
+        data_line[cursor : cursor + width].strip()
+        for cursor, width in zip(offsets, widths)
+    ]
+    return dict(zip(headers, cells))
+
+
+def _column_offsets(widths: list[int]) -> list[int]:
+    """Return the starting index of each column given its width.
+
+    Each column is followed by a 2-space separator, except the
+    last column. The width list and the offsets list are the
+    same length.
+    """
+    offsets: list[int] = []
+    cursor = 0
+    for index, width in enumerate(widths):
+        offsets.append(cursor)
+        cursor += width + (2 if index < len(widths) - 1 else 0)
+    return offsets
+
+
 # ---------------------------------------------------------------------------
 # Test: dispatch table and parser registration
 # ---------------------------------------------------------------------------
@@ -559,12 +614,12 @@ class TestCmdLookup(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(kwargs["params"], {"term": ""})
 
-    def test_lookup_human_default_monitored_column(self) -> None:
-        # REQ-4 AC2, REQ-4 AC3, REQ-7 AC6: the --human column list
-        # on lookup carries ``defaultMonitored`` (the source-default
-        # flag, TMDB for Radarr) and MUST NOT carry the bare
-        # ``monitored`` column (which would conflate the source
-        # default with the operator's library state).
+    def test_lookup_human_column_list(self) -> None:
+        # The --human column list on lookup uses the real upstream
+        # JSON keys so ``item.get(column)`` resolves to a value
+        # instead of ``None``. ``monitored`` reflects the source
+        # default (TMDB for Radarr); ``id`` disambiguates library
+        # rows (numeric ``id``) from candidates (no ``id`` key).
         cfg = _service_config()
         args = _namespace(term="the matrix", human=True)
         payload = [
@@ -579,14 +634,105 @@ class TestCmdLookup(unittest.TestCase):
                 patch("arr_cli.radarr.output.emit") as mock_emit:
             cmd_lookup(args, cfg)
         columns = mock_emit.call_args.kwargs["columns"]
-        self.assertIn("defaultMonitored", columns)
-        self.assertNotIn("monitored", columns)
+        self.assertEqual(
+            columns,
+            ["title", "year", "tmdbId", "imdbId", "id", "monitored"],
+        )
+        # Regression net: the buggy ``defaultMonitored`` rename from
+        # PR #7 must not be reintroduced because no upstream API
+        # exposes that key.
+        self.assertNotIn("defaultMonitored", columns)
+
+    def test_lookup_human_monitored_cell_renders_value(self) -> None:
+        # The ``monitored`` cell renders the boolean from the JSON
+        # payload, never ``<null>``. Booleans stringify to lowercase
+        # ``true``/``false`` via ``_stringify``.
+        cfg = _service_config()
+        args = _namespace(term="the matrix", human=True)
+        payload = [
+            {
+                "title": "X",
+                "monitored": True,
+                "tmdbId": 1,
+                "imdbId": "tt1",
+                "year": 1999,
+                "id": 42,
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["monitored"], "true")
+        self.assertEqual(cells["id"], "42")
+        self.assertNotEqual(cells["monitored"], "<null>")
+
+    def test_lookup_human_id_cell_renders_blank_when_absent(self) -> None:
+        # A candidate row (no ``id`` key) renders the ``id`` cell
+        # as ``<null>`` via ``_stringify(None)``, which is the
+        # documented candidate-row visual indicator.
+        cfg = _service_config()
+        args = _namespace(term="the matrix", human=True)
+        payload = [
+            {
+                "title": "X",
+                "monitored": True,
+                "tmdbId": 1,
+                "imdbId": "tt1",
+                "year": 1999,
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["id"], "<null>")
+        # ``monitored`` still renders the boolean even when ``id``
+        # is missing -- the source-default column is independent.
+        self.assertEqual(cells["monitored"], "true")
+
+    def test_lookup_human_distinguishes_library_and_candidate_rows(
+        self,
+    ) -> None:
+        # The ``id`` column disambiguates a library row (real
+        # numeric ``id``, real ``added``, real ``path``) from a
+        # candidate row (no ``id``, placeholder ``added``, no
+        # ``path``). Both rows carry the source-default ``monitored``
+        # flag.
+        cfg = _service_config()
+        args = _namespace(term="dune", human=True)
+        payload = [
+            {
+                "title": "Dune",
+                "year": 1984,
+                "tmdbId": 841,
+                "imdbId": "tt0087182",
+                "id": 17,
+                "monitored": True,
+                "added": "2020-01-01T00:00:00Z",
+                "path": "/movies/Dune (1984)",
+            },
+            {
+                "title": "Dune",
+                "year": 1984,
+                "tmdbId": 841,
+                "imdbId": "tt0087182",
+                "monitored": True,
+                "added": "0001-01-01T00:01:00Z",
+            },
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        library = _parse_human_row(output, data_index=0)
+        candidate = _parse_human_row(output, data_index=1)
+        self.assertEqual(library["id"], "17")
+        self.assertEqual(candidate["id"], "<null>")
+        # Both rows share the source-default ``monitored`` flag.
+        self.assertEqual(library["monitored"], "true")
+        self.assertEqual(candidate["monitored"], "true")
 
     def test_lookup_json_keeps_monitored_key(self) -> None:
-        # REQ-4 AC4: the JSON path (no --human) preserves the raw
-        # ``monitored`` key exactly as the upstream API returns it;
-        # the rename to ``defaultMonitored`` applies only to the
-        # --human column header.
+        # The JSON path (no --human) preserves the raw ``monitored``
+        # key exactly as the upstream API returns it; the --human
+        # column header is just a label over the same JSON field.
         cfg = _service_config()
         args = _namespace(term="the matrix", human=False)
         payload = [{"title": "X", "monitored": True, "tmdbId": 1}]
