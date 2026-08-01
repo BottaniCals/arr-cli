@@ -50,7 +50,7 @@ import re
 from typing import Any, Sequence
 
 from arr_cli.facade import output, transport
-from arr_cli.facade.cli_common import build_parser, main_wrapper
+from arr_cli.facade.cli_common import build_parser, main_wrapper, universal_parents
 from arr_cli.facade.config import ServiceConfig
 from arr_cli.facade.errors import ConfigError
 
@@ -442,6 +442,8 @@ def build_sonarr_parser() -> argparse.ArgumentParser:
             "list upcoming episodes "
             "(GET /api/v3/calendar[start=<start>][end=<end>])"
         ),
+        parents=universal_parents(),
+        add_help=False,
     )
     calendar.add_argument(
         "start",
@@ -467,21 +469,29 @@ def build_sonarr_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "wanted",
         help="list missing monitored episodes (GET /api/v3/wanted/missing)",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     subparsers.add_parser(
         "queue",
         help="list the current download/import queue (GET /api/v3/queue)",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     subparsers.add_parser(
         "recent",
         help="list recent TV history (GET /api/v3/history)",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     lookup = subparsers.add_parser(
         "lookup",
         help="lookup a series by term (GET /api/v3/series/lookup?term=...)",
+        parents=universal_parents(),
+        add_help=False,
     )
     lookup.add_argument(
         "term",
@@ -497,6 +507,8 @@ def build_sonarr_parser() -> argparse.ArgumentParser:
             "fetch a single series by id, or list all series when no "
             "id is given (GET /api/v3/series[/{id}])"
         ),
+        parents=universal_parents(),
+        add_help=False,
     )
     series.add_argument(
         "series_id",

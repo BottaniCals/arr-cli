@@ -1062,9 +1062,11 @@ class TestMainEntryPoint(unittest.TestCase):
 
     def test_main_returns_usage_after_unknown_subcommand(self) -> None:
         # ``main_wrapper`` catches argparse's SystemExit internally and
-        # surfaces the exit code (2) as the return value.
+        # surfaces the documented ConfigError exit code (1)
+        # instead of the raw argparse exit (2) so the stable
+        # exit-code map is preserved (fix-config-flag-ordering).        # surfaces the exit code (2) as the return value.
         exit_code = main(["--config", str(self.cfg_path), "bogus"])
-        self.assertEqual(exit_code, 2)
+        self.assertEqual(exit_code, 1)
 
     def test_main_movie_404_exit_code(self) -> None:
         # ``cmd_movie`` propagates HttpError(status=404); main_wrapper

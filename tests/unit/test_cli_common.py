@@ -168,7 +168,19 @@ def _none_handler(args: argparse.Namespace, cfg: ServiceConfig) -> None:
 
 
 class TestBuildParserDefaults(unittest.TestCase):
-    """The universal flag set has the documented defaults."""
+    """The universal flag set has the documented defaults.
+
+    The fix for ``fix-config-flag-ordering`` re-registers the
+    universal flag set on a shared parent parser so subparsers
+    inherit the same actions. To avoid the subparser's default-lookup
+    step clobbering a top-level-parsed value, the parent's
+    ``add_argument`` calls use ``default=argparse.SUPPRESS``; the
+    runtime defaults are applied by :func:`main_wrapper` (and via
+    ``getattr(args, name, default)`` at the call sites). The tests
+    here assert that the *top-level* parser leaves the attribute
+    absent when the flag is not passed, and present with the parsed
+    value when it is.
+    """
 
     def setUp(self) -> None:
         self.parser = build_parser(
@@ -191,50 +203,49 @@ class TestBuildParserDefaults(unittest.TestCase):
         self.assertEqual(self.parser.description, "Jellyfin CLI")
         self.assertEqual(self.parser.epilog, "trailing text")
 
-    def test_default_config_is_none(self) -> None:
+    def test_default_config_is_suppress(self) -> None:
+        # ``--config`` is not set on the namespace when omitted; the
+        # wrapper applies the documented None default via getattr.
         args = self.parser.parse_args([])
-        self.assertIsNone(args.config)
+        self.assertFalse(hasattr(args, "config"))
 
-    def test_default_debug_is_false(self) -> None:
+    def test_default_debug_is_suppress(self) -> None:
         args = self.parser.parse_args([])
-        self.assertFalse(args.debug)
+        self.assertFalse(hasattr(args, "debug"))
 
-    def test_default_quiet_is_false(self) -> None:
+    def test_default_quiet_is_suppress(self) -> None:
         args = self.parser.parse_args([])
-        self.assertFalse(args.quiet)
+        self.assertFalse(hasattr(args, "quiet"))
 
-    def test_default_human_is_false(self) -> None:
+    def test_default_human_is_suppress(self) -> None:
         args = self.parser.parse_args([])
-        self.assertFalse(args.human)
+        self.assertFalse(hasattr(args, "human"))
 
-    def test_default_verbose_is_false(self) -> None:
-        # REQ-2 AC5: ``--verbose`` defaults to ``False``.
+    def test_default_verbose_is_suppress(self) -> None:
+        # REQ-2 AC5: ``--verbose`` is absent from the namespace when
+        # not passed; the wrapper / caller falls back to ``False``.
         args = self.parser.parse_args([])
-        self.assertFalse(args.verbose)
+        self.assertFalse(hasattr(args, "verbose"))
 
-    def test_default_connect_timeout(self) -> None:
+    def test_default_connect_timeout_is_suppress(self) -> None:
         args = self.parser.parse_args([])
-        self.assertEqual(args.connect_timeout, DEFAULT_CONNECT_TIMEOUT)
-        self.assertEqual(args.connect_timeout, 5.0)
+        self.assertFalse(hasattr(args, "connect_timeout"))
 
-    def test_default_read_timeout(self) -> None:
+    def test_default_read_timeout_is_suppress(self) -> None:
         args = self.parser.parse_args([])
-        self.assertEqual(args.read_timeout, DEFAULT_READ_TIMEOUT)
-        self.assertEqual(args.read_timeout, 30.0)
+        self.assertFalse(hasattr(args, "read_timeout"))
 
-    def test_default_retry(self) -> None:
+    def test_default_retry_is_suppress(self) -> None:
         args = self.parser.parse_args([])
-        self.assertEqual(args.retry, DEFAULT_RETRY)
-        self.assertEqual(args.retry, 0)
+        self.assertFalse(hasattr(args, "retry"))
 
-    def test_default_deadline_is_none(self) -> None:
+    def test_default_deadline_is_suppress(self) -> None:
         args = self.parser.parse_args([])
-        self.assertIsNone(args.deadline)
+        self.assertFalse(hasattr(args, "deadline"))
 
-    def test_default_limit(self) -> None:
+    def test_default_limit_is_suppress(self) -> None:
         args = self.parser.parse_args([])
-        self.assertEqual(args.limit, DEFAULT_LIMIT)
-        self.assertEqual(args.limit, 20)
+        self.assertFalse(hasattr(args, "limit"))
 
 
 # ---------------------------------------------------------------------------
@@ -330,9 +341,11 @@ class TestBuildParserVerboseFlag(unittest.TestCase):
         self.assertTrue(args.verbose)
 
     def test_verbose_default_is_false(self) -> None:
-        # REQ-2 AC5: ``--verbose`` defaults to False.
+        # REQ-2 AC5: ``--verbose`` defaults to False when not passed;
+        # the namespace uses ``argparse.SUPPRESS`` so the attribute
+        # is absent and the caller falls back to ``False``.
         args = self.parser.parse_args([])
-        self.assertFalse(args.verbose)
+        self.assertFalse(hasattr(args, "verbose"))
 
     def test_verbose_and_human_coexist(self) -> None:
         # The priority chain resolves at emit time; both flags must
@@ -768,33 +781,42 @@ class TestMainWrapperOverrides(unittest.TestCase):
 
 
 class TestMainWrapperSystemExit(unittest.TestCase):
-    """argparse's SystemExit bubbles through with the documented code."""
+    """argparse's SystemExit is mapped to ``ConfigError`` (exit 1).
+
+    The fix for ``fix-config-flag-ordering`` re-routes argparse's
+    usage-error exit code (``2``) into the documented ``ArrError``
+    map so it no longer collides with the ``AuthError`` exit code.
+    Unknown args / bad int values now surface as exit ``1`` with a
+    structured ``service=config op=parse message=...`` line on stderr.
+    """
 
     def setUp(self) -> None:
         reset_warnings()
         self.parser = build_parser("jellyfin", "Jellyfin CLI")
 
-    def test_unknown_arg_returns_argparse_exit_code(self) -> None:
+    def test_unknown_arg_returns_config_error_exit_code(self) -> None:
         # argparse calls ``sys.exit(2)`` on unknown args; the wrapper
-        # catches the SystemExit and surfaces the code unchanged.
+        # catches the SystemExit and re-raises as a ConfigError so the
+        # process exits with the documented ``1`` instead of the
+        # AuthError code (``2``).
         exit_code = main_wrapper(
             "jellyfin",
             _ok_handler,
             parser=self.parser,
             argv=["--not-a-real-flag"],
         )
-        self.assertEqual(exit_code, 2)
+        self.assertEqual(exit_code, 1)
 
-    def test_bad_int_returns_argparse_exit_code(self) -> None:
+    def test_bad_int_returns_config_error_exit_code(self) -> None:
         # ``--retry`` expects an int; a float string triggers
-        # argparse's usage error path.
+        # argparse's usage error path. Also re-routed to exit 1.
         exit_code = main_wrapper(
             "jellyfin",
             _ok_handler,
             parser=self.parser,
             argv=["--retry", "not-an-int"],
         )
-        self.assertEqual(exit_code, 2)
+        self.assertEqual(exit_code, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -905,7 +927,9 @@ class TestWarnOnceResetBetweenWrapperInvocations(unittest.TestCase):
             warn_once(
                 "maintainerr",
                 "auth disabled; ensure private network",
-                quiet=args.quiet,
+                # args.quiet is SUPPRESS when --quiet is not passed
+                # (see fix-config-flag-ordering); fall back to False.
+                quiet=getattr(args, 'quiet', False),
             )
             return 0
 
@@ -938,7 +962,9 @@ class TestWarnOnceResetBetweenWrapperInvocations(unittest.TestCase):
             warn_once(
                 "maintainerr",
                 "auth disabled; ensure private network",
-                quiet=args.quiet,
+                # args.quiet is SUPPRESS when --quiet is not passed
+                # (see fix-config-flag-ordering); fall back to False.
+                quiet=getattr(args, 'quiet', False),
             )
             return 0
 
