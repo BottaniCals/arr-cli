@@ -60,6 +60,7 @@ from arr_cli.facade import output, transport
 from arr_cli.facade.cli_common import (
     build_parser,
     main_wrapper,
+    universal_parents,
     warn_once,
 )
 from arr_cli.facade.config import ServiceConfig
@@ -334,16 +335,22 @@ def build_maintainerr_parser() -> argparse.ArgumentParser:
             "list pending collection overlays "
             "(GET /api/collections/overlay-data)"
         ),
+        parents=universal_parents(),
+        add_help=False,
     )
 
     subparsers.add_parser(
         "storage",
         help="list per-volume storage metrics (GET /api/storage-metrics)",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     subparsers.add_parser(
         "health",
         help="readiness probe (GET /api/health/ready)",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     return parser

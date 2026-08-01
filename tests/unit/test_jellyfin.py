@@ -825,10 +825,12 @@ class TestMainEntryPoint(unittest.TestCase):
     def test_main_returns_jellyfin_parser_usage_after_unknown(self) -> None:
         # ``main`` wires ``build_jellyfin_parser`` so ``argparse``
         # rejects unknown subcommands. ``main_wrapper`` catches
-        # argparse's SystemExit internally and surfaces the exit code
-        # (2) as the return value, so the test just asserts the code.
+        # argparse's SystemExit internally and surfaces the documented
+        # ConfigError exit code (1) instead of the raw argparse exit
+        # (2) so the stable exit-code map is preserved
+        # (fix-config-flag-ordering).
         exit_code = main(["--config", str(self.cfg_path), "bogus"])
-        self.assertEqual(exit_code, 2)
+        self.assertEqual(exit_code, 1)
 
     def test_main_item_404_exit_code(self) -> None:
         # ``cmd_item`` propagates HttpError(status=404); main_wrapper

@@ -603,14 +603,19 @@ class TestMainEntryPoint(unittest.TestCase):
 
     def test_main_returns_usage_after_unknown_subcommand(self) -> None:
         # ``main_wrapper`` catches argparse's SystemExit internally and
-        # surfaces the exit code (2) as the return value.
+        # surfaces the documented ConfigError exit code (1)
+        # instead of the raw argparse exit (2) so the stable
+        # exit-code map is preserved (fix-config-flag-ordering).        # surfaces the exit code (2) as the return value.
         exit_code = main(["--config", str(self.cfg_path), "bogus"])
-        self.assertEqual(exit_code, 2)
+        self.assertEqual(exit_code, 1)
 
     def test_main_rules_returns_usage_error(self) -> None:
         # REQ-9 AC5: ``rules`` MUST NOT be a registered subcommand.
+        # The fix-config-flag-ordering patch re-routes argparse's
+        # raw exit code (2) through the documented ConfigError map
+        # so the process exits 1 with the structured stderr line.
         exit_code = main(["--config", str(self.cfg_path), "rules"])
-        self.assertEqual(exit_code, 2)
+        self.assertEqual(exit_code, 1)
 
     def test_main_emits_warning_when_auth_disabled(self) -> None:
         # REQ-9 AC1: a one-line stderr warning fires exactly once

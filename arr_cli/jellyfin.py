@@ -40,7 +40,7 @@ import argparse
 from typing import Any, Sequence
 
 from arr_cli.facade import output, transport
-from arr_cli.facade.cli_common import build_parser, main_wrapper
+from arr_cli.facade.cli_common import build_parser, main_wrapper, universal_parents
 from arr_cli.facade.config import ServiceConfig
 from arr_cli.facade.errors import ConfigError
 
@@ -424,19 +424,27 @@ def build_jellyfin_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "now",
         help="list active sessions (GET /Sessions)",
+        parents=universal_parents(),
+        add_help=False,
     )
     subparsers.add_parser(
         "resume",
         help="list resumable items for the configured user",
+        parents=universal_parents(),
+        add_help=False,
     )
     subparsers.add_parser(
         "recent",
         help="list recently played items for the configured user",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     nextup = subparsers.add_parser(
         "nextup",
         help="list next-up episodes (GET /Shows/NextUp)",
+        parents=universal_parents(),
+        add_help=False,
     )
     nextup.add_argument(
         "--start-index",
@@ -458,11 +466,15 @@ def build_jellyfin_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "latest",
         help="list latest additions to the configured user's library",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     search = subparsers.add_parser(
         "search",
         help="search the library by term (GET /Items?searchTerm=...)",
+        parents=universal_parents(),
+        add_help=False,
     )
     search.add_argument(
         "query",
@@ -474,6 +486,8 @@ def build_jellyfin_parser() -> argparse.ArgumentParser:
     item = subparsers.add_parser(
         "item",
         help="fetch a single item by id (GET /Items/{id})",
+        parents=universal_parents(),
+        add_help=False,
     )
     item.add_argument(
         "item_id",
@@ -484,6 +498,8 @@ def build_jellyfin_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "favorites",
         help="list the configured user's favorite items",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     return parser

@@ -71,7 +71,7 @@ import logging
 from typing import Any, Sequence
 
 from arr_cli.facade import output, transport
-from arr_cli.facade.cli_common import build_parser, main_wrapper
+from arr_cli.facade.cli_common import build_parser, main_wrapper, universal_parents
 from arr_cli.facade.config import ServiceConfig
 from arr_cli.facade.errors import ConfigError, HttpError
 
@@ -498,11 +498,15 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "requests",
         help="list media requests (GET /api/v1/request)",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     subparsers.add_parser(
         "request-count",
         help="summary counts (GET /api/v1/request/count)",
+        parents=universal_parents(),
+        add_help=False,
     )
 
     search = subparsers.add_parser(
@@ -511,6 +515,8 @@ def build_seerr_parser() -> argparse.ArgumentParser:
             "multi-source search by query "
             "(GET /api/v1/search/multi?query=...)"
         ),
+        parents=universal_parents(),
+        add_help=False,
     )
     search.add_argument(
         "query",
@@ -526,6 +532,8 @@ def build_seerr_parser() -> argparse.ArgumentParser:
             "list media already available in the library, "
             "filtered by query (GET /api/v1/media/available?query=...)"
         ),
+        parents=universal_parents(),
+        add_help=False,
     )
     available.add_argument(
         "query",
@@ -538,6 +546,8 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     media = subparsers.add_parser(
         "media",
         help="fetch a single media item by TMDB id (GET /api/v1/media/{tmdbId})",
+        parents=universal_parents(),
+        add_help=False,
     )
     media.add_argument(
         "tmdb_id",
@@ -551,6 +561,8 @@ def build_seerr_parser() -> argparse.ArgumentParser:
             "fetch the current authenticated user (auth self-check; "
             "GET /api/v1/user/me with fallback to /auth/me on 404)"
         ),
+        parents=universal_parents(),
+        add_help=False,
     )
 
     return parser

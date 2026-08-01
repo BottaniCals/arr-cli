@@ -60,7 +60,7 @@ from arr_cli.facade.config import (
     ServiceConfig,
     load_config,
 )
-from arr_cli.facade.errors import ArrError
+from arr_cli.facade.errors import ArrError, ConfigError
 from arr_cli.facade.output import DEFAULT_LIMIT
 
 __all__ = [
@@ -68,6 +68,7 @@ __all__ = [
     "main_wrapper",
     "warn_once",
     "reset_warnings",
+    "universal_parents",
 ]
 
 
@@ -126,6 +127,168 @@ def warn_once(service: str, message: str, *, quiet: bool) -> None:
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
+
+
+def _build_universal_parent() -> argparse.ArgumentParser:
+    """Build an argparse parent carrying the universal flag set.
+
+    The returned parser is intended to be passed to both the
+    top-level ``argparse.ArgumentParser`` of every CLI (via
+    ``parents=[universal_parents()]``) and to every per-subcommand
+    ``subparsers.add_parser(..., parents=[universal_parents()])``
+    call. This is how the documented invocation
+    ``<cli> <subcommand> --config <path>`` is recognised by argparse
+    -- the universal flag set is registered on the subparser too, so
+    it appears in every subcommand's ``--help`` listing and accepts
+    both arg orders.
+
+    The parent uses ``add_help=False``; ``--help`` is registered
+    separately on the top-level parser so the ``-h`` short alias is
+    free for ``--human`` (REQ-3 AC2). Subparsers do NOT
+    re-register ``--help`` (argparse would complain about a duplicate
+    action) -- they inherit the long form through the parent if and
+    only if the parent had ``add_help=True``, which we deliberately
+    disable here.
+
+    Notes
+    -----
+    Returning a fresh parser per call is intentional: argparse
+    mutates internal state on each ``add_argument`` call, so sharing
+    an instance across multiple parents would attach actions to
+    the same backing stores and surface as duplicate-action errors.
+    """
+    parent = argparse.ArgumentParser(
+        add_help=False,
+        allow_abbrev=False,
+    )
+
+    # Register ``--help`` (long-only) on the parent so subparsers
+    # that consume this parent via ``parents=`` and disable their
+    # auto-help still surface a listing. The short ``-h`` is
+    # deliberately not used here: it is reserved for ``--human``
+    # (REQ-3 AC2). On the top-level parser the explicit ``--help``
+    # action is registered separately by ``build_parser`` so the
+    # ``-h`` alias is unambiguously ``--human`` everywhere.
+    parent.add_argument(
+        "--help",
+        action="help",
+        help="show this help message and exit",
+    )
+
+    # ---- Config override -----------------------------------------------
+    # ``default=argparse.SUPPRESS`` so a value parsed by the top-level
+    # parser is not overwritten by the subparser's own default-lookup
+    # step (argparse quirk: when the same action is shared via
+    # ``parents=``, the subparser's default re-runs ``_get_values``
+    # and would clobber a top-level value).
+    parent.add_argument(
+        "--config",
+        metavar="PATH",
+        default=argparse.SUPPRESS,
+        help=(
+            "override the canonical config path for this invocation "
+            "(default: ~/.config/arr/arr.conf)"
+        ),
+    )
+
+    # ---- Diagnostic / advisory toggles ---------------------------------
+    parent.add_argument(
+        "--debug",
+        action=argparse.BooleanOptionalAction,
+        default=argparse.SUPPRESS,
+        help=(
+            "emit the full Python traceback and the redacted "
+            "request/response pair to stderr on errors"
+        ),
+    )
+    parent.add_argument(
+        "--quiet",
+        action=argparse.BooleanOptionalAction,
+        default=argparse.SUPPRESS,
+        help="suppress advisory stderr warnings (e.g. maintainerr auth disabled)",
+    )
+
+    # ---- Output formatting ---------------------------------------------
+    # ``-h`` aliases ``--human`` per the design contract. argparse's
+    # default short flag is also ``-h`` (mapped to ``--help``); the
+    # ``-h`` short option here shadows that for the documented
+    # ``--human`` use case. The long ``--help`` form remains
+    # available on the top-level parser (registered separately) so
+    # whichever subcommand a user is in, ``--help`` still works.
+    parent.add_argument(
+        "--human",
+        "-h",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "render a tabular human-readable view instead of JSON "
+            "(REQ-3 AC2); pagination is controlled by --limit"
+        ),
+    )
+    parent.add_argument(
+        "--verbose",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help=(
+            "emit the verbatim service JSON payload instead of the "
+            "curated summary (default for size-to-summary commands)"
+        ),
+    )
+
+    # ---- Transport / reliability ---------------------------------------
+    parent.add_argument(
+        "--connect-timeout",
+        type=float,
+        metavar="SECONDS",
+        default=argparse.SUPPRESS,
+        help=(f"connect timeout in seconds (default: {DEFAULT_CONNECT_TIMEOUT})"),
+    )
+    parent.add_argument(
+        "--read-timeout",
+        type=float,
+        metavar="SECONDS",
+        default=argparse.SUPPRESS,
+        help=(f"read timeout in seconds (default: {DEFAULT_READ_TIMEOUT})"),
+    )
+    parent.add_argument(
+        "--retry",
+        type=int,
+        metavar="N",
+        default=argparse.SUPPRESS,
+        help=(f"retry attempts on network-class errors (default: {DEFAULT_RETRY})"),
+    )
+    parent.add_argument(
+        "--deadline",
+        type=float,
+        metavar="SECONDS",
+        default=argparse.SUPPRESS,
+        help=(
+            "absolute wall-clock cap (seconds) for the retry layer (default: unbounded)"
+        ),
+    )
+
+    # ---- Human-mode pagination -----------------------------------------
+    parent.add_argument(
+        "--limit",
+        type=int,
+        metavar="N",
+        default=argparse.SUPPRESS,
+        help=(f"row-count cap for --human pagination (default: {DEFAULT_LIMIT})"),
+    )
+
+    return parent
+
+
+def universal_parents() -> list[argparse.ArgumentParser]:
+    """Return a single-element ``parents=`` list for the universal flag set.
+
+    Public wrapper so per-service modules can write
+    ``subparsers.add_parser("now", ..., parents=universal_parents())``
+    without importing the private ``_build_universal_parent``
+    symbol. Called from cli_common's own ``build_parser`` too -- the
+    one-call-shape keeps the two registration paths in sync.
+    """
+    return [_build_universal_parent()]
 
 
 def build_parser(
@@ -194,113 +357,15 @@ def build_parser(
         epilog=epilog,
         # ``add_help=False`` so we can register our own ``--help``
         # flag below; this frees the ``-h`` short alias for
-        # ``--human`` (REQ-3 AC2). The long ``--help`` form still
-        # works through the explicit action we register by hand,
-        # so the standard "print usage and exit 0" behaviour is
-        # preserved.
+        # ``--human`` (REQ-3 AC2). The long ``--help`` form is
+        # inherited from the universal parent so it is registered
+        # exactly once across the top-level parser and every
+        # subparser (the subparsers additionally pass
+        # ``add_help=False`` to suppress the default ``-h``/``--help``
+        # action that would otherwise conflict with the parent's
+        # ``--human`` short alias).
         add_help=False,
-    )
-
-    # ---- Help (re-registered manually so -h is free for --human) ------
-    parser.add_argument(
-        "--help",
-        action="help",
-        help="show this help message and exit",
-    )
-
-    # ---- Config override -----------------------------------------------
-    parser.add_argument(
-        "--config",
-        metavar="PATH",
-        default=None,
-        help=(
-            "override the canonical config path for this invocation "
-            "(default: ~/.config/arr/arr.conf)"
-        ),
-    )
-
-    # ---- Diagnostic / advisory toggles ---------------------------------
-    parser.add_argument(
-        "--debug",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help=(
-            "emit the full Python traceback and the redacted "
-            "request/response pair to stderr on errors"
-        ),
-    )
-    parser.add_argument(
-        "--quiet",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="suppress advisory stderr warnings (e.g. maintainerr auth disabled)",
-    )
-
-    # ---- Output formatting ---------------------------------------------
-    # ``-h`` aliases ``--human`` per the design contract. argparse's
-    # default short flag is also ``-h`` (mapped to ``--help``); the
-    # ``-h`` short option here shadows that for the documented
-    # ``--human`` use case. The long ``--help`` form remains
-    # available regardless of which short alias is chosen.
-    parser.add_argument(
-        "--human",
-        "-h",
-        action="store_true",
-        default=False,
-        help=(
-            "render a tabular human-readable view instead of JSON "
-            "(REQ-3 AC2); pagination is controlled by --limit"
-        ),
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        default=False,
-        help=(
-            "emit the verbatim service JSON payload instead of the "
-            "curated summary (default for size-to-summary commands)"
-        ),
-    )
-
-    # ---- Transport / reliability ---------------------------------------
-    parser.add_argument(
-        "--connect-timeout",
-        type=float,
-        metavar="SECONDS",
-        default=DEFAULT_CONNECT_TIMEOUT,
-        help=(f"connect timeout in seconds (default: {DEFAULT_CONNECT_TIMEOUT})"),
-    )
-    parser.add_argument(
-        "--read-timeout",
-        type=float,
-        metavar="SECONDS",
-        default=DEFAULT_READ_TIMEOUT,
-        help=(f"read timeout in seconds (default: {DEFAULT_READ_TIMEOUT})"),
-    )
-    parser.add_argument(
-        "--retry",
-        type=int,
-        metavar="N",
-        default=DEFAULT_RETRY,
-        help=(f"retry attempts on network-class errors (default: {DEFAULT_RETRY})"),
-    )
-    parser.add_argument(
-        "--deadline",
-        type=float,
-        metavar="SECONDS",
-        default=None,
-        help=(
-            "absolute wall-clock cap (seconds) for the retry layer (default: unbounded)"
-        ),
-    )
-
-    # ---- Human-mode pagination -----------------------------------------
-    parser.add_argument(
-        "--limit",
-        type=int,
-        metavar="N",
-        default=DEFAULT_LIMIT,
-        help=(f"row-count cap for --human pagination (default: {DEFAULT_LIMIT})"),
+        parents=universal_parents(),
     )
 
     return parser
@@ -436,14 +501,32 @@ def main_wrapper(
     except SystemExit as exc:
         # ``argparse.parse_args`` calls ``sys.exit`` on a parse
         # failure (usage error). ``SystemExit.code`` is the exit
-        # status argparse chose (typically 2 for usage errors); we
-        # surface that unchanged because it is already a
-        # well-formed signal to the shell. The usage hint was
-        # written to stderr by argparse already.
-        return int(exc.code) if isinstance(exc.code, int) else 1
+        # status argparse chose (typically 2 for usage errors);
+        # we surface that *through the documented ArrError map*
+        # instead of returning the raw exit code, so a malformed
+        # invocation cannot collide with the documented
+        # ``AuthError`` exit code (2). The usage hint was written
+        # to stderr by argparse already; we follow up with the
+        # structured ``service=config op=parse message=...`` line
+        # so downstream consumers see the same shape as every
+        # other error path (REQ-4 AC3, AGENTS.md §6).
+        argparse_code = exc.code if isinstance(exc.code, int) else 2
+        # Argparse normally uses 2 for usage errors; ``--help`` is
+        # 0. We only translate the failure path (exit 2) so a
+        # successful ``--help`` call still exits 0.
+        if argparse_code == 0:
+            return 0
+        return _handle_arr_error(
+            ConfigError(
+                "config",
+                "parse",
+                f"argument parse error (argparse exit {argparse_code})",
+            ),
+            debug=False,
+        )
 
     try:
-        cfg = load_config(args.config, env_overrides=True)
+        cfg = load_config(getattr(args, "config", None), env_overrides=True)
     except ArrError as exc:
         return _handle_arr_error(exc, debug=getattr(args, "debug", False))
 
@@ -451,11 +534,17 @@ def main_wrapper(
     # of the parsed config. ``ServiceConfig`` is frozen so we build a
     # new instance with the per-call values; the handler still
     # receives an immutable bundle so the "stateless per invocation"
-    # invariant holds (REQ-5 AC1).
-    connect_timeout = getattr(args, "connect_timeout", cfg.connect_timeout)
-    read_timeout = getattr(args, "read_timeout", cfg.read_timeout)
-    retry = getattr(args, "retry", cfg.retry)
-    deadline = getattr(args, "deadline", cfg.deadline)
+    # invariant holds (REQ-5 AC1). The universal flag defaults are
+    # re-applied here because the universal parent registers every
+    # action with ``default=argparse.SUPPRESS`` (so a top-level
+    # ``--retry 3`` is not clobbered by the subparser's default-lookup
+    # step). When the operator omits the flag we fall back to the
+    # module-level default constant so the behaviour matches the
+    # pre-fix surface.
+    connect_timeout = getattr(args, "connect_timeout", DEFAULT_CONNECT_TIMEOUT)
+    read_timeout = getattr(args, "read_timeout", DEFAULT_READ_TIMEOUT)
+    retry = getattr(args, "retry", DEFAULT_RETRY)
+    deadline = getattr(args, "deadline", None)
 
     overrides_applied = (
         connect_timeout != cfg.connect_timeout
