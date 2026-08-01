@@ -265,7 +265,6 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
-# TODO(REQ-6): when an operator workspace contains media-cli/SKILL.md, update the Radarr lookup recipe to call out that the monitored column reflects the TMDB source default, not the user's library state.
 def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Radarr ``lookup <term>`` -- lookup a movie by title (REQ-7 AC6).
 
@@ -273,7 +272,12 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     transport layer percent-encodes the value so special characters
     (slashes, spaces, ``?``, ``&``) cannot break the URL.
 
-    the `monitored` field on these records is the source default (TVDB for Sonarr, TMDB for Radarr), not the user's library state
+    the ``monitored`` field on these records is the source default
+    (TMDB for Radarr, TVDB for Sonarr), not the user's library
+    state. The ``id`` column disambiguates library rows (numeric
+    ``id``, real ``added`` and ``path``) from candidates (no ``id``,
+    placeholder ``added='0001-01-01T00:01:00Z'``, no ``path``); for
+    a clean library listing use ``radarr movie``.
     """
     term = getattr(args, "term", "") or ""
     payload = _get(
@@ -288,7 +292,8 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "year",
         "tmdbId",
         "imdbId",
-        "defaultMonitored",
+        "id",
+        "monitored",
     ]
     return _emit(payload, args, columns=columns)
 
