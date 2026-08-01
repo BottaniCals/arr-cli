@@ -465,6 +465,34 @@ class TestErrorMapping(unittest.TestCase):
         # Structured line includes status=404.
         self.assertIn("status=404", str(ctx.exception))
 
+    def test_400_maps_to_http_error(self) -> None:
+        # Regression: HTTP 400 (the jellyfin ``recent`` repro status
+        # in the bug report) is a non-auth 4xx, so the transport
+        # layer maps it to ``HttpError(exit_code=4)``. The existing
+        # 404 / 500 tests already pin ``exit_code == 4``; this locks
+        # the same contract for 400 so a future regression that
+        # special-cases only 404 / 500 cannot silently drop 400 to
+        # a different code.
+        cfg = _service_config(jellyfin=_auth(ak="tok"))
+        response = _fake_response(
+            status_code=400,
+            reason="Bad Request",
+            body="The value 'jellyfin' is not valid",
+        )
+        with _patch_session(response):
+            with self.assertRaises(HttpError) as ctx:
+                get(
+                    "jellyfin",
+                    "/Users/jf-user-1/Items",
+                    cfg=cfg,
+                )
+        self.assertEqual(ctx.exception.exit_code, 4)
+        self.assertEqual(ctx.exception.status, 400)
+        self.assertEqual(ctx.exception.service, "jellyfin")
+        # Structured line carries status=400 AND the body excerpt.
+        self.assertIn("status=400", str(ctx.exception))
+        self.assertIn("jellyfin: HTTP 400 for", ctx.exception.message)
+
     def test_500_maps_to_http_error(self) -> None:
         cfg = _service_config(radarr=_auth(ak="rk"))
         response = _fake_response(status_code=500, reason="Server Error")
