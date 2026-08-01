@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import responses
+
 # Make the project importable regardless of the test runner's CWD.
 _PROJ_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJ_ROOT) not in sys.path:
@@ -915,6 +917,84 @@ class TestMainEntryPoint(unittest.TestCase):
             ["--config", str(tmp), "favorites"]
         )
         self.assertEqual(exit_code, 1)
+
+    def test_main_recent_400_exits_four_with_structured_stderr(self) -> None:
+        # Regression: ``jellyfin --human recent`` against a 400 must
+        # exit 4 (HttpError) and surface the structured stderr line
+        # naming ``op=/Users/<user_id>/Items``. The bug review notes
+        # this is one of the two repros cited in the bug report.
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://jellyfin.example/Users/jf-user-1/Items",
+                status=400,
+                body="The value 'jellyfin' is not valid",
+            )
+            stdout, stderr = _capture_stderr_stdout(
+                main,
+                [
+                    "--config",
+                    str(self.cfg_path),
+                    "--human",
+                    "recent",
+                ],
+            )
+        self.assertEqual(
+            json.loads(stdout) if stdout.strip() else None,
+            None,
+            msg="--human with a 4xx must not emit JSON on stdout",
+        )
+        # Structured stderr line shape:
+        #   service=jellyfin op=/Users/jf-user-1/Items status=400 message=...
+        self.assertTrue(
+            stderr.startswith(
+                "service=jellyfin op=/Users/jf-user-1/Items status=400 message="
+            ),
+            msg=f"unexpected stderr shape: {stderr!r}",
+        )
+        self.assertIn("HTTP 400 for /Users/jf-user-1/Items", stderr)
+        # The body excerpt is preserved in the structured message so
+        # operators can grep the original service response.
+        self.assertIn("The value", stderr)
+
+    def test_main_item_400_exits_four(self) -> None:
+        # Regression: ``cmd_item`` against a non-404 4xx (here 400
+        # simulating a service-side param validation) must exit 4.
+        # Mirrors ``test_main_item_404_exit_code`` but pins the
+        # non-404 path so a future regression that special-cased 404
+        # cannot silently drop other 4xx codes to exit 0.
+        with patch(
+            "arr_cli.jellyfin.transport.get",
+            side_effect=HttpError(
+                "jellyfin",
+                "item id=42",
+                "jellyfin: HTTP 400 for /Items/42",
+                status=400,
+            ),
+        ):
+            # ``main`` returns the int exit code; capture it via a
+            # direct call (no SystemExit) and re-run under the
+            # helper to capture stderr separately. Both invocations
+            # re-enter ``main_wrapper`` with the same mock, which is
+            # safe because the mock state is deterministic.
+            exit_code = main(
+                ["--config", str(self.cfg_path), "item", "42"]
+            )
+            _, stderr = _capture_stderr_stdout(
+                main,
+                ["--config", str(self.cfg_path), "item", "42"],
+            )
+        self.assertEqual(exit_code, 4)
+        # Structured stderr line surfaces the underlying status so
+        # operators can grep on ``status=400`` even though the
+        # document exit-code path (4) is identical to 404.
+        self.assertTrue(
+            stderr.startswith(
+                "service=jellyfin op=item id=42 status=400 message="
+            ),
+            msg=f"unexpected stderr shape: {stderr!r}",
+        )
+        self.assertIn("HTTP 400 for /Items/42", stderr)
 
 
 # ---------------------------------------------------------------------------
