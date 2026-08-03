@@ -116,10 +116,10 @@ The four `TestLargePayloadCap` tests already encode the contract precisely — t
   - [x] 2.3 Inside `get`, immediately after the existing `return json.loads(body_bytes)` block, resolve `effective_cap = max_items if max_items is not None else MAX_ITEMS_DEFAULT`, apply the `isinstance(payload, list) and len(payload) > effective_cap` truncation branch with one `_logger.warning("arr_cli.facade.transport: truncated payload from %d items to %d (max_items cap)", upstream_count, effective_cap)`, then return `payload`.
   - _Requirements: US-1_
 
-- [ ] 3. Update `tests/unit/test_perf_budgets.py` to import the canonical constant
-  - [ ] 3.1 Change the existing import line `from arr_cli.facade.config import AuthConfig, ServiceConfig` to `from arr_cli.facade.config import AuthConfig, ServiceConfig, MAX_ITEMS_DEFAULT`.
-  - [ ] 3.2 Remove the inline `MAX_ITEMS_DEFAULT: int = 10_000` declaration (the comment block above it can stay as the documented-budgets header).
-  - [ ] 3.3 Leave the `setUp` skip gate and `_transport_get_supports_max_items()` helper untouched — the helper now returns `True` automatically once the parameter exists.
+- [x] 3. Update `tests/unit/test_perf_budgets.py` to import the canonical constant
+  - [x] 3.1 Change the existing import line `from arr_cli.facade.config import AuthConfig, ServiceConfig` to `from arr_cli.facade.config import AuthConfig, ServiceConfig, MAX_ITEMS_DEFAULT`.
+  - [x] 3.2 Remove the inline `MAX_ITEMS_DEFAULT: int = 10_000` declaration (the comment block above it can stay as the documented-budgets header).
+  - [x] 3.3 Leave the `setUp` skip gate and `_transport_get_supports_max_items()` helper untouched — the helper now returns `True` automatically once the parameter exists.
   - _Requirements: US-2, US-3_
 
 - [ ] 4. Verify the four `TestLargePayloadCap` tests pass green

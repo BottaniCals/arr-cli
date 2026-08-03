@@ -55,7 +55,7 @@ _PROJ_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJ_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJ_ROOT))
 
-from arr_cli.facade.config import AuthConfig, ServiceConfig  # noqa: E402
+from arr_cli.facade.config import AuthConfig, ServiceConfig, MAX_ITEMS_DEFAULT  # noqa: E402
 from arr_cli.facade.errors import HttpError  # noqa: E402
 from arr_cli.facade.output import human  # noqa: E402
 from arr_cli.facade.transport import get  # noqa: E402
@@ -86,8 +86,9 @@ HUMAN_LATENCY_BUDGET_SECONDS: float = 1.5
 
 #: Documented default cap for the large-payload guard in
 #: ``transport.get``. Matches ``design.md`` "Performance Budgets /
-#: Large-payload cap".
-MAX_ITEMS_DEFAULT: int = 10_000
+#: Large-payload cap". The constant itself is imported from
+#: :mod:`arr_cli.facade.config` (single source of truth); the
+#: comment block above stays as the documented-budgets header.
 
 #: Wall-clock safety net for the cold-start subprocess (the budget
 #: itself is 2 s; 15 s leaves headroom for first-import slowness on
