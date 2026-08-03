@@ -42,7 +42,6 @@ Per the bug review's testing strategy the coverage is:
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 import unittest
@@ -190,9 +189,7 @@ class TestConfigFlagBothArgOrders(unittest.TestCase):
     def test_config_after_subcommand_accepted(self) -> None:
         for cli, sub in SERVICES:
             with self.subTest(cli=cli, sub=sub):
-                completed = _run_cli(
-                    cli, [sub, "--config", MISSING_CONFIG_PATH]
-                )
+                completed = _run_cli(cli, [sub, "--config", MISSING_CONFIG_PATH])
                 self.assertEqual(
                     completed.returncode,
                     1,
@@ -231,9 +228,7 @@ class TestConfigFlagBothArgOrders(unittest.TestCase):
         # caught here.
         for cli, sub in SERVICES:
             with self.subTest(cli=cli, sub=sub):
-                completed = _run_cli(
-                    cli, ["--config", MISSING_CONFIG_PATH, sub]
-                )
+                completed = _run_cli(cli, ["--config", MISSING_CONFIG_PATH, sub])
                 self.assertEqual(
                     completed.returncode,
                     1,
@@ -404,9 +399,7 @@ class TestArgparseErrorExitOneWithStructuredStderr(unittest.TestCase):
         )
         for cli, sub in cases:
             with self.subTest(cli=cli, sub=sub):
-                completed = _run_cli(
-                    cli, ["--config", MISSING_CONFIG_PATH, sub]
-                )
+                completed = _run_cli(cli, ["--config", MISSING_CONFIG_PATH, sub])
                 self.assertEqual(
                     completed.returncode,
                     1,
@@ -435,8 +428,7 @@ class TestArgparseErrorExitOneWithStructuredStderr(unittest.TestCase):
 class TestParseErrorStderrShape(unittest.TestCase):
     """The structured stderr line carries the documented key=value tokens.
 
-    The downstream tooling contract (Lily + Sage, per the bug
-    review's "Related Issues") depends on the exact
+    The downstream tooling contract depends on the exact
     ``service=config op=parse message=...`` shape. These tests
     lock the shape tokens (not the wording) so a future refactor
     that drops a key surfaces here.
@@ -455,10 +447,7 @@ class TestParseErrorStderrShape(unittest.TestCase):
         self.assertRegex(
             line,
             r"^service=config op=parse message=\S",
-            (
-                f"structured stderr line is not in the documented "
-                f"shape; got {line!r}"
-            ),
+            (f"structured stderr line is not in the documented shape; got {line!r}"),
         )
         # The message value must not be empty (an empty message
         # would still satisfy the regex but defeats the contract).
