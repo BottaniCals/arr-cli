@@ -122,9 +122,9 @@ The four `TestLargePayloadCap` tests already encode the contract precisely — t
   - [x] 3.3 Leave the `setUp` skip gate and `_transport_get_supports_max_items()` helper untouched — the helper now returns `True` automatically once the parameter exists.
   - _Requirements: US-2, US-3_
 
-- [ ] 4. Verify the four `TestLargePayloadCap` tests pass green
-  - [ ] 4.1 Run `make test PYTEST_OPTS='tests/unit/test_perf_budgets.py -k TestLargePayloadCap'` and confirm all four methods (`test_default_max_items_is_ten_thousand`, `test_over_cap_response_warns_and_truncates`, `test_under_cap_response_is_not_truncated`, `test_non_list_payload_is_untouched`) pass with no skips.
-  - [ ] 4.2 Run the full `make ci` chain (`make test && make secret-scan && make smoke-dry`) and confirm no other test regressed, no secrets leaked, and the smoke dry-run still passes.
+- [x] 4. Verify the four `TestLargePayloadCap` tests pass green
+  - [x] 4.1 Run `make test PYTEST_OPTS='tests/unit/test_perf_budgets.py -k TestLargePayloadCap'` and confirm all four methods (`test_default_max_items_is_ten_thousand`, `test_over_cap_response_warns_and_truncates`, `test_under_cap_response_is_not_truncated`, `test_non_list_payload_is_untouched`) pass with no skips.
+  - [x] 4.2 Run the full `make ci` chain (`make test && make secret-scan && make smoke-dry`) and confirm no other test regressed, no secrets leaked, and the smoke dry-run still passes.
   - _Requirements: US-1, US-3_
 
 ## Non-Functional Requirements
