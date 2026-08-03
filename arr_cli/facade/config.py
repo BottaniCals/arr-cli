@@ -51,6 +51,7 @@ __all__ = [
     "DEFAULT_CONNECT_TIMEOUT",
     "DEFAULT_READ_TIMEOUT",
     "DEFAULT_RETRY",
+    "MAX_ITEMS_DEFAULT",
     "DEFAULT_CONFIG_PATH",
     "load_config",
 ]
@@ -64,6 +65,12 @@ DEFAULT_READ_TIMEOUT: float = 30.0
 
 #: Default number of retry attempts on network-class errors.
 DEFAULT_RETRY: int = 0
+
+#: Default cap (items) for the ``max_items`` guard on
+#: :func:`arr_cli.facade.transport.get`. Truncates oversized list
+#: payloads with a single stderr warning naming both the upstream
+#: count and the cap.
+MAX_ITEMS_DEFAULT: int = 10_000
 
 #: Canonical config path (REQ-1 AC1). Overridable per invocation via
 #: ``--config`` or globally via ``ARR_CLI_CONFIG``.

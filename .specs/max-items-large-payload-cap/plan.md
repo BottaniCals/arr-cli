@@ -105,9 +105,9 @@ The four `TestLargePayloadCap` tests already encode the contract precisely — t
 
 ## Tasks
 
-- [ ] 1. Declare `MAX_ITEMS_DEFAULT` in `arr_cli/facade/config.py`
-  - [ ] 1.1 Add `MAX_ITEMS_DEFAULT: int = 10_000` as a module-level constant immediately after `DEFAULT_RETRY` (or in the same transport-defaults block), with a one-line docstring matching the existing `DEFAULT_*` constant style.
-  - [ ] 1.2 Add `"MAX_ITEMS_DEFAULT"` to the module's `__all__` list, in the same `DEFAULT_*` group.
+- [x] 1. Declare `MAX_ITEMS_DEFAULT` in `arr_cli/facade/config.py`
+  - [x] 1.1 Add `MAX_ITEMS_DEFAULT: int = 10_000` as a module-level constant immediately after `DEFAULT_RETRY` (or in the same transport-defaults block), with a one-line docstring matching the existing `DEFAULT_*` constant style.
+  - [x] 1.2 Add `"MAX_ITEMS_DEFAULT"` to the module's `__all__` list, in the same `DEFAULT_*` group.
   - _Requirements: US-2_
 
 - [ ] 2. Wire the `max_items` kwarg and truncation into `arr_cli/facade/transport.py`
