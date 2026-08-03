@@ -110,10 +110,10 @@ The four `TestLargePayloadCap` tests already encode the contract precisely — t
   - [x] 1.2 Add `"MAX_ITEMS_DEFAULT"` to the module's `__all__` list, in the same `DEFAULT_*` group.
   - _Requirements: US-2_
 
-- [ ] 2. Wire the `max_items` kwarg and truncation into `arr_cli/facade/transport.py`
-  - [ ] 2.1 Extend the existing `from arr_cli.facade.config import (...)` block to also import `MAX_ITEMS_DEFAULT`.
-  - [ ] 2.2 Add a keyword-only `max_items: int | None = MAX_ITEMS_DEFAULT` parameter to `get`, placed after `read_timeout` and before `debug` (all four existing kwargs are keyword-only and live after the `*`).
-  - [ ] 2.3 Inside `get`, immediately after the existing `return json.loads(body_bytes)` block, resolve `effective_cap = max_items if max_items is not None else MAX_ITEMS_DEFAULT`, apply the `isinstance(payload, list) and len(payload) > effective_cap` truncation branch with one `_logger.warning("arr_cli.facade.transport: truncated payload from %d items to %d (max_items cap)", upstream_count, effective_cap)`, then return `payload`.
+- [x] 2. Wire the `max_items` kwarg and truncation into `arr_cli/facade/transport.py`
+  - [x] 2.1 Extend the existing `from arr_cli.facade.config import (...)` block to also import `MAX_ITEMS_DEFAULT`.
+  - [x] 2.2 Add a keyword-only `max_items: int | None = MAX_ITEMS_DEFAULT` parameter to `get`, placed after `read_timeout` and before `debug` (all four existing kwargs are keyword-only and live after the `*`).
+  - [x] 2.3 Inside `get`, immediately after the existing `return json.loads(body_bytes)` block, resolve `effective_cap = max_items if max_items is not None else MAX_ITEMS_DEFAULT`, apply the `isinstance(payload, list) and len(payload) > effective_cap` truncation branch with one `_logger.warning("arr_cli.facade.transport: truncated payload from %d items to %d (max_items cap)", upstream_count, effective_cap)`, then return `payload`.
   - _Requirements: US-1_
 
 - [ ] 3. Update `tests/unit/test_perf_budgets.py` to import the canonical constant

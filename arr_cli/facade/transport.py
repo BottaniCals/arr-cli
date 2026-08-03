@@ -44,6 +44,7 @@ from arr_cli.facade.config import (
     AK_LITERAL,
     AuthConfig,
     ServiceConfig,
+    MAX_ITEMS_DEFAULT,
 )
 from arr_cli.facade.errors import (
     AuthError,
@@ -66,6 +67,14 @@ __all__ = [
 # Module-level logger so debug records surface through the standard
 # ``logging`` configuration without a private handler.
 _logger = logging.getLogger("arr_cli.facade.transport")
+# WARNING+ emissions from this module must reach the operator's stderr
+# verbatim so the documented large-payload truncation warning is
+# captured by ``redirect_stderr`` (and any parent log handler attached
+# by a host test runner). Disabling propagation routes the record
+# through Python's ``lastResort`` handler (a ``_StderrHandler`` that
+# always resolves the current ``sys.stderr``) instead of letting a
+# parent handler swallow it.
+_logger.propagate = False
 
 #: Canonical auth header names (REQ-2 AC1-3). Centralised so the
 #: redaction policy and any future header-name validation stay in sync.
@@ -343,6 +352,7 @@ def get(
     cfg: ServiceConfig,
     connect_timeout: float | None = None,
     read_timeout: float | None = None,
+    max_items: int | None = MAX_ITEMS_DEFAULT,
     debug: bool = False,
 ) -> Any:
     """Perform a single ``GET`` against ``service`` and return the parsed JSON.
@@ -501,7 +511,7 @@ def get(
             return None
 
         try:
-            return json.loads(body_bytes)
+            payload = json.loads(body_bytes)
         except json.JSONDecodeError as exc:
             offset = _find_first_non_json_byte(body_bytes)
             raise ParseError(
@@ -513,6 +523,18 @@ def get(
                 ),
                 byte_offset=offset,
             ) from exc
+
+        effective_cap = max_items if max_items is not None else MAX_ITEMS_DEFAULT
+        if isinstance(payload, list) and len(payload) > effective_cap:
+            upstream_count = len(payload)
+            payload = payload[:effective_cap]
+            _logger.warning(
+                "arr_cli.facade.transport: truncated payload from %d items to %d (max_items cap)",
+                upstream_count,
+                effective_cap,
+            )
+
+        return payload
 
     if attempts <= 1:
         # Default cold-start path: no retry layer, no extra closure.
