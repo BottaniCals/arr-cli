@@ -17,7 +17,7 @@ total) that wraps a self-hosted media server stack:
 | `radarr`      | Radarr          | `X-Api-Key`       |
 | `sonarr`      | Sonarr          | `X-Api-Key`       |
 | `maintainerr` | Maintainerr     | (none by default) |
-| `seerr`       | Seerr/Overseerr | `X-Api-Key`       |
+| `seerr`       | Seer            | `X-Api-Key`       |
 
 All commands are HTTP `GET`. There are **no write endpoints** in MVP. Every
 command must:
@@ -36,6 +36,17 @@ The renderer priority chain (`--human` > `--verbose` > default summary)
 is documented in the docstring of `arr_cli.facade.output.emit`; the
 dispatch table `_SUMMARY_RENDERERS` is the single registration point for
 new size-to-summary candidates.
+
+**Seer note.** The `seerr` executable targets the unified
+[Seer](https://github.com/seerr-team/seerr) project (the merged
+Overseerr + Jellyseerr fork). When adding or fixing a `seerr` command,
+the source of truth for endpoint paths and methods is the live
+`/api-docs/swagger-ui-init.js` OpenAPI spec on the operator's instance,
+**not** the historical Overseerr or Jellyseerr documentation --
+endpoints frequently differ between Seer and its predecessors (the
+failing `seerr` commands investigated in 2026-09 were all caused by
+exactly this drift). Cross-check the live spec before committing to a
+path shape.
 
 The shared HTTP, config, auth, and output code lives in `arr_cli.facade/`.
 Per-service CLIs in `arr_cli/{jellyfin,radarr,sonarr,maintainerr,seerr}.py`

@@ -51,11 +51,11 @@ maintainerr:
     # X-Custom-Header: YOUR_API_KEY_HERE
 
 # --------------------------------------------------------------------
-# Seerr / Overseerr (media requests)
+# Seer (media requests)
 # --------------------------------------------------------------------
 seerr:
   url:     https://example.com          # replace with your instance URL
-  api_key: YOUR_API_KEY_HERE            # Seerr Settings -> General -> API Key
+  api_key: YOUR_API_KEY_HERE            # Seer Settings -> General -> API Key
 
 # ====================================================================
 # TOML-only equivalent (save as arr.local.toml if you prefer TOML).

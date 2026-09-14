@@ -7,6 +7,18 @@ within the pre-1.0 contract documented in `README.md`.
 
 ## [Unreleased]
 
+### Documentation
+
+- Clarified that the `seerr` CLI targets [Seer](https://github.com/seerr-team/seerr),
+  the unified Overseerr + Jellyseerr fork, across `README.md`, `AGENTS.md`,
+  `CHANGELOG.md`, and `arr.conf.example`. Added a guard paragraph in
+  `AGENTS.md` §1 and a `README.md` §4.5 upstream note instructing future
+  contributors to verify `seerr` endpoint paths and methods against the live
+  Seer instance's `/api-docs/swagger-ui-init.js` OpenAPI spec rather than
+  against the historical Overseerr or Jellyseerr documentation; both
+  historical sources diverged from Seer on multiple endpoints and were the
+  root cause of the failing `seerr` commands investigated in 2026-09.
+
 ### Changed
 
 - The default JSON output for the 15 size-to-summary candidate commands is
@@ -40,7 +52,7 @@ within the pre-1.0 contract documented in `README.md`.
 
 The first shippable release of `arr-cli`. Five thin, read-only Python CLIs
 backed by a single shared facade (`arr_cli.facade`) covering Jellyfin,
-Radarr, Sonarr, Maintainerr, and Seerr/Overseerr. Every command is an HTTP
+Radarr, Sonarr, Maintainerr, and Seer. Every command is an HTTP
 `GET`; the package cannot mutate upstream state under any circumstance.
 
 ### Added

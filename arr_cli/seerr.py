@@ -1,8 +1,10 @@
 """Seerr CLI (``arr_cli.seerr``) -- task 12.
 
-This module is the Seerr (Overseerr-compatible) entry point for the
-``arr-cli`` MVP. It exposes six read-only commands against a live
-Seerr instance:
+This module is the Seer entry point for the ``arr-cli`` MVP.
+Seer is the unified fork of Overseerr and Jellyseerr; the CLI
+talks to whatever Seer instance the operator points it at via
+``arr.conf``. It exposes six read-only commands against a live
+Seer instance:
 
 * ``requests``            -- ``GET /api/v1/request``                 (REQ-10 AC1)
 * ``request-count``       -- ``GET /api/v1/request/count``           (REQ-10 AC2)
@@ -244,8 +246,8 @@ def _try_user_path(
 def cmd_user(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Seerr ``user`` -- auth self-check with /api/v1/user/me -> /auth/me fallback (REQ-10 AC6).
 
-    Seerr (and its upstream Overseerr) diverges on the canonical
-    auth-self-check endpoint:
+    Seer (the unified Overseerr + Jellyseerr fork) diverges on the
+    canonical auth-self-check endpoint:
 
     * The requirements document :data:`USER_ME_PATH`
       (``/api/v1/user/me``).
@@ -481,11 +483,12 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     parser = build_parser(
         prog=SERVICE_NAME,
         description=(
-            "Read-only CLI for Seerr/Overseerr. Six commands expose "
-            "the household request queue, request summary counts, "
-            "multi-source search, what's already available in the "
-            "library, a single media item by TMDB id, and the "
-            "current authenticated user."
+            "Read-only CLI for Seer (the unified Overseerr + "
+            "Jellyseerr fork). Six commands expose the household "
+            "request queue, request summary counts, multi-source "
+            "search, what's already available in the library, a "
+            "single media item by TMDB id, and the current "
+            "authenticated user."
         ),
     )
     subparsers = parser.add_subparsers(
