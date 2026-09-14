@@ -1,7 +1,7 @@
 # arr-cli
 
 Read-only Python CLI wrappers around a self-hosted media server stack —
-Jellyfin, Radarr, Sonarr, Maintainerr, and Seerr/Overseerr. The package ships
+Jellyfin, Radarr, Sonarr, Maintainerr, and Seer. The package ships
 five thin executables (`jellyfin`, `radarr`, `sonarr`, `maintainerr`, `seerr`)
 backed by a single shared facade (`arr_cli.facade`) that owns configuration,
 HTTP transport, authentication, error mapping, and output formatting. Together
@@ -120,7 +120,7 @@ maintainerr:
     # X-Custom-Header: YOUR_API_KEY_HERE
 
 # --------------------------------------------------------------------
-# Seerr / Overseerr (media requests)
+# Seer (media requests)
 # --------------------------------------------------------------------
 seerr:
   url: https://example.com # replace with your instance URL
@@ -195,16 +195,28 @@ passed.
 > it requires confirming `/api/rules` against the operator's live
 > `/api/swagger`.
 
-### 4.5 Seerr (`seerr` — 6 commands)
+### 4.5 Seer (`seerr` — 6 commands)
 
-| Command                   | HTTP | Path                                    | Notes                                                                                                           |
-| ------------------------- | :--: | --------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `seerr requests`          | GET  | `/api/v1/request`                       | All requests.                                                                                                   |
-| `seerr request-count`     | GET  | `/api/v1/request/count`                 | Aggregate request counts.                                                                                       |
-| `seerr search <query>`    | GET  | `/api/v1/search/multi?query=<query>`    | Percent-encoded by the facade.                                                                                  |
-| `seerr available <query>` | GET  | `/api/v1/media/available?query=<query>` | Percent-encoded by the facade.                                                                                  |
-| `seerr media <tmdbId>`    | GET  | `/api/v1/media/{tmdbId}`                | Media details by TMDB id.                                                                                       |
-| `seerr user`              | GET  | `/api/v1/user/me` (fallback `/auth/me`) | Auth self-check. Tries `/api/v1/user/me` first; on 404 falls back to `/auth/me` (the Overseerr-canonical path). |
+| Command                   | HTTP | Path                                    | Notes                                                                            |
+| ------------------------- | :--: | --------------------------------------- | -------------------------------------------------------------------------------- |
+| `seerr requests`          | GET  | `/api/v1/request`                       | All requests.                                                                    |
+| `seerr request-count`     | GET  | `/api/v1/request/count`                 | Aggregate request counts.                                                        |
+| `seerr search <query>`    | GET  | `/api/v1/search/multi?query=<query>`    | Percent-encoded by the facade.                                                   |
+| `seerr available <query>` | GET  | `/api/v1/media/available?query=<query>` | Percent-encoded by the facade.                                                   |
+| `seerr media <tmdbId>`    | GET  | `/api/v1/media/{tmdbId}`                | Media details by TMDB id.                                                        |
+| `seerr user`              | GET  | `/api/v1/user/me` (fallback `/auth/me`) | Auth self-check. Tries `/api/v1/user/me` first; on 404 falls back to `/auth/me`. |
+
+> **Upstream: Seer.** The `seerr` CLI targets
+> [Seer](https://github.com/seerr-team/seerr), the unified fork of
+> Overseerr and Jellyseerr. The endpoint paths and methods above were
+> verified against the operator's live Seer instance during MVP, but
+> **must be re-verified against the live `/api-docs/swagger-ui-init.js`
+> OpenAPI spec on the operator's Seer instance before adding or fixing
+> any `seerr` command** — Seer diverges from the historical Overseerr
+> and Jellyseerr documentation on multiple endpoints (a 2026-09
+> investigation found five broken `seerr` commands caused entirely by
+> this drift), and treating the historical docs as authoritative will
+> reproduce the same failures.
 
 > **Out of MVP.** A `seerr create-request` command (`POST /api/v1/request`) is
 > **not** implemented and does not appear in `--help`.
@@ -315,10 +327,10 @@ The MVP is intentionally read-only. The following are **deliberately not
 implemented** and will be the focus of a tier-2 follow-up:
 
 - **Maintainerr `veto`** (`POST /api/collections/media/handle`).
-- **Seerr `create-request`** (`POST /api/v1/request`). If added, it MUST be
+- **Seer `create-request`** (`POST /api/v1/request`). If added, it MUST be
   guarded by a `--confirm` flag and MUST NOT appear in MVP help output.
 - **Any write / mutate endpoint** on any service (Radarr, Sonarr, Jellyfin,
-  Maintainerr, Seerr).
+  Maintainerr, Seer).
 - **Webhook receivers** (no inbound HTTP in MVP).
 - **Long-running daemon** or **persistent cache layer**. Each invocation is
   fully stateless; no cache file is written unless explicitly configured,
