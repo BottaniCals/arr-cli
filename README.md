@@ -197,14 +197,14 @@ passed.
 
 ### 4.5 Seer (`seerr` — 6 commands)
 
-| Command                   | HTTP | Path                                    | Notes                                                                                                                                                                                                                                |
-| ------------------------- | :--: | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `seerr requests`          | GET  | `/api/v1/request`                       | All requests.                                                                                                                                                                                                                        |
-| `seerr request-count`     | GET  | `/api/v1/request/count`                 | Aggregate request counts.                                                                                                                                                                                                            |
-| `seerr search <query>`    | GET  | `/api/v1/search/multi?query=<query>`    | Percent-encoded by the facade.                                                                                                                                                                                                       |
-| `seerr available <query>` | GET  | `/api/v1/media/available?query=<query>` | Percent-encoded by the facade.                                                                                                                                                                                                       |
-| `seerr media <tmdbId>`    | GET  | `/api/v1/media/{tmdbId}`                | Media details by TMDB id.                                                                                                                                                                                                            |
-| `seerr user`              | GET  | `/api/v1/user/me` (fallback `/auth/me`) | Auth self-check. Tries `/api/v1/user/me` first; on 404 falls back to `/auth/me` (the path the upstream Overseerr API spec named as canonical, retained as a fallback for instances that still expose only the legacy path).          |
+| Command                   | HTTP | Path                                    | Notes                                                                            |
+| ------------------------- | :--: | --------------------------------------- | -------------------------------------------------------------------------------- |
+| `seerr requests`          | GET  | `/api/v1/request`                       | All requests.                                                                    |
+| `seerr request-count`     | GET  | `/api/v1/request/count`                 | Aggregate request counts.                                                        |
+| `seerr search <query>`    | GET  | `/api/v1/search/multi?query=<query>`    | Percent-encoded by the facade.                                                   |
+| `seerr available <query>` | GET  | `/api/v1/media/available?query=<query>` | Percent-encoded by the facade.                                                   |
+| `seerr media <tmdbId>`    | GET  | `/api/v1/media/{tmdbId}`                | Media details by TMDB id.                                                        |
+| `seerr user`              | GET  | `/api/v1/user/me` (fallback `/auth/me`) | Auth self-check. Tries `/api/v1/user/me` first; on 404 falls back to `/auth/me`. |
 
 > **Upstream: Seer.** The `seerr` CLI targets
 > [Seer](https://github.com/seerr-team/seerr), the unified fork of
