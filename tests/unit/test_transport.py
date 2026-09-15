@@ -3,8 +3,9 @@
 These tests cover the contract spelled out in task 4.5 of tasks.md:
 
 * Auth header injection matches the per-service rules in REQ-2
-  (``X-Emby-Token`` for jellyfin; ``X-Api-Key`` for radarr/sonarr/
-  seerr; optional headers for maintainerr).
+  (``Authorization: MediaBrowser ***`` envelope for jellyfin;
+  ``X-Api-Key`` for radarr/sonarr/seerr; optional headers for
+  maintainerr).
 * Raw :mod:`requests` exceptions and non-2xx responses are mapped to
   the correct :class:`ArrError` subclass with the right ``exit_code``.
 * Timeout tuple is passed through unchanged.
@@ -46,6 +47,7 @@ from arr_cli.facade.errors import (  # noqa: E402
 from arr_cli.facade.transport import (  # noqa: E402
     _HEADER_NAMES,
     _inject_auth,
+    _mediabrowser_authorization,
     _redact_debug_record,
     encode_path_segment,
     get,
@@ -142,10 +144,34 @@ def _patch_session(response: MagicMock) -> Any:
 class TestInjectAuth(unittest.TestCase):
     """Verify the per-service auth-header rules in REQ-2."""
 
-    def test_jellyfin_injects_x_emby_token(self) -> None:
+    def test_jellyfin_injects_mediabrowser_envelope(self) -> None:
+        # Jellyfin 12.x deprecated the bare ``X-Emby-Token`` header and
+        # now requires the full ``Authorization: MediaBrowser ***``
+        # envelope. Empirically the bare header returns a 401
+        # byte-identical to having no auth header at all; only the
+        # envelope authenticates. ``DeviceId`` is anchored to the host
+        # so the Jellyfin dashboard groups activity under one device.
         headers: dict[str, str] = {}
-        _inject_auth(headers, "jellyfin", _auth(ak="abc123"))
-        self.assertEqual(headers, {"X-Emby-Token": "abc123"})
+        with patch(
+            "arr_cli.facade.transport.socket.gethostname",
+            return_value="testhost",
+        ):
+            _inject_auth(headers, "jellyfin", _auth(ak="abc123"))
+        self.assertNotIn("X-Emby-Token", headers)
+        self.assertEqual(set(headers), {"Authorization"})
+        auth = headers["Authorization"]
+        self.assertTrue(auth.startswith("MediaBrowser "))
+        for key in ("Client", "Device", "DeviceId", "Version", "Token"):
+            self.assertIn(f'{key}="', auth)
+        self.assertIn('Token="abc123"', auth)
+        self.assertIn('DeviceId="arr-cli-testhost"', auth)
+        self.assertIn('Client="arr-cli"', auth)
+
+    def test_mediabrowser_envelope_carries_full_token(self) -> None:
+        # The api_key flows verbatim into the ``Token`` parameter so the
+        # server can validate it.
+        envelope = _mediabrowser_authorization("token-with-=chars")
+        self.assertIn('Token="token-with-=chars"', envelope)
 
     def test_radarr_injects_x_api_key(self) -> None:
         headers: dict[str, str] = {}
@@ -623,6 +649,9 @@ class TestDebugRedaction(unittest.TestCase):
         with patch(
             "arr_cli.facade.transport._ensure_session",
             return_value=session,
+        ), patch(
+            "arr_cli.facade.transport.socket.gethostname",
+            return_value="testhost",
         ):
             with self.assertLogs(
                 "arr_cli.facade.transport",
@@ -637,8 +666,10 @@ class TestDebugRedaction(unittest.TestCase):
         # The redaction means the literal token must never appear.
         joined = "\n".join(cm.output)
         self.assertNotIn("realsecret", joined)
-        # But the redacted placeholder appears.
-        self.assertIn("***10", joined)
+        # The Authorization header is redacted to ***<length>; the
+        # placeholder pattern matches the new envelope shape rather
+        # than the bare ``***10`` the standalone X-Emby-Token test used.
+        self.assertRegex(joined, r"\*\*\*\d+")
 
     def test_debug_off_does_not_log(self) -> None:
         cfg = _service_config(jellyfin=_auth(ak="realsecret"))

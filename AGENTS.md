@@ -13,7 +13,7 @@ total) that wraps a self-hosted media server stack:
 
 | Executable    | Service         | Auth header       |
 | ------------- | --------------- | ----------------- |
-| `jellyfin`    | Jellyfin        | `X-Emby-Token`    |
+| `jellyfin`    | Jellyfin        | `Authorization` (MediaBrowser envelope) |
 | `radarr`      | Radarr          | `X-Api-Key`       |
 | `sonarr`      | Sonarr          | `X-Api-Key`       |
 | `maintainerr` | Maintainerr     | (none by default) |

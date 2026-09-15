@@ -230,7 +230,7 @@ threading of credentials.
 
 | Service       | Header            | Value source                                                                                                                                              |
 | ------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `jellyfin`    | `X-Emby-Token`    | `jellyfin.api_key` in `arr.conf`                                                                                                                          |
+| `jellyfin`    | `Authorization` (MediaBrowser envelope) | `jellyfin.api_key` in `arr.conf`, sent as `Token="…"` inside the `MediaBrowser Client="arr-cli", Device="arr-cli", DeviceId="<host>", Version="0.1.0"` envelope |
 | `radarr`      | `X-Api-Key`       | `radarr.api_key` in `arr.conf`                                                                                                                            |
 | `sonarr`      | `X-Api-Key`       | `sonarr.api_key` in `arr.conf`                                                                                                                            |
 | `seerr`       | `X-Api-Key`       | `seerr.api_key` in `arr.conf`                                                                                                                             |
