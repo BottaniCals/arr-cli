@@ -230,19 +230,22 @@ class TestVerboseFlagCmdRequests(unittest.TestCase):
 class TestCmdUserHttpErrors(unittest.TestCase):
     """Regression tests pinning the exit-code contract for ``seerr user``.
 
-    The bug review identified the seerr ``user`` two-step probe
-    (REQ-10 AC6) as the one site outside :mod:`arr_cli.facade.cli_common`
-    that catches ``HttpError``. If the bare ``raise`` in
-    ``_try_user_path`` were ever replaced with a swallowed return, the
-    CLI would silently report a 400 / 404 as exit ``0`` and break
-    operator-side retry logic.
+    The seerr ``user`` command is a single ``GET /auth/me`` probe.
+    :func:`arr_cli.facade.transport.get` raises
+    :class:`arr_cli.facade.errors.HttpError` (exit ``4``) on any
+    non-2xx response, which :func:`arr_cli.facade.cli_common.main_wrapper`
+    surfaces as a structured ``service=seerr op=/auth/me status=<code>
+    message=...`` stderr line. A 2xx response returns the user JSON
+    on stdout and exit ``0``.
 
     These tests exercise the documented end-to-end contract:
 
-    * HTTP 400 on the primary path bubbles up unchanged (exit 4,
-      structured stderr line naming the primary path).
-    * HTTP 404 on both paths bubbles up as a fresh ``HttpError`` that
-      names both probe paths (exit 4, structured stderr line).
+    * HTTP 200 on ``/auth/me`` returns the user object on stdout and
+      exit ``0``.
+    * Any non-2xx response on ``/auth/me`` surfaces as exit ``4`` with
+      a structured stderr line naming the path.
+
+    Tests are hermetic via :mod:`responses` (AGENTS.md §7.5).
     """
 
     def setUp(self) -> None:
@@ -256,93 +259,84 @@ class TestCmdUserHttpErrors(unittest.TestCase):
         except OSError:
             pass
 
-    def test_cmd_user_400_propagates_with_exit_four(self) -> None:
-        # Regression: HTTP 400 on the primary ``/api/v1/user/me``
-        # path must bubble up unchanged (the fallback path is NOT
-        # tried because 400 is not 404). The structured stderr line
-        # surfaces with the underlying HTTP status and the process
-        # exits 4. Mirrors the bug-report repro for ``seerr user``.
+    def test_cmd_user_success_returns_user_json_with_exit_zero(self) -> None:
+        # Regression: a 2xx response on ``/auth/me`` returns the user
+        # object on stdout and the process exits ``0``. Pins the
+        # bug-report's "Expected Behavior" -- ``echo $?`` should be
+        # ``0`` after the CLI prints the authenticated user JSON.
         import arr_cli.seerr as seerr
 
+        user_payload = {
+            "id": 1,
+            "email": "alice@example.com",
+            "username": "alice",
+            "plexId": None,
+            "jellyfinAuthToken": None,
+        }
         with responses.RequestsMock() as rsps:
-            rsps.add(
-                responses.GET,
-                "https://seerr.example/api/v1/user/me",
-                status=400,
-                body="request/params/userId must be number",
-            )
-            # Single invocation: ``main`` returns the int exit code
-            # directly (no SystemExit) and writes the structured
-            # line to stderr which we redirect manually.
-            stderr_buf = io.StringIO()
-            with contextlib.redirect_stderr(stderr_buf):
-                exit_code = seerr.main(
-                    ["--config", str(self.cfg_path), "user"]
-                )
-            stderr = stderr_buf.getvalue()
-            # The fallback path MUST NOT have been tried (the
-            # bug-review confirms only a 404 triggers the fallback).
-            # No registered mock means a real network call would be
-            # attempted; the strict ``responses`` mock would have
-            # raised ``ConnectionError`` if the fallback fired, so
-            # by construction this is enforced.
-            self.assertEqual(len(rsps.calls), 1)
-        self.assertEqual(exit_code, 4)
-        # Structured line: service=seerr op=/api/v1/user/me status=400 message=...
-        self.assertTrue(
-            stderr.startswith(
-                "service=seerr op=/api/v1/user/me status=400 message="
-            ),
-            msg=f"unexpected stderr shape: {stderr!r}",
-        )
-        self.assertIn("HTTP 400 for /api/v1/user/me", stderr)
-        self.assertIn("request/params/userId must be number", stderr)
-
-    def test_cmd_user_both_404_exits_four(self) -> None:
-        # Regression: HTTP 404 on BOTH the primary and fallback paths
-        # surfaces a fresh :class:`HttpError(exit_code=4)` that names
-        # both paths so operators can investigate. The fallback path
-        # IS exercised (status == 404 is the documented trigger).
-        import arr_cli.seerr as seerr
-
-        with responses.RequestsMock() as rsps:
-            rsps.add(
-                responses.GET,
-                "https://seerr.example/api/v1/user/me",
-                status=404,
-                body="Not Found",
-            )
             rsps.add(
                 responses.GET,
                 "https://seerr.example/auth/me",
-                status=404,
-                body="Not Found",
+                json=user_payload,
+                status=200,
             )
-            # Single invocation: ``main`` returns the int exit code
-            # directly (no SystemExit) and writes the structured
-            # line to stderr which we redirect manually. Re-using the
-            # helper would double the request count and obscure the
-            # ``len(rsps.calls) == 2`` check below.
+            stdout_buf = io.StringIO()
             stderr_buf = io.StringIO()
-            with contextlib.redirect_stderr(stderr_buf):
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
                 exit_code = seerr.main(
                     ["--config", str(self.cfg_path), "user"]
                 )
+            stdout = stdout_buf.getvalue()
             stderr = stderr_buf.getvalue()
-            # Both registered mocks fired (fallback path was triggered).
-            # Checked inside the ``with`` block because ``responses``
-            # resets its call list when the context manager exits.
-            self.assertEqual(len(rsps.calls), 2)
+            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(exit_code, 0)
+        # Stdout is the JSON user object pipe-clean so downstream
+        # consumers can parse it directly. The renderer keeps the
+        # default summary path for object payloads (no tabular
+        # columns are registered for ``user``).
+        self.assertEqual(json.loads(stdout), user_payload)
+        # Nothing on stderr in the success path.
+        self.assertEqual(stderr, "")
+
+    def test_cmd_user_non_2xx_exits_four_with_structured_stderr(self) -> None:
+        # Regression: any non-2xx response on ``/auth/me`` surfaces as
+        # exit ``4`` with a structured stderr line that names the path
+        # (mirrors the bug-report's actual ``seerr user`` output
+        # shape, but with the new contract: ``op=/auth/me`` instead of
+        # ``op=/api/v1/user/me``).
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/auth/me",
+                status=503,
+                body="Service Unavailable",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "user"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+            self.assertEqual(len(rsps.calls), 1)
         self.assertEqual(exit_code, 4)
-        # The synthesized HttpError names the operator-level ``user``
-        # op and references both probe paths so the operator can
-        # investigate the missing auth self-check endpoint.
+        # No payload on stdout -- the structured error line goes to
+        # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        # preserved.
+        self.assertEqual(stdout, "")
+        # Structured line: service=seerr op=/auth/me status=503 message=...
         self.assertTrue(
-            stderr.startswith("service=seerr op=user status=404 message="),
+            stderr.startswith(
+                "service=seerr op=/auth/me status=503 message="
+            ),
             msg=f"unexpected stderr shape: {stderr!r}",
         )
-        self.assertIn("/api/v1/user/me", stderr)
-        self.assertIn("/auth/me", stderr)
+        self.assertIn("HTTP 503 for /auth/me", stderr)
 
 
 # ---------------------------------------------------------------------------

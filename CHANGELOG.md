@@ -56,6 +56,15 @@ within the pre-1.0 contract documented in `README.md`.
   table in `README.md` §4.5, and a `TestCmdSearch` regression test
   in `tests/unit/test_seerr.py` move with the handler fix so future
   drift of this exact path fails the unit suite immediately.
+- `seerr user` now calls `/auth/me` directly instead of probing
+  `/api/v1/user/me` first and falling back to `/auth/me` only on
+  `404`. Seer does not expose `/api/v1/user/me` (the OpenAPI
+  validator answers with `HTTP 400`), so the historical probe's
+  `404`-only fallback trigger never fired and the auth self-check
+  surfaced exit `4` against valid credentials. The `seerr user` row
+  in `README.md` §4.5 and the `TestCmdUserHttpErrors` cases in
+  `tests/unit/test_seerr.py` move with the handler fix so future
+  drift of this exact path fails the unit suite immediately.
 - `seerr requests` now returns the full household request queue
   instead of `[]`. The summary renderer unwraps Seer's documented
   paginated envelope (`{pageInfo, results, serviceErrors}`) and
