@@ -11,11 +11,12 @@ Seer instance:
 * ``search <query>``      -- ``GET /api/v1/search?query=...``       (REQ-10 AC3)
 * ``available <query>``   -- ``GET /api/v1/media/available?query=...``(REQ-10 AC4)
 * ``media <tmdbId>``      -- ``GET /api/v1/media/{tmdbId}``          (REQ-10 AC5)
-* ``user``                -- auth self-check (REQ-10 AC6) with a
-                             two-step probe that falls back from
-                             ``/api/v1/user/me`` to ``/auth/me`` on
-                             a 404 response (design.md "Pre-locking
-                             Verifications -- Seerr").
+* ``user``                -- auth self-check (REQ-10 AC6); single
+                             ``GET /auth/me`` probe (the historical
+                             two-step ``/api/v1/user/me`` -> ``/auth/me``
+                             probe was removed when Seer's live
+                             OpenAPI spec confirmed only ``/auth/me``
+                             is exposed -- AGENTS.md §1 "Seer note").
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -42,23 +43,19 @@ subparser tree and delegates to the universal
 :func:`arr_cli.facade.cli_common.main_wrapper` for config loading and
 error mapping.
 
-Seerr-specific behaviour (REQ-10 AC6, AC7; design.md "Pre-locking
-Verifications -- Seerr"):
+Seerr-specific behaviour (REQ-10 AC6, AC7):
 
-* The ``user`` command implements a two-step auth probe:
-
-    1. Try ``GET /api/v1/user/me`` first (REQ-10 AC6).
-    2. If the response is 404, transparently retry ``GET /auth/me``
-       (the Overseerr-spec canonical path -- design.md "Pre-locking
-       Verifications -- Seerr /api/v1/user/me").
-    3. Return whichever succeeds; if both 404, raise
-       :class:`HttpError(exit_code=4)` naming the operator's instance.
-    4. Both attempts are logged at DEBUG level so the operator can
-       see which path was used when investigating an issue.
-
-  The probe is intentionally internal to ``cmd_user``; the ``user``
-  subcommand is the only public surface. There is no separate
-  ``auth-me`` subcommand.
+* The ``user`` command performs a single auth probe against
+  ``GET /auth/me`` (REQ-10 AC6). Seer dropped ``/api/v1/user/me``
+  in favour of ``/auth/me`` only; the previous two-step
+  ``/api/v1/user/me`` -> ``/auth/me`` fallback probe (with the
+  narrow ``status == 404`` trigger) was removed because the
+  OpenAPI validator's response for an unknown path is ``400``
+  rather than ``404``, which masked the path divergence instead
+  of resolving it. The single ``/auth/me`` probe raises
+  :class:`HttpError(exit_code=4)` on any non-2xx response, which
+  ``main_wrapper`` surfaces as a structured
+  ``service=seerr op=/auth/me status=...`` stderr line.
 
 * ``create-request`` (``POST /api/v1/request``) is **NOT** in MVP and
   MUST NOT appear in ``--help`` (REQ-10 AC7). The dispatch table
@@ -75,7 +72,7 @@ from typing import Any, Sequence
 from arr_cli.facade import output, transport
 from arr_cli.facade.cli_common import build_parser, main_wrapper, universal_parents
 from arr_cli.facade.config import ServiceConfig
-from arr_cli.facade.errors import ConfigError, HttpError
+from arr_cli.facade.errors import ConfigError
 
 __all__ = [
     "main",
@@ -89,11 +86,9 @@ __all__ = [
     "cmd_available",
     "cmd_media",
     "cmd_user",
-    # Path constants are exposed so tests can assert against the
-    # exact strings and so a future tier-2 command (e.g. ``create-
-    # request``) can reuse the prefix without copy-paste drift.
+    # Path constant exposed so tests can assert against the exact
+    # string for the auth self-check endpoint.
     "USER_ME_PATH",
-    "AUTH_ME_FALLBACK_PATH",
 ]
 
 
@@ -102,18 +97,11 @@ __all__ = [
 SERVICE_NAME = "seerr"
 
 
-#: Primary path for the auth self-check per REQ-10 AC6.
-#: ``GET /api/v1/user/me`` -- the requirement-specified path.
-USER_ME_PATH = "/api/v1/user/me"
-
-
-#: Fallback path for the auth self-check per design.md "Pre-locking
-#: Verifications -- Seerr /api/v1/user/me". The verified Overseerr
-#: API spec names this as the canonical path (``GET /auth/me``,
-#: no ``/api/v1`` prefix, not under ``/user/``); we fall back to it
-#: when ``/api/v1/user/me`` returns 404 so the operator's instance
-#: works regardless of which path is actually exposed.
-AUTH_ME_FALLBACK_PATH = "/auth/me"
+#: Path for the auth self-check per REQ-10 AC6.
+#: ``GET /auth/me`` -- the canonical path on Seer (the unified
+#: Overseerr + Jellyseerr fork); the historical ``/api/v1/user/me``
+#: primary path is no longer exposed by Seer.
+USER_ME_PATH = "/auth/me"
 
 
 # Module-level logger so the documented DEBUG probe records
@@ -181,121 +169,30 @@ def _get(
     )
 
 
-def _try_user_path(
-    path: str,
-    *,
-    args: argparse.Namespace,
-    cfg: ServiceConfig,
-) -> tuple[bool, Any]:
-    """Attempt one leg of the ``cmd_user`` probe.
-
-    Returns
-    -------
-    (succeeded, payload_or_exc)
-        ``(True, payload)`` when the request returned a 2xx
-        response; ``(False, exc)`` when the request raised an
-        :class:`HttpError` with ``status == 404`` (the documented
-        trigger for trying the fallback path per design.md
-        "Pre-locking Verifications -- Seerr"). Any other error is
-        re-raised immediately because it indicates a real failure
-        rather than a path-divergence -- the operator deserves to
-        see the structured stderr line, not a silent fallback.
-
-    Notes
-    -----
-    Both attempts are logged at DEBUG level per design.md
-    "Pre-locking Verifications -- Seerr": ``seerr: user probe
-    <path> -> <status>``. This lets operators see which path was
-    used when investigating an issue (e.g. via
-    ``--debug``). The probe path itself is also logged at DEBUG
-    level so the wrapper layer can audit which endpoint answered.
-    """
-    debug = bool(getattr(args, "debug", False))
-    try:
-        payload = _get(
-            path,
-            args,
-            cfg,
-            op=f"user probe {path}",
-        )
-    except HttpError as exc:
-        if debug:
-            _logger.debug(
-                "seerr: user probe %s -> %s", path, exc.status
-            )
-        if exc.status == 404:
-            # Documented fallback trigger (design.md "Pre-locking
-            # Verifications -- Seerr"). Return the exception so the
-            # caller can decide whether to try the other path or
-            # surface the final 404.
-            return False, exc
-        # Any other HTTP failure (auth, server error, ...) is a real
-        # problem and must bubble up unchanged. Re-raising here
-        # preserves the structured stderr line and exit code so the
-        # operator sees the real failure rather than a misleading
-        # "both paths returned 404" message.
-        raise
-
-    if debug:
-        _logger.debug(
-            "seerr: user probe %s -> 200", path
-        )
-    return True, payload
-
-
 def cmd_user(args: argparse.Namespace, cfg: ServiceConfig) -> int:
-    """Seerr ``user`` -- auth self-check with /api/v1/user/me -> /auth/me fallback (REQ-10 AC6).
+    """Seerr ``user`` -- auth self-check via ``GET /auth/me`` (REQ-10 AC6).
 
-    Seer (the unified Overseerr + Jellyseerr fork) diverges on the
-    canonical auth-self-check endpoint:
+    Seer (the unified Overseerr + Jellyseerr fork) exposes the
+    canonical auth-self-check endpoint at :data:`USER_ME_PATH`
+    (``/auth/me``). The historical ``/api/v1/user/me`` primary path
+    was removed from Seer's live OpenAPI spec; the previous two-step
+    probe that fell back to ``/auth/me`` on a 404 from the primary
+    was therefore collapsed to a single ``/auth/me`` call so the
+    operator gets the authenticated user object on stdout and exit
+    ``0`` instead of an opaque ``400`` (OpenAPI validator's "path
+    unknown") response that bubbled up as exit ``4``.
 
-    * The requirements document :data:`USER_ME_PATH`
-      (``/api/v1/user/me``).
-    * The verified Overseerr API spec documents
-      :data:`AUTH_ME_FALLBACK_PATH` (``/auth/me``, no ``/api/v1``
-      prefix, not under ``/user/``).
-
-    The design (design.md "Pre-locking Verifications -- Seerr")
-    resolves the discrepancy at runtime by trying the requirements
-    path first and falling back to the spec path on a 404. Both
-    attempts are logged at DEBUG level so the operator can see
-    which path was used. If both attempts return 404, the final
-    :class:`HttpError(exit_code=4)` surfaces naming both paths so
-    the operator can investigate (e.g. via ``--debug``).
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces as a
+    structured ``service=seerr op=/auth/me status=<code>`` stderr
+    line; the operator's diagnostic tools keep working unchanged.
 
     Authentication is handled transparently by the transport layer
     (``X-Api-Key`` header per REQ-2 AC3); this handler does not
     inspect or echo the credential.
     """
-    primary_ok, primary_result = _try_user_path(
-        USER_ME_PATH, args=args, cfg=cfg
-    )
-    if primary_ok:
-        return _emit(primary_result, args, columns=None)
-
-    # Primary path returned 404; try the documented fallback.
-    fallback_ok, fallback_result = _try_user_path(
-        AUTH_ME_FALLBACK_PATH, args=args, cfg=cfg
-    )
-    if fallback_ok:
-        return _emit(fallback_result, args, columns=None)
-
-    # Both attempts returned 404. Surface a structured
-    # :class:`HttpError(exit_code=4)` naming both paths so the
-    # operator can investigate. We rebuild the error here rather
-    # than re-raising ``fallback_result`` so the message references
-    # the full probe and not just the last leg.
-    raise HttpError(
-        SERVICE_NAME,
-        "user",
-        (
-            f"{SERVICE_NAME}: user -- HTTP 404 on both "
-            f"{USER_ME_PATH} and {AUTH_ME_FALLBACK_PATH}; "
-            "verify the auth self-check endpoint on the operator's "
-            "instance"
-        ),
-        status=404,
-    )
+    payload = _get(USER_ME_PATH, args, cfg, op="user")
+    return _emit(payload, args, columns=None)
 
 
 # ---------------------------------------------------------------------------
@@ -571,8 +468,8 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "user",
         help=(
-            "fetch the current authenticated user (auth self-check; "
-            "GET /api/v1/user/me with fallback to /auth/me on 404)"
+            "fetch the current authenticated user "
+            "(auth self-check; GET /auth/me)"
         ),
         parents=universal_parents(),
         add_help=False,
