@@ -45,6 +45,13 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `seerr requests` now returns the full household request queue
+  instead of `[]`. The summary renderer unwraps Seer's documented
+  paginated envelope (`{pageInfo, results, serviceErrors}`) and
+  iterates `results`; previously any non-list payload short-circuited
+  to an empty list. `cmd_requests` also asks for the documented
+  `take=1000` cap so a single response covers the household queue
+  rather than the default first page of ten.
 - Jellyfin authentication: the facade now sends the full
   `Authorization: MediaBrowser ***` envelope (Client, Device, DeviceId,
   Version, Token) instead of the standalone `X-Emby-Token` header.

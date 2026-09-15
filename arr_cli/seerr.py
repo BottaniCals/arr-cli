@@ -308,11 +308,16 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 
     Returns the full list of media requests; ``--human`` renders the
     most common columns (``title``, ``type``, ``status``, ``createdAt``).
+
+    The ``take`` query parameter caps the response at the documented
+    Seer limit (``1000``) so a single round trip covers the household
+    queue instead of the default first page of ten.
     """
     payload = _get(
         "/api/v1/request",
         args,
         cfg,
+        params={"take": 1000},
         op="requests",
     )
     # Tabular columns match the summary-shape keys emitted by

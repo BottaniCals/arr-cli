@@ -345,5 +345,203 @@ class TestCmdUserHttpErrors(unittest.TestCase):
         self.assertIn("/auth/me", stderr)
 
 
+# ---------------------------------------------------------------------------
+# Test: paginated envelope unwrap + take cap (bug fix)
+# ---------------------------------------------------------------------------
+
+
+class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
+    """Regression tests pinning the paginated ``/api/v1/request`` contract.
+
+    Seer returns ``/api/v1/request`` wrapped in a paginated envelope of
+    the shape ``{pageInfo: {...}, results: [...], serviceErrors: {...}}``.
+    The renderer's job is to unwrap ``results`` before summarising so
+    the default output is the request list, not an empty ``[]``.
+    ``cmd_requests`` also asks for ``take=1000`` so a single response
+    covers the household workload rather than the default first page
+    of ten.
+    """
+
+    PAGINATED_ENVELOPE: dict[str, Any] = {
+        "pageInfo": {
+            "pages": 11,
+            "pageSize": 10,
+            "results": 109,
+            "page": 1,
+        },
+        "results": [
+            {
+                "id": 121,
+                "title": "Foo",
+                "type": "movie",
+                "status": 5,
+                "createdAt": "2026-09-13T12:56:58.000Z",
+                "requestedBy": {"displayName": "alice"},
+            },
+            {
+                "id": 120,
+                "title": "Bar",
+                "type": "movie",
+                "status": 2,
+                "createdAt": "2026-09-13T12:55:03.000Z",
+                "requestedBy": {"displayName": "bob"},
+            },
+        ],
+        "serviceErrors": {"radarr": [], "sonarr": []},
+    }
+
+    def _make_args(self) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``requests`` subparser defaults."""
+        return argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=False,
+            verbose=False,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="requests",
+        )
+
+    def test_cmd_requests_envelope_default_unwraps_results(self) -> None:
+        """Default ``cmd_requests`` emits summary rows when the payload is a paginated envelope."""
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(rendered[1]["title"], "Bar")
+        # ``requestedBy`` is preserved as the nested mapping the docstring
+        # promises, resolved against the unwrapped envelope.
+        self.assertEqual(rendered[0]["requestedBy"]["displayName"], "alice")
+        self.assertEqual(rendered[1]["requestedBy"]["displayName"], "bob")
+
+    def test_cmd_requests_flat_list_default_unchanged(self) -> None:
+        """The flat-list code path keeps the pre-change behaviour intact."""
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args()
+        flat_payload = [
+            {
+                "title": "Foo",
+                "type": "movie",
+                "status": "pending",
+                "createdAt": "2024-01-01",
+                "requestedBy": {"displayName": "alice"},
+            }
+        ]
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=flat_payload,
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(
+            rendered[0]["requestedBy"]["displayName"], "alice"
+        )
+
+    def test_cmd_requests_envelope_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args()
+        args.verbose = True
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        # ``--verbose`` keeps the envelope shape intact; downstream consumers
+        # still see ``pageInfo`` and ``results`` as the service emitted them.
+        self.assertEqual(
+            json.loads(output), self.PAGINATED_ENVELOPE
+        )
+
+    def test_cmd_requests_envelope_dict_with_no_results_returns_empty(self) -> None:
+        """A paginated envelope without ``results`` maps to ``[]`` rather than crashing."""
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value={
+                "pageInfo": {"pages": 0, "pageSize": 10, "results": 0, "page": 1},
+                "serviceErrors": {"radarr": [], "sonarr": []},
+            },
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        self.assertEqual(json.loads(output), [])
+
+
+# ---------------------------------------------------------------------------
+# Test: ``cmd_requests`` issues ``take=1000`` so a single response covers the queue
+# ---------------------------------------------------------------------------
+
+
+class TestCmdRequestsTakesParam(unittest.TestCase):
+    """Pin the ``take`` query parameter contract for ``/api/v1/request``.
+
+    Seer defaults to a pageSize of ten; without ``take=1000`` a 109-item
+    household queue would have 99 items silently dropped across the
+    next ten pages. This test exercises the real HTTP layer via
+    ``responses`` to confirm the parameter rides on the wire.
+    """
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def test_cmd_requests_passes_take_1000_to_seerr(self) -> None:
+        """``cmd_requests`` requests ``take=1000`` so a single response covers the queue."""
+        envelope = {
+            "pageInfo": {"pages": 1, "pageSize": 10, "results": 1, "page": 1},
+            "results": [
+                {
+                    "id": 1,
+                    "title": "Foo",
+                    "type": "movie",
+                    "status": 5,
+                    "createdAt": "2024-01-01T00:00:00.000Z",
+                    "requestedBy": {"displayName": "alice"},
+                }
+            ],
+            "serviceErrors": {"radarr": [], "sonarr": []},
+        }
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/request",
+                json=envelope,
+                match=[responses.matchers.query_param_matcher({"take": "1000"})],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "requests"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # The single registered mock fired, so ``take=1000`` was on
+            # the wire and matched. Any other ``take`` value would have
+            # left the mock unmatched and surfaced a connection error.
+
+
 if __name__ == "__main__":
     unittest.main()
