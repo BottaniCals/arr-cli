@@ -214,16 +214,27 @@ def cmd_resume(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Jellyfin ``recent`` — items the user has already played (REQ-6 AC3).
 
-    The endpoint accepts ``SortBy=DatePlayed`` and ``Filters=IsPlayed``
-    as query parameters. The transport layer percent-encodes the
-    values automatically.
+    The endpoint accepts ``SortBy=DatePlayed``, ``Filters=IsPlayed``,
+    and ``includeItemTypes`` as query parameters. The transport layer
+    percent-encodes the values automatically.
+
+    ``includeItemTypes`` is required for v12 servers: GetItems is now
+    asynchronous and applies recursive expansion only when filters are
+    requested together with ``includeItemTypes`` (see the v12 release
+    notes, "API Changes"). Without it the v12 server returns a single
+    episode rather than the rolled-up set 10.11 produced. ``Movie`` and
+    ``Episode`` mirror the operator's recent-played expectation.
     """
     user_id = _require_user_id(cfg)
     payload = _get(
         f"/Users/{transport.encode_path_segment(user_id)}/Items",
         args,
         cfg,
-        params={"SortBy": "DatePlayed", "Filters": "IsPlayed"},
+        params={
+            "SortBy": "DatePlayed",
+            "Filters": "IsPlayed",
+            "includeItemTypes": "Movie,Episode",
+        },
         op="recent",
     )
     # Tabular columns match the summary-shape keys emitted by

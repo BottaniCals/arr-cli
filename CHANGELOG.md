@@ -127,6 +127,15 @@ within the pre-1.0 contract documented in `README.md`.
   subcommands had been returning 401 against current Jellyfin releases.
   `DeviceId` is anchored to the host hostname so the Jellyfin dashboard
   groups the CLI's activity under one stable device.
+- `jellyfin recent` now forwards `includeItemTypes=Movie,Episode`
+  alongside the existing `SortBy=DatePlayed&Filters=IsPlayed` query.
+  Jellyfin 12's GetItems is asynchronous and applies the recursive
+  rollup that 10.11 produced only when filters are paired with
+  `includeItemTypes` (v12 release notes, "API Changes"). Without it,
+  a live probe against a v12 instance returned a single Episode
+  rather than the rolled-up set; `Movie,Episode` matches the
+  operator's recent-played expectation. `TestCmdRecent::test_recent_hits_user_path_with_sort_and_filter`
+  moves with the handler fix.
 
 ### Breaking
 
