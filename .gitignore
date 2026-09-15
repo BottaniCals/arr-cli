@@ -52,7 +52,4 @@ arr.local.conf
 *.pid
 
 # --- Bot / smoke-test scratch directory ---
-# Captured CLI + API output from local smoke runs lives here.
-# Pre-PR-17: this directory was untracked and `git add -A` swept 221
-# files into a fix branch. Keep it ignored going forward.
 .tmp/
