@@ -707,5 +707,288 @@ class TestCmdSearch(unittest.TestCase):
             )
 
 
+# ---------------------------------------------------------------------------
+# Test: ``cmd_available`` targets Seer's ``/api/v1/media`` (bug fix)
+# ---------------------------------------------------------------------------
+
+
+class TestCmdAvailable(unittest.TestCase):
+    """Regression tests pinning the path + params for ``cmd_available``.
+
+    Bug fix ``seerr-available-endpoint-missing``: the handler was
+    hitting the legacy Overseerr ``/api/v1/media/available?query=...``
+    sub-resource that Seer does not expose, so every invocation
+    returned ``HTTP 405``. Seer's general list endpoint
+    ``/api/v1/media`` accepts a ``filter`` parameter for the
+    "in library" subset and a ``take`` cap to bound the response.
+    These tests pin the corrected path + params, the
+    paginated-envelope unwrap, the client-side title-substring
+    filter, the ``--verbose`` verbatim passthrough, and add a
+    defensive guard against future copy-paste regressions back to
+    ``/api/v1/media/available``.
+    """
+
+    AVAILABLE_ENVELOPE: dict[str, Any] = {
+        "pageInfo": {
+            "pages": 1,
+            "pageSize": 10,
+            "results": 3,
+            "page": 1,
+        },
+        "results": [
+            {
+                "title": "Doctor Who",
+                "mediaType": "tv",
+                "releaseDate": "2005-03-26",
+                "mediaInfo": {"status": 5},
+            },
+            {
+                "title": "Doctor Strange",
+                "mediaType": "movie",
+                "releaseDate": "2016-10-25",
+                "mediaInfo": {"status": 5},
+            },
+            {
+                "title": "Unrelated",
+                "mediaType": "movie",
+                "releaseDate": "2020-01-01",
+                "mediaInfo": {"status": 5},
+            },
+        ],
+        "serviceErrors": {"radarr": [], "sonarr": []},
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def _make_args(self, query: str = "") -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``available`` subparser defaults."""
+        return argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=False,
+            verbose=False,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="available",
+            query=query,
+        )
+
+    def test_cmd_available_hits_seerr_media_with_take_and_filter(self) -> None:
+        """``cmd_available`` hits ``/api/v1/media`` and forwards ``take=1000&filter=available``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/media",
+                json=self.AVAILABLE_ENVELOPE,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {
+                            "take": "1000",
+                            "filter": "available",
+                        }
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "available", "doctor",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/media`` AND both ``take=1000`` and
+            # ``filter=available`` were on the wire and matched. Any
+            # other path or query combination would have left the mock
+            # unmatched and surfaced a connection error.
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_cmd_available_empty_query_still_hits_endpoint(self) -> None:
+        """An absent positional query still hits the endpoint with the same params."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/media",
+                json={
+                    "pageInfo": {
+                        "pages": 0,
+                        "pageSize": 10,
+                        "results": 0,
+                        "page": 1,
+                    },
+                    "results": [],
+                    "serviceErrors": {"radarr": [], "sonarr": []},
+                },
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {
+                            "take": "1000",
+                            "filter": "available",
+                        }
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "available"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_cmd_available_title_substring_filter_applied_client_side(
+        self,
+    ) -> None:
+        """Non-empty ``query`` is matched client-side as a title-substring."""
+        from arr_cli.seerr import cmd_available
+
+        args = self._make_args(query="doctor")
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.AVAILABLE_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_available, args, None)
+        rendered = json.loads(output)
+        # Only the two ``Doctor*`` titles match; ``Unrelated`` is dropped.
+        self.assertEqual(len(rendered), 2)
+        rendered_titles = [row["title"] for row in rendered]
+        self.assertEqual(
+            rendered_titles, ["Doctor Who", "Doctor Strange"]
+        )
+
+    def test_cmd_available_envelope_unwrap(self) -> None:
+        """The renderer iterates ``results`` of a paginated envelope, not the envelope itself."""
+        from arr_cli.seerr import cmd_available
+
+        args = self._make_args(query="")
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.AVAILABLE_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_available, args, None)
+        rendered = json.loads(output)
+        # The unwrap pulls the 3 items out of ``results`` rather than
+        # rendering the envelope as a single summary row.
+        self.assertEqual(len(rendered), 3)
+        self.assertEqual(rendered[0]["title"], "Doctor Who")
+        self.assertEqual(rendered[1]["title"], "Doctor Strange")
+        self.assertEqual(rendered[2]["title"], "Unrelated")
+        # Nested ``mediaInfo.status`` is preserved.
+        self.assertEqual(rendered[0]["mediaInfo"]["status"], 5)
+
+    def test_cmd_available_envelope_dict_with_no_results_returns_empty(
+        self,
+    ) -> None:
+        """A paginated envelope without ``results`` maps to ``[]`` rather than crashing."""
+        from arr_cli.seerr import cmd_available
+
+        args = self._make_args(query="")
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value={
+                "pageInfo": {
+                    "pages": 0,
+                    "pageSize": 10,
+                    "results": 0,
+                    "page": 1,
+                },
+                "serviceErrors": {"radarr": [], "sonarr": []},
+            },
+        ):
+            output = _capture_stdout(cmd_available, args, None)
+        self.assertEqual(json.loads(output), [])
+
+    def test_cmd_available_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        from arr_cli.seerr import cmd_available
+
+        args = self._make_args(query="")
+        args.verbose = True
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.AVAILABLE_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_available, args, None)
+        # ``--verbose`` keeps the envelope shape intact; downstream
+        # consumers still see ``pageInfo`` and ``results`` as the
+        # service emitted them.
+        self.assertEqual(
+            json.loads(output), self.AVAILABLE_ENVELOPE
+        )
+
+    def test_cmd_available_does_not_hit_legacy_available_path(self) -> None:
+        """Defensive guard: ``cmd_available`` MUST NOT target ``/api/v1/media/available``.
+
+        Pins the regression guard described in the bug review. A
+        future copy-paste back to the legacy Overseerr sub-resource
+        is caught at the unit layer in milliseconds rather than at
+        the operator's instance as ``HTTP 405``.
+        """
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.AVAILABLE_ENVELOPE,
+        ) as mock_get:
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "available", "doctor",
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertGreater(
+            len(mock_get.call_args_list), 0,
+            msg="cmd_available did not call transport.get at all",
+        )
+        for call in mock_get.call_args_list:
+            # ``transport.get`` is invoked as
+            # ``transport.get(SERVICE_NAME, path, ...)``; ``path``
+            # is the second positional argument. Inspect both
+            # positional and keyword forms for forward-compat.
+            args_, kwargs = call
+            path: str | None = None
+            if len(args_) >= 2:
+                path = args_[1]
+            else:
+                path = kwargs.get("path")
+            self.assertIsNotNone(
+                path,
+                msg="transport.get called without a path argument",
+            )
+            self.assertNotEqual(
+                path,
+                "/api/v1/media/available",
+                msg=(
+                    "cmd_available must not target the legacy "
+                    "Overseerr /api/v1/media/available sub-resource "
+                    "(Seer exposes /api/v1/media only)."
+                ),
+            )
+            self.assertEqual(
+                path,
+                "/api/v1/media",
+                msg=(
+                    "cmd_available targeted unexpected path: "
+                    f"{path!r}"
+                ),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -9,7 +9,7 @@ Seer instance:
 * ``requests``            -- ``GET /api/v1/request``                 (REQ-10 AC1)
 * ``request-count``       -- ``GET /api/v1/request/count``           (REQ-10 AC2)
 * ``search <query>``      -- ``GET /api/v1/search?query=...``       (REQ-10 AC3)
-* ``available <query>``   -- ``GET /api/v1/media/available?query=...``(REQ-10 AC4)
+* ``available <query>``   -- ``GET /api/v1/media?filter=available&take=1000`` (REQ-10 AC4)
 * ``media <tmdbId>``      -- ``GET /api/v1/media/{tmdbId}``          (REQ-10 AC5)
 * ``user``                -- auth self-check (REQ-10 AC6); single
                              ``GET /auth/me`` probe (the historical
@@ -282,19 +282,52 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_available(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Seerr ``available <query>`` -- what's already in the library (REQ-10 AC4).
 
-    Returns the subset of media Seerr considers "available" (i.e.
-    already requested and present in the user's library). The
-    ``query`` parameter is forwarded as a query string; the
-    transport layer percent-encodes the value.
+    Returns the subset of media Seer considers "available" (i.e.
+    already requested and present in the user's library). Seer's
+    general list endpoint ``GET /api/v1/media`` accepts a
+    ``filter`` parameter for the "in library" subset
+    (``filter=available`` is the leading hypothesis; verify the
+    accepted token against the live
+    ``/api-docs/swagger-ui-init.js`` OpenAPI spec on the operator's
+    instance per AGENTS.md §1 "Seer note"); the ``take=1000`` cap
+    mirrors :func:`cmd_requests` so a single response covers the
+    household library rather than the default first page of ten.
+
+    Title-substring matching is applied client-side after the
+    fetch: Seer's ``/api/v1/media`` does not document a
+    title-search query parameter, so any non-empty ``query`` is
+    matched case-insensitively against each item's ``title``
+    field. Items missing a ``title`` are dropped.
     """
     query = getattr(args, "query", "") or ""
     payload = _get(
-        "/api/v1/media/available",
+        "/api/v1/media",
         args,
         cfg,
-        params={"query": query},
+        params={"take": 1000, "filter": "available"},
         op="available",
     )
+    # Client-side title-substring post-filter: extract the items
+    # out of the paginated envelope (when present), then keep only
+    # the rows whose ``title`` contains the query as a
+    # case-insensitive substring. Empty query passes the payload
+    # through unchanged so the renderer can unwrap the envelope
+    # itself.
+    if query:
+        if isinstance(payload, dict):
+            items = payload.get("results")
+        else:
+            items = payload
+        if isinstance(items, list):
+            needle = query.casefold()
+            filtered = [
+                item
+                for item in items
+                if isinstance(item, dict)
+                and isinstance(item.get("title"), str)
+                and needle in item["title"].casefold()
+            ]
+            payload = filtered
     # Tabular columns match the summary-shape keys emitted by
     # ``_summary_seerr_available``: nested ``mediaInfo.status`` is
     # resolved via dot-path traversal in ``_row_from_mapping``.
@@ -440,7 +473,8 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         "available",
         help=(
             "list media already available in the library, "
-            "filtered by query (GET /api/v1/media/available?query=...)"
+            "optionally filtered by title-substring query "
+            "(GET /api/v1/media?filter=available&take=1000)"
         ),
         parents=universal_parents(),
         add_help=False,
@@ -450,7 +484,10 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         nargs=argparse.OPTIONAL,
         default="",
         metavar="QUERY",
-        help="search query (percent-encoded before being sent)",
+        help=(
+            "optional title-substring filter "
+            "(applied client-side after the fetch)"
+        ),
     )
 
     media = subparsers.add_parser(

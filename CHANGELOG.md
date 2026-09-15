@@ -72,6 +72,31 @@ within the pre-1.0 contract documented in `README.md`.
   to an empty list. `cmd_requests` also asks for the documented
   `take=1000` cap so a single response covers the household queue
   rather than the default first page of ten.
+- `seerr available <query>` now hits Seer's general
+  `/api/v1/media` endpoint instead of the Overseerr-shaped
+  `/api/v1/media/available` sub-resource that Seer does not
+  expose. The historical sub-resource was inherited from
+  pre-fork documentation and was never reconciled against the
+  live Seer `/api-docs/swagger-ui-init.js` OpenAPI spec
+  (AGENTS.md §1 "Seer note" guard paragraph); the operator's
+  reverse-proxy has been answering `HTTP 405` on every method
+  for the missing sub-resource since the upstream Seer fork
+  landed. The handler now sends `take=1000&filter=available`
+  to bound the response and uses the live-spec-supported
+  `filter` param for the "in library" subset
+  (`filter=available` is the leading hypothesis; verify the
+  accepted token against the operator's live spec before
+  merging per the AGENTS.md guard); title-substring matching
+  is applied client-side after the fetch because Seer's
+  `/api/v1/media` does not document a title-search query
+  parameter. The `_summary_seerr_available` renderer unwraps
+  the paginated envelope (`{pageInfo, results,
+  serviceErrors}`) so the curated summary stays non-empty;
+  help text, the per-service command table in `README.md`
+  §4.5, and a new `TestCmdAvailable*` regression class in
+  `tests/unit/test_seerr.py` move with the handler fix so
+  future drift of this exact path fails the unit suite
+  immediately.
 - Jellyfin authentication: the facade now sends the full
   `Authorization: MediaBrowser ***` envelope (Client, Device, DeviceId,
   Version, Token) instead of the standalone `X-Emby-Token` header.
