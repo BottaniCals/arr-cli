@@ -388,11 +388,19 @@ class TestCmdRecent(unittest.TestCase):
         positional = mock_get.call_args.args
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(positional[1], "/Users/jf-user-1/Items")
-        # The two query parameters are forwarded verbatim; the
-        # transport layer percent-encodes their values.
+        # The three query parameters are forwarded verbatim; the
+        # transport layer percent-encodes their values. The
+        # ``includeItemTypes`` key is required on Jellyfin 12.0 to
+        # restore the recursive expansion GetItems had on 10.11
+        # when ``Filters`` is present; see the v12 release notes
+        # ("API Changes", GetItems behaviour).
         self.assertEqual(
             kwargs["params"],
-            {"SortBy": "DatePlayed", "Filters": "IsPlayed"},
+            {
+                "SortBy": "DatePlayed",
+                "Filters": "IsPlayed",
+                "includeItemTypes": "Movie,Episode",
+            },
         )
 
     def test_recent_missing_user_id_raises_config_error(self) -> None:
