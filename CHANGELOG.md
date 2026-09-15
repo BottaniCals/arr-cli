@@ -7,6 +7,29 @@ within the pre-1.0 contract documented in `README.md`.
 
 ## [Unreleased]
 
+### Removed
+
+- `seerr media <tmdbId>` -- the command has been removed because
+  Seer does not expose a GET-by-tmdbId for media details. Seer's
+  `/media/{id}` uses the internal numeric `mediaId` (not the
+  external `tmdbId`) and only exposes `POST /media/{id}/{status}`,
+  `DELETE /media/{id}`, `DELETE /media/{id}/file`, and
+  `GET /media/{id}/watch_data`; the historical Overseerr path
+  `/api/v1/media/{tmdbId}` was inherited from pre-fork
+  documentation and was never reconciled against the live Seer
+  `/api-docs/swagger-ui-init.js` OpenAPI spec (AGENTS.md §1 "Seer
+  note" guard paragraph), so the operator was getting `HTTP 405`
+  against a Seer instance. Callers that need media info can run
+  `seerr search <query> --verbose` instead; the search endpoint
+  returns the same tmdbId-keyed media shape. The command-table
+  row in `README.md` §4.5, the per-command counts in
+  `README.md` intro and `AGENTS.md` §1, the `cmd_media`
+  unit-test registration in `tests/unit/test_seerr.py`, and
+  the `seerr media` missing-positional case in
+  `tests/unit/test_argparse_universal_flags.py` move with the
+  removal so future re-introduction of this exact shape fails
+  the unit suite immediately.
+
 ### Documentation
 
 - Clarified that the `seerr` CLI targets [Seer](https://github.com/seerr-team/seerr),
@@ -28,9 +51,9 @@ within the pre-1.0 contract documented in `README.md`.
   - `sonarr`: `wanted`, `queue`, `recent`
   - `seerr`: `requests`, `search`, `available`
   - `maintainerr`: `pending`
-- The remaining 14 commands (`jellyfin item`/`search`/`nextup`,
+- The remaining 13 commands (`jellyfin item`/`search`/`nextup`,
   `radarr calendar`/`lookup`/`movie`, `sonarr calendar`/`lookup`/`series`,
-  `seerr request-count`/`media`/`user`, `maintainerr health`/`storage`)
+  `seerr request-count`/`user`, `maintainerr health`/`storage`)
   continue to emit verbatim service JSON unchanged.
 
 ### Added

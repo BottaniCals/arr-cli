@@ -5,12 +5,12 @@ Jellyfin, Radarr, Sonarr, Maintainerr, and Seer. The package ships
 five thin executables (`jellyfin`, `radarr`, `sonarr`, `maintainerr`, `seerr`)
 backed by a single shared facade (`arr_cli.facade`) that owns configuration,
 HTTP transport, authentication, error mapping, and output formatting. Together
-they expose **29 read-only commands** (every call is an HTTP `GET`).
+they expose **28 read-only commands** (every call is an HTTP `GET`).
 
 The CLIs are intended for two uses:
 
 - shell pipelines that consume the verbatim JSON on stdout (pass `--verbose`
-  for the 15 size-to-summary candidate commands; the remaining 14 commands
+  for the 15 size-to-summary candidate commands; the remaining 13 commands
   emit verbatim by default),
 - ad-hoc terminal inspection with `--human` / `-h` to render the
   response as a readable table.
@@ -195,7 +195,7 @@ passed.
 > it requires confirming `/api/rules` against the operator's live
 > `/api/swagger`.
 
-### 4.5 Seer (`seerr` — 6 commands)
+### 4.5 Seer (`seerr` — 5 commands)
 
 | Command                   | HTTP | Path                                    | Notes                                                                            |
 | ------------------------- | :--: | --------------------------------------- | -------------------------------------------------------------------------------- |
@@ -203,7 +203,6 @@ passed.
 | `seerr request-count`     | GET  | `/api/v1/request/count`                 | Aggregate request counts.                                                        |
 | `seerr search <query>`    | GET  | `/api/v1/search?query=<query>`         | Percent-encoded by the facade.                                                   |
 | `seerr available <query>` | GET  | `/api/v1/media?filter=available&take=1000` | Title-substring filter is applied client-side after the fetch.                  |
-| `seerr media <tmdbId>`    | GET  | `/api/v1/media/{tmdbId}`                | Media details by TMDB id.                                                        |
 | `seerr user`              | GET  | `/auth/me`                               | Auth self-check.                                                               |
 
 > **Upstream: Seer.** The `seerr` CLI targets

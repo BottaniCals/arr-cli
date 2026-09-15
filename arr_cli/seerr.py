@@ -3,14 +3,13 @@
 This module is the Seer entry point for the ``arr-cli`` MVP.
 Seer is the unified fork of Overseerr and Jellyseerr; the CLI
 talks to whatever Seer instance the operator points it at via
-``arr.conf``. It exposes six read-only commands against a live
+``arr.conf``. It exposes five read-only commands against a live
 Seer instance:
 
 * ``requests``            -- ``GET /api/v1/request``                 (REQ-10 AC1)
 * ``request-count``       -- ``GET /api/v1/request/count``           (REQ-10 AC2)
 * ``search <query>``      -- ``GET /api/v1/search?query=...``       (REQ-10 AC3)
 * ``available <query>``   -- ``GET /api/v1/media?filter=available&take=1000`` (REQ-10 AC4)
-* ``media <tmdbId>``      -- ``GET /api/v1/media/{tmdbId}``          (REQ-10 AC5)
 * ``user``                -- auth self-check (REQ-10 AC6); single
                              ``GET /auth/me`` probe (the historical
                              two-step ``/api/v1/user/me`` -> ``/auth/me``
@@ -84,7 +83,6 @@ __all__ = [
     "cmd_request_count",
     "cmd_search",
     "cmd_available",
-    "cmd_media",
     "cmd_user",
     # Path constant exposed so tests can assert against the exact
     # string for the auth self-check endpoint.
@@ -340,32 +338,6 @@ def cmd_available(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
-def cmd_media(args: argparse.Namespace, cfg: ServiceConfig) -> int:
-    """Seerr ``media <tmdbId>`` -- fetch a single media item (REQ-10 AC5).
-
-    The transport layer maps a 404 response to
-    :class:`HttpError(exit_code=4)` so the caller doesn't need to
-    inspect the status code; :func:`main_wrapper` then emits the
-    structured stderr line naming the id.
-    """
-    raw_id = getattr(args, "tmdb_id", "")
-    tmdb_id = transport.encode_path_segment(raw_id)
-    payload = _get(
-        f"/api/v1/media/{tmdb_id}",
-        args,
-        cfg,
-        op=f"media id={raw_id}",
-    )
-    columns = [
-        "title",
-        "mediaType",
-        "releaseDate",
-        "status",
-        "mediaInfo.tmdbId",
-    ]
-    return _emit(payload, args, columns=columns)
-
-
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -387,7 +359,6 @@ _DISPATCH = {
     "request-count": cmd_request_count,
     "search": cmd_search,
     "available": cmd_available,
-    "media": cmd_media,
     "user": cmd_user,
 }
 
@@ -417,18 +388,17 @@ def build_seerr_parser() -> argparse.ArgumentParser:
 
     The returned parser already includes the universal flag set
     (registered by :func:`arr_cli.facade.cli_common.build_parser`) and
-    the six Seerr subcommands. Exposed for tests so they can parse
+    the five Seerr subcommands. Exposed for tests so they can parse
     arguments without going through the console-script entry point.
     """
     parser = build_parser(
         prog=SERVICE_NAME,
         description=(
             "Read-only CLI for Seer (the unified Overseerr + "
-            "Jellyseerr fork). Six commands expose the household "
+            "Jellyseerr fork). Five commands expose the household "
             "request queue, request summary counts, multi-source "
-            "search, what's already available in the library, a "
-            "single media item by TMDB id, and the current "
-            "authenticated user."
+            "search, what's already available in the library, and "
+            "the current authenticated user."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -488,18 +458,6 @@ def build_seerr_parser() -> argparse.ArgumentParser:
             "optional title-substring filter "
             "(applied client-side after the fetch)"
         ),
-    )
-
-    media = subparsers.add_parser(
-        "media",
-        help="fetch a single media item by TMDB id (GET /api/v1/media/{tmdbId})",
-        parents=universal_parents(),
-        add_help=False,
-    )
-    media.add_argument(
-        "tmdb_id",
-        metavar="TMDBID",
-        help="TMDB id (percent-encoded before being sent)",
     )
 
     subparsers.add_parser(
