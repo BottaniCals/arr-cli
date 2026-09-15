@@ -4,9 +4,10 @@ This module owns the single HTTP entry point used by every service
 CLI: :func:`get`. It is responsible for:
 
 * Resolving the base URL for a service from a :class:`ServiceConfig`.
-* Injecting the right auth header for each service (``X-Emby-Token``
-  for Jellyfin, ``X-Api-Key`` for Radarr / Sonarr / Seerr, optional
-  for Maintainerr).
+* Injecting the right auth header for each service
+  (``Authorization: MediaBrowser ***`` envelope for Jellyfin,
+  ``X-Api-Key`` for Radarr / Sonarr / Seerr, optional for
+  Maintainerr).
 * Percent-encoding every query parameter before it reaches
   :mod:`requests`.
 * Applying per-call ``timeout=(connect, read)`` tuples.
@@ -37,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 from typing import Any, Iterable, Mapping
 from urllib.parse import quote, urljoin
 
@@ -78,13 +80,47 @@ _logger.propagate = False
 
 #: Canonical auth header names (REQ-2 AC1-3). Centralised so the
 #: redaction policy and any future header-name validation stay in sync.
+#: ``jellyfin`` has no single header name: the full
+#: ``Authorization: MediaBrowser ***`` envelope is constructed
+#: inside :func:`_inject_auth` (Jellyfin 12.x deprecated the bare
+#: ``X-Emby-Token`` header).
 _HEADER_NAMES: dict[str, str] = {
-    "jellyfin": "X-Emby-Token",
+    "jellyfin": "",
     "radarr": "X-Api-Key",
     "sonarr": "X-Api-Key",
     "seerr": "X-Api-Key",
     "maintainerr": "",  # maintainerr: optional via auth.enabled + extra
 }
+
+#: Identity embedded in the Jellyfin ``MediaBrowser`` authorization
+#: envelope. Jellyfin uses these values to label the device in its
+#: dashboard, so they must be stable across calls and informative for
+#: operators triaging a session.
+_MEDIABROWSER_CLIENT = "arr-cli"
+_MEDIABROWSER_DEVICE = "arr-cli"
+_MEDIABROWSER_VERSION = "0.1.0"
+
+
+def _mediabrowser_authorization(token: str) -> str:
+    """Return the Jellyfin ``Authorization`` envelope value.
+
+    Jellyfin 12.x deprecated the standalone ``X-Emby-Token`` header
+    and now requires the full ``MediaBrowser ***`` envelope.
+    Empirically the bare ``X-Emby-Token`` returns a 401 byte-identical
+    to a request with no auth header at all; only the full envelope
+    authenticates. ``DeviceId`` is anchored to the host's hostname so
+    the Jellyfin dashboard groups this CLI's activity under one stable
+    device.
+    """
+    device_id = f"{_MEDIABROWSER_CLIENT}-{socket.gethostname()}"
+    return (
+        f'MediaBrowser Client="{_MEDIABROWSER_CLIENT}", '
+        f'Device="{_MEDIABROWSER_DEVICE}", '
+        f'DeviceId="{device_id}", '
+        f'Version="{_MEDIABROWSER_VERSION}", '
+        f'Token="{token}"'
+    )
+
 
 #: Truncation limit for body excerpts in :class:`HttpError` messages
 #: (REQ-4 AC2: 500 chars). Defined here so tests and the formatter
@@ -106,8 +142,10 @@ def _inject_auth(
 
     Behaviour (REQ-2 AC1-4, REQ-2 AC6):
 
-    * ``jellyfin``   -- ``X-Emby-Token: <api_key>``. Raises
-      :class:`AuthError` when ``api_key`` is missing.
+    * ``jellyfin``   -- ``Authorization: MediaBrowser ***``
+      envelope including the api_key. Raises :class:`AuthError`
+      when ``api_key`` is missing. The standalone ``X-Emby-Token``
+      header is no longer emitted: Jellyfin 12.x ignores it.
     * ``radarr``     -- ``X-Api-Key: <api_key>``. Raises
       :class:`AuthError` when ``api_key`` is missing.
     * ``sonarr``     -- ``X-Api-Key: <api_key>``. Raises
@@ -135,6 +173,24 @@ def _inject_auth(
             for key, value in auth.extra.items():
                 headers[key] = value
         # No header added when auth is disabled — documented default.
+        return
+
+    if service == "jellyfin":
+        # Jellyfin 12.x dropped support for the standalone
+        # ``X-Emby-Token`` header. Empirically the bare header returns a
+        # 401 byte-identical to a request with no auth header; only the
+        # full ``Authorization: MediaBrowser ***`` envelope
+        # authenticates.
+        if auth.ak is None:
+            raise AuthError(
+                service,
+                "auth",
+                (
+                    f"{service}: {AK_LITERAL} missing — set "
+                    f"{service}.{AK_LITERAL} in arr.conf"
+                ),
+            )
+        headers["Authorization"] = _mediabrowser_authorization(auth.ak)
         return
 
     header_name = _HEADER_NAMES.get(service)

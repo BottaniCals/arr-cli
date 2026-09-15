@@ -3,8 +3,9 @@
 Covers the contract spelled out in task 8.4 of tasks.md:
 
 * Each of the eight Jellyfin commands hits the documented HTTP path
-  with the documented query parameters and the ``X-Emby-Token``
-  auth header (REQ-2 AC1, REQ-6 AC1-8).
+  with the documented query parameters and the
+  ``Authorization: MediaBrowser ***`` authorization envelope
+  (REQ-2 AC1, REQ-6 AC1-8).
 * ``item`` propagates a 404 as :class:`HttpError` (exit code 4).
 * ``favorites`` / ``resume`` / ``recent`` / ``latest`` raise
   :class:`ConfigError` (``exit_code=1``) when ``cfg.jellyfin.user_id``
@@ -1008,7 +1009,8 @@ class TestAuthHeaderPolicy(unittest.TestCase):
     """The transport layer is the single source of auth-header truth.
 
     The Jellyfin module's job is to delegate to ``transport.get``;
-    the transport layer injects ``X-Emby-Token`` for the
+    the transport layer injects the
+    ``Authorization: MediaBrowser ***`` envelope for the
     ``jellyfin`` service. These tests don't re-verify the injection
     contract (already covered in test_transport.py) but they
     confirm the Jellyfin module doesn't bypass that path.
@@ -1017,7 +1019,8 @@ class TestAuthHeaderPolicy(unittest.TestCase):
     def test_now_passes_jellyfin_service_to_transport(self) -> None:
         # The first positional argument to ``transport.get`` is the
         # service name; it MUST be ``"jellyfin"`` so the transport
-        # layer's auth header table routes to ``X-Emby-Token``.
+        # layer routes to the Jellyfin auth branch and emits the
+        # MediaBrowser envelope.
         cfg = _service_config()
         args = _namespace()
         with _patched_get_payload([]) as mock_get:

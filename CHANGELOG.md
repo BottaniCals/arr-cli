@@ -43,6 +43,16 @@ within the pre-1.0 contract documented in `README.md`.
   function and the underlying `_SUMMARY_RENDERERS` dispatch table --
   single audit point for per-command summary rendering.
 
+### Fixed
+
+- Jellyfin authentication: the facade now sends the full
+  `Authorization: MediaBrowser ***` envelope (Client, Device, DeviceId,
+  Version, Token) instead of the standalone `X-Emby-Token` header.
+  Jellyfin 12.x deprecated the bare header, so all eight `jellyfin`
+  subcommands had been returning 401 against current Jellyfin releases.
+  `DeviceId` is anchored to the host hostname so the Jellyfin dashboard
+  groups the CLI's activity under one stable device.
+
 ### Breaking
 
 - Default JSON output for the 15 size-to-summary candidate commands is no
