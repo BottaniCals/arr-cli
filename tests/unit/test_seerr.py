@@ -543,5 +543,175 @@ class TestCmdRequestsTakesParam(unittest.TestCase):
             # left the mock unmatched and surfaced a connection error.
 
 
+# ---------------------------------------------------------------------------
+# Test: ``cmd_search`` targets Seer's consolidated ``/api/v1/search`` (bug fix)
+# ---------------------------------------------------------------------------
+
+
+class TestCmdSearch(unittest.TestCase):
+    """Regression tests pinning the path + params for ``cmd_search``.
+
+    Bug fix ``seerr-search-wrong-api-path``: the handler was hitting
+    the legacy Overseerr ``/api/v1/search/multi`` path that Seer does
+    not expose, so every invocation returned ``HTTP 404``. Seer
+    consolidates search into ``/api/v1/search``. These tests pin the
+    corrected path AND add a defensive guard against future copy-paste
+    regressions back to ``/api/v1/search/multi`` (which would fail the
+    suite immediately, in milliseconds, rather than at the operator's
+    instance as ``HTTP 404``).
+    """
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def test_cmd_search_hits_seerr_search_with_query(self) -> None:
+        """``cmd_search`` hits ``/api/v1/search`` and forwards ``query=<value>``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/search",
+                json=[
+                    {
+                        "title": "Doctor Who",
+                        "mediaType": "tv",
+                        "releaseDate": "2005-03-26",
+                        "mediaInfo": {"tmdbId": 123},
+                    }
+                ],
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"query": "doctor"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "search", "doctor",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/search`` AND ``query=doctor`` was on the wire
+            # and matched. Any other path or query value would have
+            # left the mock unmatched and surfaced a connection error.
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_cmd_search_empty_query_still_hits_endpoint(self) -> None:
+        """An absent positional query still hits ``/api/v1/search`` with ``query=\"\"``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/search",
+                json=[],
+                match=[
+                    responses.matchers.query_param_matcher({"query": ""})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "search"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_cmd_search_special_chars_forwarded_raw(self) -> None:
+        """Special characters in the query are forwarded raw.
+
+        Encoding is the transport layer's job (verified separately in
+        the facade tests); ``cmd_search`` must pass the raw string
+        through unchanged. Mirrors the existing
+        ``test_jellyfin.test_search_query_with_special_chars`` and
+        ``test_radarr.test_lookup_percent_encodes_term`` contracts
+        that pin the handler-vs-transport responsibility split.
+        """
+        raw_query = "hello world?special&chars"
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=[]
+        ) as mock_get:
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "search", raw_query,
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        # The raw string flowed through to ``transport.get`` unchanged.
+        # Percent-encoding happens inside the transport layer (covered
+        # in ``test_transport.test_params_are_percent_encoded``); the
+        # handler MUST NOT pre-encode.
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(kwargs["params"], {"query": raw_query})
+
+    def test_cmd_search_does_not_hit_legacy_multi_path(self) -> None:
+        """Defensive guard: ``cmd_search`` MUST NOT target ``/api/v1/search/multi``.
+
+        Pins the regression guard described in the bug review. A
+        future copy-paste back to the legacy Overseerr path is caught
+        at the unit layer in milliseconds rather than at the
+        operator's instance as ``HTTP 404``.
+        """
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=[]
+        ) as mock_get:
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "search", "doctor",
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        self.assertGreater(
+            len(mock_get.call_args_list), 0,
+            msg="cmd_search did not call transport.get at all",
+        )
+        for call in mock_get.call_args_list:
+            # ``transport.get`` is invoked as
+            # ``transport.get(SERVICE_NAME, path, ...)``; ``path`` is
+            # the second positional argument. Inspect both positional
+            # and keyword forms for forward-compat with future
+            # signature changes.
+            args, kwargs = call
+            path: str | None = None
+            if len(args) >= 2:
+                path = args[1]
+            else:
+                path = kwargs.get("path")
+            self.assertIsNotNone(
+                path,
+                msg="transport.get called without a path argument",
+            )
+            self.assertNotEqual(
+                path,
+                "/api/v1/search/multi",
+                msg=(
+                    "cmd_search must not target the legacy Overseerr "
+                    "/api/v1/search/multi path (Seer consolidated "
+                    "search into /api/v1/search)."
+                ),
+            )
+            self.assertEqual(
+                path,
+                "/api/v1/search",
+                msg=f"cmd_search targeted unexpected path: {path!r}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

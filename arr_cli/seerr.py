@@ -8,7 +8,7 @@ Seer instance:
 
 * ``requests``            -- ``GET /api/v1/request``                 (REQ-10 AC1)
 * ``request-count``       -- ``GET /api/v1/request/count``           (REQ-10 AC2)
-* ``search <query>``      -- ``GET /api/v1/search/multi?query=...``  (REQ-10 AC3)
+* ``search <query>``      -- ``GET /api/v1/search?query=...``       (REQ-10 AC3)
 * ``available <query>``   -- ``GET /api/v1/media/available?query=...``(REQ-10 AC4)
 * ``media <tmdbId>``      -- ``GET /api/v1/media/{tmdbId}``          (REQ-10 AC5)
 * ``user``                -- auth self-check (REQ-10 AC6) with a
@@ -356,10 +356,15 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     The ``query`` parameter is forwarded as a query string; the
     transport layer percent-encodes the value so special characters
     (slashes, spaces, ``?``, ``&``) cannot break the URL.
+
+    Targets Seer's consolidated ``/api/v1/search`` endpoint. The
+    historical Overseerr path ``/api/v1/search/multi`` is NOT
+    exposed by Seer; the live ``/api-docs/swagger-ui-init.js``
+    OpenAPI spec is the source of truth (AGENTS.md §1 "Seer note").
     """
     query = getattr(args, "query", "") or ""
     payload = _get(
-        "/api/v1/search/multi",
+        "/api/v1/search",
         args,
         cfg,
         params={"query": query},
@@ -521,7 +526,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         "search",
         help=(
             "multi-source search by query "
-            "(GET /api/v1/search/multi?query=...)"
+            "(GET /api/v1/search?query=...)"
         ),
         parents=universal_parents(),
         add_help=False,
