@@ -45,6 +45,17 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `seerr search <query>` now hits Seer's consolidated
+  `/api/v1/search` endpoint instead of the legacy Overseerr
+  `/api/v1/search/multi` path that Seer does not expose. Every
+  invocation of `seerr search` was returning `HTTP 404` against a
+  Seer instance; the historical Overseerr path was inherited from
+  pre-fork documentation and was never reconciled against the live
+  Seer `/api-docs/swagger-ui-init.js` OpenAPI spec (AGENTS.md §1
+  "Seer note" guard paragraph). Help text, the per-service command
+  table in `README.md` §4.5, and a `TestCmdSearch` regression test
+  in `tests/unit/test_seerr.py` move with the handler fix so future
+  drift of this exact path fails the unit suite immediately.
 - `seerr requests` now returns the full household request queue
   instead of `[]`. The summary renderer unwraps Seer's documented
   paginated envelope (`{pageInfo, results, serviceErrors}`) and

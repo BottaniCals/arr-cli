@@ -50,3 +50,6 @@ arr.local.conf
 # --- Local-only lock / scratch files ---
 *.lock
 *.pid
+
+# --- Bot / smoke-test scratch directory ---
+.tmp/

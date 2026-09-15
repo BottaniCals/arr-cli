@@ -201,7 +201,7 @@ passed.
 | ------------------------- | :--: | --------------------------------------- | -------------------------------------------------------------------------------- |
 | `seerr requests`          | GET  | `/api/v1/request`                       | All requests.                                                                    |
 | `seerr request-count`     | GET  | `/api/v1/request/count`                 | Aggregate request counts.                                                        |
-| `seerr search <query>`    | GET  | `/api/v1/search/multi?query=<query>`    | Percent-encoded by the facade.                                                   |
+| `seerr search <query>`    | GET  | `/api/v1/search?query=<query>`         | Percent-encoded by the facade.                                                   |
 | `seerr available <query>` | GET  | `/api/v1/media/available?query=<query>` | Percent-encoded by the facade.                                                   |
 | `seerr media <tmdbId>`    | GET  | `/api/v1/media/{tmdbId}`                | Media details by TMDB id.                                                        |
 | `seerr user`              | GET  | `/api/v1/user/me` (fallback `/auth/me`) | Auth self-check. Tries `/api/v1/user/me` first; on 404 falls back to `/auth/me`. |
