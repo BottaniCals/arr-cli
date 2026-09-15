@@ -389,13 +389,11 @@ class TestArgparseErrorExitOneWithStructuredStderr(unittest.TestCase):
         #   sonarr lookup <term>     (term is OPTIONAL with default '')
         #   maintainerr              (no required positionals)
         #   seerr search <query>     (query is OPTIONAL with default '')
-        #   seerr media <tmdbId>     (required)
         # To exercise the missing-required-positional argparse path
         # without entangling the universal-flag fix, we pick the
         # two subcommands that have a genuinely required positional.
         cases: tuple[tuple[str, str], ...] = (
             ("jellyfin", "item"),
-            ("seerr", "media"),
         )
         for cli, sub in cases:
             with self.subTest(cli=cli, sub=sub):

@@ -102,8 +102,8 @@ class TestSeerrModule(unittest.TestCase):
         parser = build_seerr_parser()
         self.assertIsInstance(parser, argparse.ArgumentParser)
 
-    def test_seerr_has_six_commands(self) -> None:
-        """The subparser exposes exactly the six documented Seerr commands."""
+    def test_seerr_has_five_commands(self) -> None:
+        """The subparser exposes exactly the five documented Seerr commands."""
         from arr_cli.seerr import build_seerr_parser
 
         parser = build_seerr_parser()
@@ -114,9 +114,9 @@ class TestSeerrModule(unittest.TestCase):
         )
         self.assertEqual(
             set(subparsers_action.choices.keys()),
-            {"requests", "request-count", "search", "available", "media", "user"},
+            {"requests", "request-count", "search", "available", "user"},
         )
-        self.assertEqual(len(subparsers_action.choices), 6)
+        self.assertEqual(len(subparsers_action.choices), 5)
 
     def test_dispatch_table_keys(self) -> None:
         """``_dispatch`` maps every command name to a callable handler."""
@@ -127,7 +127,6 @@ class TestSeerrModule(unittest.TestCase):
             "request-count",
             "search",
             "available",
-            "media",
             "user",
         }
         # Inspect the private dispatch table directly so we cover

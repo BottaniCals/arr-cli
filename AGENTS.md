@@ -8,7 +8,7 @@ making changes; the rules below are non-negotiable.
 
 ## 1. Project overview
 
-`arr-cli` is a **read-only** Python CLI suite (5 executables, 29 commands
+`arr-cli` is a **read-only** Python CLI suite (5 executables, 28 commands
 total) that wraps a self-hosted media server stack:
 
 | Executable    | Service         | Auth header       |
@@ -25,7 +25,7 @@ command must:
 - emit a curated per-command summary on stdout by default for the 15
   size-to-summary candidate commands; pass `--verbose` for the verbatim
   service payload,
-- emit the verbatim service JSON on stdout for the 14
+- emit the verbatim service JSON on stdout for the 13
   safe-to-leave-alone commands (no summary renderer is registered for
   these, so `--verbose` is a no-op on them),
 - emit a tabular readable view on `--human` / `-h`,
