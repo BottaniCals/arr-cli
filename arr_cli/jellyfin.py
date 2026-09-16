@@ -10,7 +10,7 @@ exposes eight read-only commands against a live Jellyfin instance:
 * ``latest``      — ``GET /Users/{user_id}/Items/Latest`` (REQ-6 AC5)
 * ``search``      — ``GET /Items?searchTerm=<urlencoded query>`` (REQ-6 AC6)
 * ``item``        — ``GET /Items/{id}`` (REQ-6 AC7)
-* ``favorites``   — ``GET /Users/{user_id}/Items/Favorites`` (REQ-6 AC8)
+* ``favorites``   — ``GET /Users/{user_id}/Items?Filters=IsFavorite`` (REQ-6 AC8)
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -354,16 +354,29 @@ def cmd_item(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 
 
 def cmd_favorites(args: argparse.Namespace, cfg: ServiceConfig) -> int:
-    """Jellyfin ``favorites`` — items the user has marked as favorite (REQ-6 AC8)."""
+    """Jellyfin ``favorites`` -- items the user has marked as favorite (REQ-6 AC8).
+
+    The v12 release removed the dedicated
+    ``/Users/<user_id>/Items/Favorites`` sub-resource path; the
+    v12-compatible replacement is
+    ``/Users/<user_id>/Items?Filters=IsFavorite``, the same shape
+    ``cmd_recent`` uses with ``Filters=IsPlayed``.
+    """
     user_id = _require_user_id(cfg)
+    params: dict[str, Any] = {"Filters": "IsFavorite"}
+    limit = getattr(args, "limit", None)
+    if limit is not None:
+        try:
+            params["Limit"] = int(limit)
+        except (TypeError, ValueError):
+            pass
     payload = _get(
-        f"/Users/{transport.encode_path_segment(user_id)}/Items/Favorites",
+        f"/Users/{transport.encode_path_segment(user_id)}/Items",
         args,
         cfg,
+        params=params,
         op="favorites",
     )
-    # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_jellyfin_favorites`` (flat top-level keys).
     columns = ["Name", "Type", "ProductionYear", "SeriesName"]
     return _emit(payload, args, columns=columns)
 

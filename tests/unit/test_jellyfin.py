@@ -32,6 +32,7 @@ from typing import Any
 from unittest.mock import patch
 
 import responses
+from responses import matchers
 
 # Make the project importable regardless of the test runner's CWD.
 _PROJ_ROOT = Path(__file__).resolve().parents[2]
@@ -636,15 +637,41 @@ class TestCmdItem(unittest.TestCase):
 
 
 class TestCmdFavorites(unittest.TestCase):
-    """REQ-6 AC8: ``GET /Users/{user_id}/Items/Favorites``."""
+    """REQ-6 AC8: ``GET /Users/{user_id}/Items?Filters=IsFavorite``
+    on Jellyfin v12+ (the v10 ``/Items/Favorites`` sub-resource was
+    removed)."""
 
-    def test_favorites_hits_user_path(self) -> None:
+    def test_favorites_hits_items_path_with_filter(self) -> None:
         cfg = _service_config(user_id="jf-user-1")
-        args = _namespace()
-        with _patched_get_payload([]) as mock_get:
+        args = _namespace(limit=None)
+        with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+            rsps.add(
+                responses.GET,
+                "https://jellyfin.example/Users/jf-user-1/Items",
+                json=[],
+                status=200,
+                match=[
+                    matchers.query_param_matcher({"Filters": "IsFavorite"}),
+                ],
+            )
             cmd_favorites(args, cfg)
-        positional = mock_get.call_args.args
-        self.assertEqual(positional[1], "/Users/jf-user-1/Items/Favorites")
+
+    def test_favorites_forwards_limit(self) -> None:
+        cfg = _service_config(user_id="jf-user-1")
+        args = _namespace(limit=50)
+        with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
+            rsps.add(
+                responses.GET,
+                "https://jellyfin.example/Users/jf-user-1/Items",
+                json=[],
+                status=200,
+                match=[
+                    matchers.query_param_matcher(
+                        {"Filters": "IsFavorite", "Limit": "50"}
+                    ),
+                ],
+            )
+            cmd_favorites(args, cfg)
 
     def test_favorites_missing_user_id_raises_config_error(self) -> None:
         cfg = _service_config(user_id=None)

@@ -152,7 +152,7 @@ shape (decoded).
 | `jellyfin latest`         | GET  | `/Users/{user_id}/Items/Latest`                             | Requires `jellyfin.user_id`.                                           |
 | `jellyfin search <query>` | GET  | `/Items?searchTerm=<query>`                                 | Empty query returns the service's empty-array response (not an error). |
 | `jellyfin item <id>`      | GET  | `/Items/{id}`                                               | 404 → exit code `4` with stderr naming the id.                         |
-| `jellyfin favorites`      | GET  | `/Users/{user_id}/Items/Favorites`                          | Requires `jellyfin.user_id`.                                           |
+| `jellyfin favorites`      | GET  | `/Users/{user_id}/Items?Filters=IsFavorite`                 | Requires `jellyfin.user_id`. Accepts optional `Limit` (forwarded from `--limit`). |
 
 ### 4.2 Radarr (`radarr` — 6 commands)
 
