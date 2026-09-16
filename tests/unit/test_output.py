@@ -2128,6 +2128,19 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "status": "Ended",
             }
         ],
+        ("seerr", "movie"): [
+            {
+                "name": "The Matrix",
+                "originalTitle": "The Matrix",
+                "releaseDate": "1999-03-31",
+                "runtime": 136,
+                "genres": [
+                    {"id": 28, "name": "Action"},
+                    {"id": 878, "name": "Science Fiction"},
+                ],
+                "tagline": "Welcome to the Real World.",
+            }
+        ],
         ("maintainerr", "pending"): [
             {
                 "title": "Old Movies",
