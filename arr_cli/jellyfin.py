@@ -255,12 +255,16 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_nextup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Jellyfin ``nextup`` — next-up episodes (REQ-6 AC4).
 
-    Accepts optional ``Limit``, ``StartIndex``, and ``UserId`` query
-    parameters. The universal ``--limit`` flag is forwarded to
-    ``Limit``; ``--start-index`` and ``--user-id`` are command-local
-    flags registered on the subparser so the default argparse usage
-    line documents them.
+    Accepts optional ``Limit`` and ``StartIndex`` query parameters.
+    ``UserId`` is read from ``cfg.jellyfin.user_id`` via
+    :func:`_require_user_id` and is required on Jellyfin v12+; the
+    universal ``--limit`` flag is forwarded to ``Limit`` and
+    ``--start-index`` is a command-local flag registered on the
+    subparser for pagination. Mirrors the three sibling
+    user-scoped handlers (``resume`` / ``recent`` / ``latest`` /
+    ``favorites``).
     """
+    user_id = _require_user_id(cfg)
     params: dict[str, Any] = {}
     limit = getattr(args, "limit", None)
     if limit is not None:
@@ -281,11 +285,9 @@ def cmd_nextup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             params["StartIndex"] = int(start_index)
         except (TypeError, ValueError):
             pass
-    user_id_override = getattr(args, "user_id", None)
-    if user_id_override:
-        params["UserId"] = user_id_override
+    params["UserId"] = user_id
 
-    payload = _get("/Shows/NextUp", args, cfg, params=params or None, op="nextup")
+    payload = _get("/Shows/NextUp", args, cfg, params=params, op="nextup")
     columns = [
         "Name",
         "SeriesName",
@@ -463,15 +465,6 @@ def build_jellyfin_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="N",
         help="pagination offset forwarded to the service as StartIndex",
-    )
-    nextup.add_argument(
-        "--user-id",
-        default=None,
-        metavar="ID",
-        help=(
-            "override the configured jellyfin.user_id for this "
-            "invocation (forwarded to the service as UserId)"
-        ),
     )
 
     subparsers.add_parser(
