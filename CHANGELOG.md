@@ -71,6 +71,15 @@ within the pre-1.0 contract documented in `README.md`.
   `/api/v1/tv/{tvId}/ratings`. Default summary flattens `genres[]` /
   `networks[]` to comma-joined strings and surfaces `name`,
   `originalName`, `firstAirDate`, `numberOfSeasons`, `status`.
+- `seerr movie <id>` -- per-movie details via
+  `GET /api/v1/movie/{movieId}?language=<LANG>`, with `--ratings` to
+  also fetch Rotten Tomatoes critic + audience scores from
+  `/api/v1/movie/{movieId}/ratings`. Default summary flattens
+  `genres[]` to a comma-joined string and surfaces `name`,
+  `originalTitle`, `releaseDate`, `runtime` (reformatted from raw
+  minutes to `"<X>h <Y>m"`), `tagline`. Structural twin of
+  `seerr tv <id>` so future drift between the two commands fails
+  the unit suite immediately.
 
 ### Fixed
 
