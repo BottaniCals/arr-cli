@@ -136,6 +136,23 @@ within the pre-1.0 contract documented in `README.md`.
   rather than the rolled-up set; `Movie,Episode` matches the
   operator's recent-played expectation. `TestCmdRecent::test_recent_hits_user_path_with_sort_and_filter`
   moves with the handler fix.
+- `jellyfin favorites` now hits
+  `GET /Users/{user_id}/Items?Filters=IsFavorite` instead of the
+  pre-v12 `/Users/{user_id}/Items/Favorites` sub-resource. Jellyfin
+  v12 removed the dedicated favorites sub-resource and consolidated
+  the favorites list into the general user-scoped `Items` query,
+  the same v12 shape `cmd_recent` uses with `Filters=IsPlayed`. The
+  removed sub-resource answered `HTTP 400` with
+  `itemId: The value 'Favorites' is not valid.` against v12
+  instances, so every invocation of `jellyfin favorites` against a
+  current Jellyfin release was exiting `4` with an empty stdout.
+  The handler also forwards the universal `--limit` value to the
+  service as `Limit=<n>` using the same defensive pattern
+  `cmd_nextup` already uses, so the page-size cap stays consistent
+  across commands. `TestCmdFavorites::test_favorites_hits_items_path_with_filter`
+  and `TestCmdFavorites::test_favorites_forwards_limit` move with the
+  handler fix so future drift of the removed sub-resource fails the
+  unit suite immediately.
 
 ### Breaking
 
