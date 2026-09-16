@@ -195,7 +195,7 @@ passed.
 > it requires confirming `/api/rules` against the operator's live
 > `/api/swagger`.
 
-### 4.5 Seer (`seerr` — 5 commands)
+### 4.5 Seer (`seerr` — 6 commands)
 
 | Command                   | HTTP | Path                                    | Notes                                                                            |
 | ------------------------- | :--: | --------------------------------------- | -------------------------------------------------------------------------------- |
@@ -204,6 +204,7 @@ passed.
 | `seerr search <query>`    | GET  | `/api/v1/search?query=<query>`         | Percent-encoded by the facade.                                                   |
 | `seerr available <query>` | GET  | `/api/v1/media?filter=available&take=1000` | Title-substring filter is applied client-side after the fetch.                  |
 | `seerr user`              | GET  | `/auth/me`                               | Auth self-check.                                                               |
+| `seerr tv <id>`           | GET  | `/api/v1/tv/<id>?language=<LANG>`       | Adds `…/ratings` on `--ratings`; both endpoints accept `?language=<LANG>`.       |
 
 > **Upstream: Seer.** The `seerr` CLI targets
 > [Seer](https://github.com/seerr-team/seerr), the unified fork of

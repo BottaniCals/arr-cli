@@ -1676,6 +1676,78 @@ class TestSummarySeerrAvailable(unittest.TestCase):
         )
 
 
+class TestSummarySeerrTv(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "tv")]`` matches the spec."""
+
+    def test_tv_shape(self) -> None:
+        payload = {
+            "name": "Doctor Who",
+            "originalName": "Doctor Who",
+            "firstAirDate": "2005-03-26",
+            "genres": [{"name": "Action & Adventure"}],
+            "networks": [{"name": "BBC One"}],
+            "numberOfSeasons": 13,
+            "status": "Ended",
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "tv")](payload)
+        self.assertEqual(
+            rendered,
+            {
+                "name": "Doctor Who",
+                "originalName": "Doctor Who",
+                "firstAirDate": "2005-03-26",
+                "genres": "Action & Adventure",
+                "networks": "BBC One",
+                "numberOfSeasons": 13,
+                "status": "Ended",
+                "ratings": None,
+            },
+        )
+
+    def test_tv_missing_genres_networks_renders_none(self) -> None:
+        payload = {
+            "name": "Doctor Who",
+            "originalName": "Doctor Who",
+            "firstAirDate": "2005-03-26",
+            "numberOfSeasons": 13,
+            "status": "Ended",
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "tv")](payload)
+        # Missing ``genres`` / ``networks`` collapse to ``None``
+        # (NOT a bare ``""`` string) so ``--human`` renders
+        # ``<null>`` instead of an empty cell that masquerades
+        # as "the show has no genres".
+        self.assertIsNone(rendered["genres"])
+        self.assertIsNone(rendered["networks"])
+
+    def test_tv_ratings_merged_under_ratings_key(self) -> None:
+        payload = {
+            "name": "Doctor Who",
+            "originalName": "Doctor Who",
+            "firstAirDate": "2005-03-26",
+            "genres": [{"name": "Action & Adventure"}],
+            "networks": [{"name": "BBC One"}],
+            "numberOfSeasons": 13,
+            "status": "Ended",
+            "ratings": {"criticsScore": 90, "audienceScore": 86},
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "tv")](payload)
+        self.assertEqual(
+            rendered["ratings"],
+            {"criticsScore": 90, "audienceScore": 86},
+        )
+
+    def test_non_mapping_payload_returns_empty_dict(self) -> None:
+        # A non-Mapping payload (e.g. ``None`` from an HTTP
+        # error that the transport layer swallowed) gracefully
+        # degrades to ``{}`` rather than crashing. ``emit()``
+        # then takes the verbatim pass-through branch on the
+        # empty dict.
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "tv")](None), {}
+        )
+
+
 class TestSummaryMaintainerrPending(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("maintainerr", "pending")]`` matches the spec."""
 
@@ -2039,6 +2111,21 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
                 "mediaInfo": {"status": 5},
+            }
+        ],
+        ("seerr", "tv"): [
+            {
+                "name": "Doctor Who",
+                "originalName": "Doctor Who",
+                "firstAirDate": "2005-03-26",
+                "genres": [
+                    {"id": 10759, "name": "Action & Adventure"}
+                ],
+                "networks": [
+                    {"id": 97, "name": "BBC One"}
+                ],
+                "numberOfSeasons": 13,
+                "status": "Ended",
             }
         ],
         ("maintainerr", "pending"): [

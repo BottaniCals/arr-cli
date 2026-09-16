@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import responses
@@ -102,8 +103,8 @@ class TestSeerrModule(unittest.TestCase):
         parser = build_seerr_parser()
         self.assertIsInstance(parser, argparse.ArgumentParser)
 
-    def test_seerr_has_five_commands(self) -> None:
-        """The subparser exposes exactly the five documented Seerr commands."""
+    def test_seerr_has_six_commands(self) -> None:
+        """The subparser exposes exactly the six documented Seerr commands."""
         from arr_cli.seerr import build_seerr_parser
 
         parser = build_seerr_parser()
@@ -114,9 +115,16 @@ class TestSeerrModule(unittest.TestCase):
         )
         self.assertEqual(
             set(subparsers_action.choices.keys()),
-            {"requests", "request-count", "search", "available", "user"},
+            {
+                "requests",
+                "request-count",
+                "search",
+                "available",
+                "user",
+                "tv",
+            },
         )
-        self.assertEqual(len(subparsers_action.choices), 5)
+        self.assertEqual(len(subparsers_action.choices), 6)
 
     def test_dispatch_table_keys(self) -> None:
         """``_dispatch`` maps every command name to a callable handler."""
@@ -128,6 +136,7 @@ class TestSeerrModule(unittest.TestCase):
             "search",
             "available",
             "user",
+            "tv",
         }
         # Inspect the private dispatch table directly so we cover
         # the registration contract without going through argparse.
@@ -1113,6 +1122,379 @@ class TestCmdAvailable(unittest.TestCase):
                     f"{path!r}"
                 ),
             )
+
+
+# ---------------------------------------------------------------------------
+# Test: ``cmd_tv`` -- per-show TV details + optional Rotten Tomatoes ratings
+# ---------------------------------------------------------------------------
+
+
+class TestCmdTv(unittest.TestCase):
+    """Regression tests pinning the endpoint, params, and summary shape for ``cmd_tv``.
+
+    Seer's per-show detail endpoint is ``GET /api/v1/tv/{tvId}?language=...``.
+    ``--ratings`` adds ``GET /api/v1/tv/{tvId}/ratings?language=...``
+    and merges the RT critic + audience scores into the default
+    summary under ``payload["ratings"]``. The Doctor Who payload
+    (id=57243) is 228KB on a live Seer instance and includes
+    ``seasons[]`` and ``numberOfSeasons``; the renderer flattens the
+    ``genres`` / ``networks`` arrays to comma-joined strings so the
+    default ``--human`` rendering stays readable instead of dumping
+    228KB of JSON.
+    """
+
+    DETAIL_PAYLOAD: dict[str, Any] = {
+        "id": 57243,
+        "name": "Doctor Who",
+        "originalName": "Doctor Who",
+        "firstAirDate": "2005-03-26",
+        "genres": [{"id": 10759, "name": "Action & Adventure"}],
+        "networks": [{"id": 97, "name": "BBC One"}],
+        "numberOfSeasons": 13,
+        "status": "Ended",
+    }
+
+    RATINGS_PAYLOAD: dict[str, Any] = {
+        "criticsScore": 90,
+        "audienceScore": 86,
+    }
+
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``tv`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "tv",
+            "id": "57243",
+            "ratings": False,
+            "language": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def test_cmd_tv_default_summary_shape(self) -> None:
+        """Default ``cmd_tv`` emits the curated summary shape (no ratings fetch)."""
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ) as mock_get:
+            output = _capture_stdout(cmd_tv, args, None)
+        # Single GET -- the --ratings fetch MUST NOT happen on the
+        # default path so callers who don't ask for RT data don't pay
+        # the extra round trip.
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        rendered = json.loads(output)
+        self.assertEqual(rendered["name"], "Doctor Who")
+        self.assertEqual(rendered["originalName"], "Doctor Who")
+        self.assertEqual(rendered["firstAirDate"], "2005-03-26")
+        self.assertEqual(rendered["genres"], "Action & Adventure")
+        self.assertEqual(rendered["networks"], "BBC One")
+        self.assertEqual(rendered["numberOfSeasons"], 13)
+        self.assertEqual(rendered["status"], "Ended")
+        # Ratings absent on the no-flag path so the operator sees a
+        # visible-but-empty ``"ratings": null`` cell rather than a
+        # misleading ``"<null>"`` placeholder.
+        self.assertIsNone(rendered["ratings"])
+
+    def test_cmd_tv_genres_networks_flattened_to_string(self) -> None:
+        """Multi-entry ``genres`` / ``networks`` arrays flatten to a comma-joined string."""
+        from arr_cli.seerr import cmd_tv
+
+        payload = {
+            **self.DETAIL_PAYLOAD,
+            "genres": [
+                {"id": 10759, "name": "Action & Adventure"},
+                {"id": 18, "name": "Drama"},
+                {"id": 10765, "name": "Sci-Fi & Fantasy"},
+            ],
+            "networks": [
+                {"id": 97, "name": "BBC One"},
+                {"id": 380, "name": "BBC America"},
+            ],
+        }
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_tv, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(
+            rendered["genres"],
+            "Action & Adventure, Drama, Sci-Fi & Fantasy",
+        )
+        self.assertEqual(
+            rendered["networks"], "BBC One, BBC America"
+        )
+
+    def test_cmd_tv_ratings_flag_merges_second_endpoint(self) -> None:
+        """``--ratings`` triggers a second GET and merges RT scores under ``ratings``."""
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args(ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            output = _capture_stdout(cmd_tv, args, None)
+        # Two calls: /api/v1/tv/<id> then /api/v1/tv/<id>/ratings.
+        self.assertEqual(len(mock_get.call_args_list), 2)
+        rendered = json.loads(output)
+        # Top-level fields still come from the detail payload ...
+        self.assertEqual(rendered["name"], "Doctor Who")
+        # ... and the RT scores arrive nested under ``ratings``.
+        self.assertIsNotNone(rendered["ratings"])
+        self.assertEqual(rendered["ratings"]["criticsScore"], 90)
+        self.assertEqual(rendered["ratings"]["audienceScore"], 86)
+
+    def test_cmd_tv_verbose_emits_verbatim_payload(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the verbatim payload."""
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args(verbose=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ):
+            output = _capture_stdout(cmd_tv, args, None)
+        self.assertEqual(json.loads(output), self.DETAIL_PAYLOAD)
+
+    def test_cmd_tv_language_forwarded_on_both_calls(self) -> None:
+        """``--language en`` is forwarded as ``?language=en`` on both endpoints."""
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args(language="en", ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            _capture_stdout(cmd_tv, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 2)
+        for call in mock_get.call_args_list:
+            self.assertEqual(call.kwargs.get("params"), {"language": "en"})
+
+    def test_cmd_tv_no_language_omits_language_param(self) -> None:
+        """Without ``--language``, no ``language`` key rides on the query string."""
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ) as mock_get:
+            _capture_stdout(cmd_tv, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        # ``params`` is forwarded as the documented kwarg shape;
+        # ``None`` is the absence-of-language signal so we don't
+        # pollute the URL with an empty ``?language=``.
+        self.assertIsNone(mock_get.call_args_list[0].kwargs.get("params"))
+
+    def test_cmd_tv_hits_seerr_tv_endpoint(self) -> None:
+        """``cmd_tv`` hits ``/api/v1/tv/<id>`` exactly (no legacy ``.../tv/multi`` shape)."""
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ) as mock_get:
+            _capture_stdout(cmd_tv, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        call = mock_get.call_args_list[0]
+        args_, _ = call
+        # ``transport.get`` is invoked as
+        # ``transport.get(SERVICE_NAME, path, ...)``; ``path`` is the
+        # second positional argument. Inspect both positional and
+        # keyword forms for forward-compat with future signature
+        # changes.
+        if len(args_) >= 2:
+            path: str | None = args_[1]
+        else:
+            path = call.kwargs.get("path")
+        self.assertEqual(
+            path, "/api/v1/tv/57243",
+            msg=f"cmd_tv targeted unexpected path: {path!r}",
+        )
+
+    def test_cmd_tv_ratings_call_targets_ratings_subpath(self) -> None:
+        """``--ratings`` issues a second GET against ``/api/v1/tv/<id>/ratings``."""
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args(ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            _capture_stdout(cmd_tv, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 2)
+        # First call: detail; second: ratings sub-resource.
+        detail_call, ratings_call = mock_get.call_args_list
+        detail_args, _ = detail_call
+        ratings_args, _ = ratings_call
+        detail_path: str | None = (
+            detail_args[1] if len(detail_args) >= 2 else None
+        )
+        ratings_path: str | None = (
+            ratings_args[1] if len(ratings_args) >= 2 else None
+        )
+        self.assertEqual(detail_path, "/api/v1/tv/57243")
+        self.assertEqual(ratings_path, "/api/v1/tv/57243/ratings")
+
+    def test_cmd_tv_does_not_target_legacy_overseerr_paths(self) -> None:
+        """Defensive guard against copy-paste back to Overseerr-shaped paths.
+
+        Defends against a future regression that swings back to a
+        legacy Overseerr shape (e.g. ``/api/v1/tv/<id>`` with a
+        ``/ratings/v2`` subresource, or ``/api/v1/tvs/...`` plural
+        typos). Caught at the unit layer in milliseconds rather than
+        at the operator's instance as ``HTTP 404``.
+        """
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args(ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            _capture_stdout(cmd_tv, args, None)
+        forbidden_substrings = ("/multi", "/v2", "/v3", "/tvs/")
+        for call in mock_get.call_args_list:
+            args_, _ = call
+            path = args_[1] if len(args_) >= 2 else call.kwargs.get("path")
+            self.assertIsNotNone(path)
+            for forbidden in forbidden_substrings:
+                self.assertNotIn(
+                    forbidden, path,
+                    msg=(
+                        f"cmd_tv path must not contain {forbidden!r} "
+                        f"(legacy Overseerr shape): got {path!r}"
+                    ),
+                )
+
+
+# ---------------------------------------------------------------------------
+# Test: ``cmd_tv`` HTTP path-pinning via the live ``seerr main`` entry point
+# ---------------------------------------------------------------------------
+
+
+class TestCmdTvHttpPath(unittest.TestCase):
+    """End-to-end path pin via the real ``seerr main`` entry point.
+
+    Mirrors ``TestCmdSearch::test_cmd_search_does_not_hit_legacy_multi_path``:
+    mock the actual HTTP layer with :mod:`responses`, invoke ``seerr main``
+    with a real config, and confirm the registered URL matchers fired.
+    Any future regression to a wrong path or query string leaves the
+    mock unmatched and surfaces as a ``ConnectionError`` exit code
+    rather than a silent 404.
+    """
+
+    DETAIL_PAYLOAD: dict[str, Any] = {
+        "id": 57243,
+        "name": "Doctor Who",
+        "originalName": "Doctor Who",
+        "firstAirDate": "2005-03-26",
+        "genres": [{"id": 10759, "name": "Action & Adventure"}],
+        "networks": [{"id": 97, "name": "BBC One"}],
+        "numberOfSeasons": 13,
+        "status": "Ended",
+    }
+
+    RATINGS_PAYLOAD: dict[str, Any] = {
+        "criticsScore": 90,
+        "audienceScore": 86,
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def test_cmd_tv_hits_api_v1_tv_endpoint(self) -> None:
+        """``seerr tv 57243`` hits ``/api/v1/tv/57243`` with no required params."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/tv/57243",
+                json=self.DETAIL_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "tv", "57243"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_cmd_tv_with_ratings_hits_both_endpoints(self) -> None:
+        """``seerr tv 57243 --ratings`` hits the detail endpoint AND the ratings sub-resource."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/tv/57243",
+                json=self.DETAIL_PAYLOAD,
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/tv/57243/ratings",
+                json=self.RATINGS_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "tv", "57243", "--ratings",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            # Both registered mocks fired, so both endpoints were
+            # targeted with the documented path shapes. Any other path
+            # would have left a mock unmatched.
+            self.assertEqual(len(rsps.calls), 2)
+
+    def test_cmd_tv_language_forwards_as_query_param(self) -> None:
+        """``--language en`` rides the wire as ``?language=en`` on the detail endpoint."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/tv/57243",
+                json=self.DETAIL_PAYLOAD,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"language": "en"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "tv", "57243", "--language", "en",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
 
 
 if __name__ == "__main__":

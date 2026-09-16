@@ -3,7 +3,7 @@
 This module is the Seer entry point for the ``arr-cli`` MVP.
 Seer is the unified fork of Overseerr and Jellyseerr; the CLI
 talks to whatever Seer instance the operator points it at via
-``arr.conf``. It exposes five read-only commands against a live
+``arr.conf``. It exposes six read-only commands against a live
 Seer instance:
 
 * ``requests``            -- ``GET /api/v1/request``                 (REQ-10 AC1)
@@ -17,6 +17,12 @@ Seer instance:
                              path is ``/api/v1/auth/me`` -- AGENTS.md
                              §1 "Seer note"; the bare ``/auth/me``
                              resolves to the Next.js frontend SPA).
+* ``tv <id>``             -- single-show detail fetch
+                             ``GET /api/v1/tv/{tvId}?language=...``;
+                             with ``--ratings``, also ``GET
+                             /api/v1/tv/{tvId}/ratings`` merged in
+                             for Rotten Tomatoes critic + audience
+                             scores (REQ-10 AC5).
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -70,7 +76,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 from arr_cli.facade import output, transport
 from arr_cli.facade.cli_common import build_parser, main_wrapper, universal_parents
@@ -88,6 +94,7 @@ __all__ = [
     "cmd_search",
     "cmd_available",
     "cmd_user",
+    "cmd_tv",
     # Path constant exposed so tests can assert against the exact
     # string for the auth self-check endpoint.
     "USER_ME_PATH",
@@ -349,6 +356,94 @@ def cmd_available(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+    """Seerr ``tv <id>`` -- TV show details + optional Rotten Tomatoes ratings (REQ-10 AC5).
+
+    Single-show detail fetch: ``GET /api/v1/tv/{tvId}?language=...``
+    returns the full TV metadata (name, originalName, firstAirDate,
+    genres[], networks[], seasons[], numberOfSeasons, status,
+    createdBy, episodeRunTime, ...). The Doctor Who payload (id=57243)
+    is 228KB on a live Seer instance; the renderer maps the relevant
+    fields into a curated summary shape via
+    :func:`arr_cli.facade.output._summary_seerr_tv` so the default
+    stdout stays chat-agent-sized instead of dumping 228KB of JSON.
+
+    ``--ratings`` additionally calls
+    ``GET /api/v1/tv/{tvId}/ratings?language=...`` and merges the small
+    Rotten Tomatoes critic + audience JSON under
+    ``payload["ratings"]``. The renderer surfaces both scores via the
+    same path; a single-fetch invocation leaves ``ratings`` unset so
+    callers who don't ask for RT data don't pay the extra round trip.
+
+    The ``language`` query parameter is forwarded to both endpoints so
+    localized titles / overviews / RT data line up across the merged
+    payload.
+
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces as a
+    structured ``service=seerr op=/api/v1/tv/<id> status=<code>``
+    (or ``op=/api/v1/tv/<id>/ratings status=<code>``) stderr line.
+
+    Authentication is handled transparently by the transport layer
+    (``X-Api-Key`` header per REQ-2 AC3); this handler does not inspect
+    or echo the credential.
+    """
+    tv_id = getattr(args, "id", "") or ""
+    language = getattr(args, "language", None)
+    params: dict[str, Any] = {}
+    if language:
+        params["language"] = language
+    payload = _get(
+        f"/api/v1/tv/{tv_id}",
+        args,
+        cfg,
+        params=params or None,
+        op=f"tv/{tv_id}",
+    )
+    if getattr(args, "ratings", False):
+        ratings = _get(
+            f"/api/v1/tv/{tv_id}/ratings",
+            args,
+            cfg,
+            params=params or None,
+            op=f"tv/{tv_id}/ratings",
+        )
+        if isinstance(payload, Mapping) and isinstance(ratings, Mapping):
+            # Merge under a dedicated ``ratings`` key so the renderer
+            # can detect the optional block and surface ``criticsScore``
+            # / ``audienceScore`` rather than silently dropping them.
+            payload = {**payload, "ratings": ratings}
+        else:
+            # Defensive: an unexpected shape on either side (e.g. an
+            # HTTP-error JSON object rather than the detail/ratings
+            # document) shouldn't crash the whole command. Log and
+            # continue with the detail payload as-is so the operator
+            # at least sees what the detail endpoint returned.
+            _logger.warning(
+                "seerr.tv: ratings payload was not a dict; "
+                "skipping merge"
+            )
+    # Top-level columns mirror the keys emitted by
+    # ``_summary_seerr_tv``; ``--human`` on a single-object payload
+    # uses ``_render_object`` which ignores columns, but pinning the
+    # literal here is what lets
+    # ``tests/unit/test_output.py::_columns_for`` assert the
+    # columns / summary alignment (REQ-18 AC1). Plain assignment
+    # (no ``: list[str]`` annotation) because the AST helper only
+    # recognises ``ast.Assign`` targets -- matches every other
+    # ``columns`` literal in this module.
+    columns = [
+        "name",
+        "originalName",
+        "firstAirDate",
+        "genres",
+        "networks",
+        "numberOfSeasons",
+        "status",
+    ]
+    return _emit(payload, args, columns=columns)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -371,6 +466,7 @@ _DISPATCH = {
     "search": cmd_search,
     "available": cmd_available,
     "user": cmd_user,
+    "tv": cmd_tv,
 }
 
 
@@ -399,17 +495,18 @@ def build_seerr_parser() -> argparse.ArgumentParser:
 
     The returned parser already includes the universal flag set
     (registered by :func:`arr_cli.facade.cli_common.build_parser`) and
-    the five Seerr subcommands. Exposed for tests so they can parse
+    the six Seerr subcommands. Exposed for tests so they can parse
     arguments without going through the console-script entry point.
     """
     parser = build_parser(
         prog=SERVICE_NAME,
         description=(
             "Read-only CLI for Seer (the unified Overseerr + "
-            "Jellyseerr fork). Five commands expose the household "
+            "Jellyseerr fork). Six commands expose the household "
             "request queue, request summary counts, multi-source "
-            "search, what's already available in the library, and "
-            "the current authenticated user."
+            "search, what's already available in the library, the "
+            "current authenticated user, and per-show TV details "
+            "(optionally with Rotten Tomatoes ratings)."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -479,6 +576,42 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         ),
         parents=universal_parents(),
         add_help=False,
+    )
+
+    tv = subparsers.add_parser(
+        "tv",
+        help=(
+            "fetch TV show details by id, optionally with Rotten "
+            "Tomatoes ratings (GET /api/v1/tv/<id>?language=...; "
+            "--ratings adds /api/v1/tv/<id>/ratings)"
+        ),
+        parents=universal_parents(),
+        add_help=False,
+    )
+    tv.add_argument(
+        "id",
+        metavar="ID",
+        help=(
+            "TMDB/TVDB TV show id (e.g. 57243 for Doctor Who)"
+        ),
+    )
+    tv.add_argument(
+        "--ratings",
+        action="store_true",
+        help=(
+            "also fetch Rotten Tomatoes critic + audience scores "
+            "(GET /api/v1/tv/<id>/ratings) and merge them into the "
+            "default summary"
+        ),
+    )
+    tv.add_argument(
+        "--language",
+        default=None,
+        metavar="LANG",
+        help=(
+            "ISO 639-1 language code forwarded as the "
+            "?language=<LANG> query parameter on both endpoints"
+        ),
     )
 
     return parser

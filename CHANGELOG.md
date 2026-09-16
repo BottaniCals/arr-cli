@@ -65,6 +65,12 @@ within the pre-1.0 contract documented in `README.md`.
 - `arr_cli.facade.output.summarize(service, command, payload)` public
   function and the underlying `_SUMMARY_RENDERERS` dispatch table --
   single audit point for per-command summary rendering.
+- `seerr tv <id>` -- per-show TV details via
+  `GET /api/v1/tv/{tvId}?language=<LANG>`, with `--ratings` to also
+  fetch Rotten Tomatoes critic + audience scores from
+  `/api/v1/tv/{tvId}/ratings`. Default summary flattens `genres[]` /
+  `networks[]` to comma-joined strings and surfaces `name`,
+  `originalName`, `firstAirDate`, `numberOfSeasons`, `status`.
 
 ### Fixed
 

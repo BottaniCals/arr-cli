@@ -8,7 +8,7 @@ making changes; the rules below are non-negotiable.
 
 ## 1. Project overview
 
-`arr-cli` is a **read-only** Python CLI suite (5 executables, 28 commands
+`arr-cli` is a **read-only** Python CLI suite (5 executables, 29 commands
 total) that wraps a self-hosted media server stack:
 
 | Executable    | Service         | Auth header       |
