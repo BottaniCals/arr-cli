@@ -3,7 +3,7 @@
 This module is the Seer entry point for the ``arr-cli`` MVP.
 Seer is the unified fork of Overseerr and Jellyseerr; the CLI
 talks to whatever Seer instance the operator points it at via
-``arr.conf``. It exposes six read-only commands against a live
+``arr.conf``. It exposes seven read-only commands against a live
 Seer instance:
 
 * ``requests``            -- ``GET /api/v1/request``                 (REQ-10 AC1)
@@ -23,6 +23,15 @@ Seer instance:
                              /api/v1/tv/{tvId}/ratings`` merged in
                              for Rotten Tomatoes critic + audience
                              scores (REQ-10 AC5).
+* ``movie <id>``          -- single-movie detail fetch
+                             ``GET /api/v1/movie/{movieId}?language=...``;
+                             with ``--ratings``, also ``GET
+                             /api/v1/movie/{movieId}/ratings`` merged
+                             in for Rotten Tomatoes critic + audience
+                             scores. Structural twin of ``tv <id>``
+                             so future drift between the two
+                             commands fails the unit suite
+                             immediately.
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -95,6 +104,7 @@ __all__ = [
     "cmd_available",
     "cmd_user",
     "cmd_tv",
+    "cmd_movie",
     # Path constant exposed so tests can assert against the exact
     # string for the auth self-check endpoint.
     "USER_ME_PATH",
@@ -444,6 +454,106 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+    """Seerr ``movie <id>`` -- per-movie details + optional Rotten Tomatoes ratings.
+
+    Single-movie detail fetch:
+    ``GET /api/v1/movie/{movieId}?language=...`` returns the full
+    movie metadata (name, originalTitle, releaseDate, runtime,
+    genres[], tagline, overview, cast, ...). The Matrix payload
+    (id=603) is ~110KB on a live Seer instance; the renderer maps
+    the relevant fields into a curated summary shape via
+    :func:`arr_cli.facade.output._summary_seerr_movie` so the
+    default stdout stays chat-agent-sized instead of dumping
+    110KB of JSON. The raw ``runtime`` integer (minutes) is
+    formatted as ``"<X>h <Y>m"`` by the renderer -- the spec'd
+    display format which matters because raw minutes is not
+    human-readable.
+
+    ``--ratings`` additionally calls
+    ``GET /api/v1/movie/{movieId}/ratings?language=...`` and
+    merges the small Rotten Tomatoes critic + audience JSON
+    under ``payload["ratings"]``. The renderer surfaces both
+    scores via the same path; a single-fetch invocation leaves
+    ``ratings`` unset so callers who don't ask for RT data
+    don't pay the extra round trip.
+
+    The ``language`` query parameter is forwarded to both
+    endpoints so localized titles / overviews / RT data line up
+    across the merged payload.
+
+    Structural twin of :func:`cmd_tv` so future drift between
+    the two commands fails the unit suite immediately.
+
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces
+    as a structured
+    ``service=seerr op=/api/v1/movie/<id> status=<code>``
+    (or ``op=/api/v1/movie/<id>/ratings status=<code>``) stderr
+    line.
+
+    Authentication is handled transparently by the transport
+    layer (``X-Api-Key`` header per REQ-2 AC3); this handler
+    does not inspect or echo the credential.
+    """
+    movie_id = getattr(args, "id", "") or ""
+    language = getattr(args, "language", None)
+    params: dict[str, Any] = {}
+    if language:
+        params["language"] = language
+    payload = _get(
+        f"/api/v1/movie/{movie_id}",
+        args,
+        cfg,
+        params=params or None,
+        op=f"movie/{movie_id}",
+    )
+    if getattr(args, "ratings", False):
+        ratings = _get(
+            f"/api/v1/movie/{movie_id}/ratings",
+            args,
+            cfg,
+            params=params or None,
+            op=f"movie/{movie_id}/ratings",
+        )
+        if isinstance(payload, Mapping) and isinstance(ratings, Mapping):
+            # Merge under a dedicated ``ratings`` key so the renderer
+            # can detect the optional block and surface
+            # ``criticsScore`` / ``audienceScore`` rather than
+            # silently dropping them. Mirrors the same defensive
+            # merge guard ``cmd_tv`` uses so a non-Mapping ratings
+            # response never crashes the command.
+            payload = {**payload, "ratings": ratings}
+        else:
+            # Defensive: an unexpected shape on either side (e.g. an
+            # HTTP-error JSON object rather than the detail/ratings
+            # document) shouldn't crash the whole command. Log and
+            # continue with the detail payload as-is so the operator
+            # at least sees what the detail endpoint returned.
+            _logger.warning(
+                "seerr.movie: ratings payload was not a dict; "
+                "skipping merge"
+            )
+    # Top-level columns mirror the keys emitted by
+    # ``_summary_seerr_movie``; ``--human`` on a single-object
+    # payload uses ``_render_object`` which ignores columns, but
+    # pinning the literal here is what lets
+    # ``tests/unit/test_output.py::_columns_for`` assert the
+    # columns / summary alignment (REQ-18 AC1). Plain
+    # assignment (no ``: list[str]`` annotation) because the
+    # AST helper only recognises ``ast.Assign`` targets --
+    # matches every other ``columns`` literal in this module.
+    columns = [
+        "name",
+        "originalTitle",
+        "releaseDate",
+        "runtime",
+        "genres",
+        "tagline",
+    ]
+    return _emit(payload, args, columns=columns)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -467,6 +577,7 @@ _DISPATCH = {
     "available": cmd_available,
     "user": cmd_user,
     "tv": cmd_tv,
+    "movie": cmd_movie,
 }
 
 
@@ -502,10 +613,11 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         prog=SERVICE_NAME,
         description=(
             "Read-only CLI for Seer (the unified Overseerr + "
-            "Jellyseerr fork). Six commands expose the household "
-            "request queue, request summary counts, multi-source "
-            "search, what's already available in the library, the "
-            "current authenticated user, and per-show TV details "
+            "Jellyseerr fork). Seven commands expose the "
+            "household request queue, request summary counts, "
+            "multi-source search, what's already available in "
+            "the library, the current authenticated user, "
+            "per-show TV details, and per-movie details "
             "(optionally with Rotten Tomatoes ratings)."
         ),
     )
@@ -605,6 +717,42 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         ),
     )
     tv.add_argument(
+        "--language",
+        default=None,
+        metavar="LANG",
+        help=(
+            "ISO 639-1 language code forwarded as the "
+            "?language=<LANG> query parameter on both endpoints"
+        ),
+    )
+
+    movie = subparsers.add_parser(
+        "movie",
+        help=(
+            "fetch movie details by id, optionally with Rotten "
+            "Tomatoes ratings (GET /api/v1/movie/<id>?language=...; "
+            "--ratings adds /api/v1/movie/<id>/ratings)"
+        ),
+        parents=universal_parents(),
+        add_help=False,
+    )
+    movie.add_argument(
+        "id",
+        metavar="ID",
+        help=(
+            "TMDB movie id (e.g. 603 for The Matrix)"
+        ),
+    )
+    movie.add_argument(
+        "--ratings",
+        action="store_true",
+        help=(
+            "also fetch Rotten Tomatoes critic + audience scores "
+            "(GET /api/v1/movie/<id>/ratings) and merge them into "
+            "the default summary"
+        ),
+    )
+    movie.add_argument(
         "--language",
         default=None,
         metavar="LANG",

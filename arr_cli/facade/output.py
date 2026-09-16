@@ -974,6 +974,114 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
     }
 
 
+def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
+    """Render a Seerr ``movie <id>`` payload as the curated summary.
+
+    The detail endpoint ``GET /api/v1/movie/{movieId}`` returns a
+    single object with the movie's metadata (name, originalTitle,
+    releaseDate, ``runtime`` (raw minutes), ``genres[]``, tagline,
+    overview, cast, ...). The curated shape flattens the nested
+    ``genres`` array to a single comma-joined string so the
+    default ``--human`` rendering stays a readable block per key
+    (otherwise each cell would render as ``<N items>``). The raw
+    ``runtime`` integer (minutes) is reformatted to
+    ``"<X>h <Y>m"`` -- the spec'd display format which matters
+    because raw minutes is not human-readable.
+
+    When ``cmd_movie`` is invoked with ``--ratings``, the RT
+    critic and audience scores arrive under
+    ``payload["ratings"]`` and are surfaced as
+    ``ratings.criticsScore`` / ``ratings.audienceScore``. A bare
+    detail fetch (no ``--ratings``) leaves ``ratings`` as
+    ``None`` so the column is visible-but-empty in the default
+    output instead of being silently dropped.
+
+    Two input shapes are accepted (mirroring the
+    size-to-summary-renderer convention):
+
+    * A single ``Mapping`` (the CLI-layer payload after the
+      handler's optional ratings merge) -- the canonical shape
+      for ``cmd_movie``.
+    * A list containing a single ``Mapping`` (the test fixture
+      convention; every other size-to-summary candidate stores
+      its payload as ``[single_dict]`` so the human-renderer unit
+      tests can iterate ``payload[0]``). Empty list maps to
+      ``{}`` and ``None`` / scalar payloads map to ``{}`` so
+      neither crashes.
+    """
+
+    if isinstance(payload, list):
+        if not payload:
+            return {}
+        payload = payload[0]
+    if not isinstance(payload, Mapping):
+        return {}
+
+    def _join_names(items: Any) -> str | None:
+        """Flatten ``items`` to a ``", "-joined`` string of names.
+
+        Honours both ``[{"name": "Foo"}, ...]`` (the Seer detail
+        shape for ``genres``) and ``["Foo", ...]``. Returns
+        ``None`` when ``items`` is not a list or yields no string
+        names, so the renderer prints ``<null>`` instead of
+        ``", "`` for empty collections.
+        """
+        if not isinstance(items, list):
+            return None
+        names: list[str] = []
+        for item in items:
+            if isinstance(item, Mapping):
+                name = item.get("name")
+                if isinstance(name, str):
+                    names.append(name)
+            elif isinstance(item, str):
+                names.append(item)
+        return ", ".join(names) if names else None
+
+    def _format_runtime(minutes: Any) -> str | None:
+        """Format ``minutes`` as ``"<X>h <Y>m"``.
+
+        Honours the spec'd display format. Returns ``None`` when
+        ``minutes`` is missing or zero so the renderer prints
+        ``<null>`` instead of ``"0h 0m"`` (which would be a
+        misleading "the movie has zero runtime" cell).
+        """
+        if not isinstance(minutes, (int, float)) or isinstance(minutes, bool):
+            return None
+        if minutes <= 0:
+            return None
+        total = int(minutes)
+        hours = total // 60
+        mins = total % 60
+        return f"{hours}h {mins}m"
+
+    raw_genres = payload.get("genres")
+    raw_ratings = payload.get("ratings")
+    if isinstance(raw_ratings, Mapping):
+        ratings_obj: dict[str, Any] = {
+            "criticsScore": _safe_get(
+                raw_ratings, "criticsScore", default=None
+            ),
+            "audienceScore": _safe_get(
+                raw_ratings, "audienceScore", default=None
+            ),
+        }
+    else:
+        ratings_obj = None
+
+    return {
+        "name": _safe_get(payload, "name", default=None),
+        "originalTitle": _safe_get(
+            payload, "originalTitle", default=None
+        ),
+        "releaseDate": _safe_get(payload, "releaseDate", default=None),
+        "runtime": _format_runtime(payload.get("runtime")),
+        "genres": _join_names(raw_genres),
+        "tagline": _safe_get(payload, "tagline", default=None),
+        "ratings": ratings_obj,
+    }
+
+
 def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
     """Render a Maintainerr ``pending`` payload as the curated summary."""
     if not isinstance(payload, list):
@@ -1023,6 +1131,7 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("seerr", "search"): _summary_seerr_search,
     ("seerr", "available"): _summary_seerr_available,
     ("seerr", "tv"): _summary_seerr_tv,
+    ("seerr", "movie"): _summary_seerr_movie,
     ("maintainerr", "pending"): _summary_maintainerr_pending,
 }
 

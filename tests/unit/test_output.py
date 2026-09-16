@@ -1748,6 +1748,142 @@ class TestSummarySeerrTv(unittest.TestCase):
         )
 
 
+class TestSummarySeerrMovie(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "movie")]`` matches the spec."""
+
+    def test_movie_shape(self) -> None:
+        payload = {
+            "name": "The Matrix",
+            "originalTitle": "The Matrix",
+            "releaseDate": "1999-03-31",
+            "runtime": 136,
+            "genres": [
+                {"id": 28, "name": "Action"},
+                {"id": 878, "name": "Science Fiction"},
+            ],
+            "tagline": "Welcome to the Real World.",
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
+        # Raw runtime minutes ``136`` reformats as ``"2h 16m"``;
+        # the spec'd display format which matters because raw
+        # minutes is not human-readable.
+        self.assertEqual(
+            rendered,
+            {
+                "name": "The Matrix",
+                "originalTitle": "The Matrix",
+                "releaseDate": "1999-03-31",
+                "runtime": "2h 16m",
+                "genres": "Action, Science Fiction",
+                "tagline": "Welcome to the Real World.",
+                "ratings": None,
+            },
+        )
+
+    def test_movie_missing_genres_renders_none(self) -> None:
+        payload = {
+            "name": "The Matrix",
+            "originalTitle": "The Matrix",
+            "releaseDate": "1999-03-31",
+            "runtime": 136,
+            "tagline": "Welcome to the Real World.",
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
+        # Missing ``genres`` collapses to ``None`` (NOT a bare
+        # ``""`` string) so ``--human`` renders ``<null>``
+        # instead of an empty cell that masquerades as "the
+        # movie has no genres".
+        self.assertIsNone(rendered["genres"])
+
+    def test_movie_missing_runtime_renders_none(self) -> None:
+        payload = {
+            "name": "The Matrix",
+            "originalTitle": "The Matrix",
+            "releaseDate": "1999-03-31",
+            "genres": [{"name": "Action"}],
+            "tagline": "Welcome to the Real World.",
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
+        # Missing ``runtime`` collapses to ``None`` (NOT a
+        # ``"0h 0m"`` string) so ``--human`` renders
+        # ``<null>`` instead of a misleading "the movie has
+        # zero runtime" cell.
+        self.assertIsNone(rendered["runtime"])
+
+    def test_movie_zero_runtime_renders_none(self) -> None:
+        # Zero runtime is treated as missing so a placeholder
+        # ``runtime=0`` field doesn't masquerade as "the movie
+        # is zero minutes long".
+        payload = {
+            "name": "The Matrix",
+            "runtime": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
+        self.assertIsNone(rendered["runtime"])
+
+    def test_movie_ratings_merged_under_ratings_key(self) -> None:
+        payload = {
+            "name": "The Matrix",
+            "originalTitle": "The Matrix",
+            "releaseDate": "1999-03-31",
+            "runtime": 136,
+            "genres": [{"name": "Action"}],
+            "tagline": "Welcome to the Real World.",
+            "ratings": {"criticsScore": 83, "audienceScore": 85},
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
+        self.assertEqual(
+            rendered["ratings"],
+            {"criticsScore": 83, "audienceScore": 85},
+        )
+
+    def test_movie_runtime_format_from_minutes(self) -> None:
+        # The spec'd ``"<X>h <Y>m"`` format applies for any raw
+        # minutes integer: ``60`` -> ``"1h 0m"``, ``45`` ->
+        # ``"0h 45m"``, ``200`` -> ``"3h 20m"``. Pins the
+        # display-format contract so future drift between the
+        # spec'd format and a future refactor trips the unit
+        # suite immediately.
+        renderer = _SUMMARY_RENDERERS[("seerr", "movie")]
+        self.assertEqual(renderer({"runtime": 60})["runtime"], "1h 0m")
+        self.assertEqual(renderer({"runtime": 45})["runtime"], "0h 45m")
+        self.assertEqual(renderer({"runtime": 200})["runtime"], "3h 20m")
+
+    def test_movie_list_fixture_shape(self) -> None:
+        # Test-fixture shape: a list with one ``Mapping``
+        # element. The renderer extracts element 0 and
+        # renders the same curated shape as the single-mapping
+        # CLI-layer payload.
+        payload = [{
+            "name": "The Matrix",
+            "originalTitle": "The Matrix",
+            "releaseDate": "1999-03-31",
+            "runtime": 136,
+            "genres": [{"name": "Action"}],
+            "tagline": "Welcome to the Real World.",
+        }]
+        rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
+        self.assertEqual(rendered["name"], "The Matrix")
+        self.assertEqual(rendered["runtime"], "2h 16m")
+        self.assertIsNone(rendered["ratings"])
+
+    def test_non_mapping_payload_returns_empty_dict(self) -> None:
+        # A non-Mapping payload (e.g. ``None`` from an HTTP
+        # error that the transport layer swallowed) gracefully
+        # degrades to ``{}`` rather than crashing. ``emit()``
+        # then takes the verbatim pass-through branch on the
+        # empty dict.
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "movie")](None), {}
+        )
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "movie")]([]), {}
+        )
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "movie")](42), {}
+        )
+
+
 class TestSummaryMaintainerrPending(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("maintainerr", "pending")]`` matches the spec."""
 
@@ -2126,6 +2262,19 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 ],
                 "numberOfSeasons": 13,
                 "status": "Ended",
+            }
+        ],
+        ("seerr", "movie"): [
+            {
+                "name": "The Matrix",
+                "originalTitle": "The Matrix",
+                "releaseDate": "1999-03-31",
+                "runtime": 136,
+                "genres": [
+                    {"id": 28, "name": "Action"},
+                    {"id": 878, "name": "Science Fiction"},
+                ],
+                "tagline": "Welcome to the Real World.",
             }
         ],
         ("maintainerr", "pending"): [

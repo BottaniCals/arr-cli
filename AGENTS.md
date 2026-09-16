@@ -8,7 +8,7 @@ making changes; the rules below are non-negotiable.
 
 ## 1. Project overview
 
-`arr-cli` is a **read-only** Python CLI suite (5 executables, 29 commands
+`arr-cli` is a **read-only** Python CLI suite (5 executables, 30 commands
 total) that wraps a self-hosted media server stack:
 
 | Executable    | Service         | Auth header       |
@@ -63,7 +63,7 @@ arr_cli/              # Python package
   radarr.py           # per-service CLI (6 commands)
   sonarr.py           # per-service CLI (6 commands)
   maintainerr.py      # per-service CLI (3 commands, no auth by default)
-  seerr.py            # per-service CLI (6 commands)
+  seerr.py            # per-service CLI (7 commands)
 tests/
   unit/               # default pytest target; always runs
   integration/        # opt-in via `pytest --run-integration`; skipped by default

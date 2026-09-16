@@ -5,12 +5,12 @@ Jellyfin, Radarr, Sonarr, Maintainerr, and Seer. The package ships
 five thin executables (`jellyfin`, `radarr`, `sonarr`, `maintainerr`, `seerr`)
 backed by a single shared facade (`arr_cli.facade`) that owns configuration,
 HTTP transport, authentication, error mapping, and output formatting. Together
-they expose **28 read-only commands** (every call is an HTTP `GET`).
+they expose **30 read-only commands** (every call is an HTTP `GET`).
 
 The CLIs are intended for two uses:
 
 - shell pipelines that consume the verbatim JSON on stdout (pass `--verbose`
-  for the 15 size-to-summary candidate commands; the remaining 13 commands
+  for the 17 size-to-summary candidate commands; the remaining 13 commands
   emit verbatim by default),
 - ad-hoc terminal inspection with `--human` / `-h` to render the
   response as a readable table.
@@ -27,7 +27,7 @@ a single broken service cannot break the others.
 Every service URL, API key, and user id lives in a single
 gitignored config file (`~/.config/arr/arr.conf`); every command emits a
 per-command output on stdout (the default JSON output is a curated summary
-for the 15 size-to-summary candidate commands; pass `--verbose` for the
+for the 17 size-to-summary candidate commands; pass `--verbose` for the
 verbatim service payload) and a tabular readable view with `--human` / `-h`.
 There are no write endpoints in MVP: this package cannot mutate the media
 server state under any circumstance.
@@ -195,7 +195,7 @@ passed.
 > it requires confirming `/api/rules` against the operator's live
 > `/api/swagger`.
 
-### 4.5 Seer (`seerr` — 6 commands)
+### 4.5 Seer (`seerr` — 7 commands)
 
 | Command                   | HTTP | Path                                    | Notes                                                                            |
 | ------------------------- | :--: | --------------------------------------- | -------------------------------------------------------------------------------- |
@@ -205,6 +205,7 @@ passed.
 | `seerr available <query>` | GET  | `/api/v1/media?filter=available&take=1000` | Title-substring filter is applied client-side after the fetch.                  |
 | `seerr user`              | GET  | `/auth/me`                               | Auth self-check.                                                               |
 | `seerr tv <id>`           | GET  | `/api/v1/tv/<id>?language=<LANG>`       | Adds `…/ratings` on `--ratings`; both endpoints accept `?language=<LANG>`.       |
+| `seerr movie <id>`        | GET  | `/api/v1/movie/<id>?language=<LANG>`    | Adds `…/ratings` on `--ratings`; both endpoints accept `?language=<LANG>`. Structural twin of `seerr tv <id>`. |
 
 > **Upstream: Seer.** The `seerr` CLI targets
 > [Seer](https://github.com/seerr-team/seerr), the unified fork of
