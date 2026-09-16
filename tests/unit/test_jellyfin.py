@@ -417,7 +417,8 @@ class TestCmdRecent(unittest.TestCase):
 
 
 class TestCmdNextUp(unittest.TestCase):
-    """REQ-6 AC4: ``GET /Shows/NextUp`` with optional Limit / StartIndex / UserId."""
+    """REQ-6 AC4: ``GET /Shows/NextUp`` with optional Limit / StartIndex and
+    ``UserId`` always read from ``cfg.jellyfin.user_id`` (v12+ contract)."""
 
     def test_nextup_hits_shows_nextup(self) -> None:
         cfg = _service_config()
@@ -428,9 +429,37 @@ class TestCmdNextUp(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(positional[1], "/Shows/NextUp")
         # The universal ``--limit`` default is forwarded to the
-        # service as ``Limit=20``; ``start_index`` and ``user_id``
-        # are unset so the param dict contains only the limit.
-        self.assertEqual(kwargs["params"], {"Limit": 20})
+        # service as ``Limit=20``; ``UserId`` is read from config
+        # (``cfg.jellyfin.user_id == "jf-user-1"``) because the
+        # Jellyfin v12 /Shows/NextUp endpoint requires it.
+        self.assertEqual(
+            kwargs["params"], {"Limit": 20, "UserId": "jf-user-1"}
+        )
+
+    def test_nextup_uses_configured_user_id_by_default(self) -> None:
+        # With no ``--user-id`` on the command line the handler
+        # still sends ``UserId`` from config; this is the bug fix
+        # pinned as the new contract.
+        cfg = _service_config(user_id="configured-jellyfin-user")
+        args = _namespace(limit=20)
+        with _patched_get_payload([]) as mock_get:
+            cmd_nextup(args, cfg)
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(
+            kwargs["params"],
+            {"Limit": 20, "UserId": "configured-jellyfin-user"},
+        )
+
+    def test_nextup_missing_user_id_raises_config_error(self) -> None:
+        # Mirrors the three sibling handlers: when
+        # ``cfg.jellyfin.user_id`` is missing the handler raises
+        # ``ConfigError(exit_code=1)`` with the documented message.
+        cfg = _service_config(user_id=None)
+        args = _namespace(limit=20)
+        with self.assertRaises(ConfigError) as ctx:
+            cmd_nextup(args, cfg)
+        self.assertEqual(ctx.exception.exit_code, 1)
+        self.assertIn("user_id", ctx.exception.message)
 
     def test_nextup_forwards_limit(self) -> None:
         cfg = _service_config()
@@ -438,19 +467,22 @@ class TestCmdNextUp(unittest.TestCase):
         with _patched_get_payload([]) as mock_get:
             cmd_nextup(args, cfg)
         kwargs = mock_get.call_args.kwargs
-        self.assertEqual(kwargs["params"], {"Limit": 50})
+        self.assertEqual(
+            kwargs["params"], {"Limit": 50, "UserId": "jf-user-1"}
+        )
 
     def test_nextup_no_limit_param_when_limit_is_none(self) -> None:
         # When the parser defaults ``--limit`` to ``None`` (e.g. a
         # downstream caller bypasses the universal flag), the
         # ``Limit`` key is omitted from the params dict so the
-        # service falls back to its own default.
+        # service falls back to its own default; ``UserId`` is still
+        # forwarded from config.
         cfg = _service_config()
         args = _namespace(limit=None)
         with _patched_get_payload([]) as mock_get:
             cmd_nextup(args, cfg)
         kwargs = mock_get.call_args.kwargs
-        self.assertIsNone(kwargs["params"])
+        self.assertEqual(kwargs["params"], {"UserId": "jf-user-1"})
 
     def test_nextup_forwards_start_index(self) -> None:
         cfg = _service_config()
@@ -459,32 +491,19 @@ class TestCmdNextUp(unittest.TestCase):
             cmd_nextup(args, cfg)
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(
-            kwargs["params"], {"Limit": 20, "StartIndex": 10}
-        )
-
-    def test_nextup_forwards_user_id_override(self) -> None:
-        cfg = _service_config()
-        args = _namespace(
-            limit=20, start_index=None, user_id="alt-user-2"
-        )
-        with _patched_get_payload([]) as mock_get:
-            cmd_nextup(args, cfg)
-        kwargs = mock_get.call_args.kwargs
-        self.assertEqual(
-            kwargs["params"], {"Limit": 20, "UserId": "alt-user-2"}
+            kwargs["params"],
+            {"Limit": 20, "StartIndex": 10, "UserId": "jf-user-1"},
         )
 
     def test_nextup_combined_params(self) -> None:
         cfg = _service_config()
-        args = _namespace(
-            limit=5, start_index=2, user_id="alt-user"
-        )
+        args = _namespace(limit=5, start_index=2)
         with _patched_get_payload([]) as mock_get:
             cmd_nextup(args, cfg)
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(
             kwargs["params"],
-            {"Limit": 5, "StartIndex": 2, "UserId": "alt-user"},
+            {"Limit": 5, "StartIndex": 2, "UserId": "jf-user-1"},
         )
 
 
@@ -750,11 +769,16 @@ class TestBuildJellyfinParser(unittest.TestCase):
 
     def test_nextup_parses_with_flags(self) -> None:
         args = self.parser.parse_args(
-            ["nextup", "--start-index", "5", "--user-id", "alt"]
+            ["nextup", "--start-index", "5"]
         )
         self.assertEqual(args.command, "nextup")
         self.assertEqual(args.start_index, 5)
-        self.assertEqual(args.user_id, "alt")
+        # ``--user-id`` was dropped from the subparser; the handler
+        # reads ``UserId`` from config via ``_require_user_id``. The
+        # attribute is not registered on the namespace; accessing
+        # it via ``getattr(args, "user_id", None)`` (the handler's
+        # defensive style) yields ``None``.
+        self.assertIsNone(getattr(args, "user_id", None))
 
     def test_latest_parses(self) -> None:
         args = self.parser.parse_args(["latest"])
