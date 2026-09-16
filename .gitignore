@@ -53,3 +53,6 @@ arr.local.conf
 
 # --- Bot / smoke-test scratch directory ---
 .tmp/
+
+# ---  prose runtime artifacts ---
+.prose/
