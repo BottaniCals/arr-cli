@@ -706,6 +706,133 @@ class TestCmdSearch(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Test: paginated envelope unwrap for ``cmd_search`` (bug fix)
+# ---------------------------------------------------------------------------
+
+
+class TestCmdSearchPaginatedEnvelope(unittest.TestCase):
+    """Regression tests pinning the paginated ``/api/v1/search`` contract.
+
+    Seer returns ``/api/v1/search`` wrapped in a paginated envelope of
+    the shape ``{page, totalPages, totalResults, results: [...]}``. The
+    renderer's job is to unwrap ``results`` before summarising so the
+    default output is the result list, not an empty ``[]``.
+    """
+
+    PAGINATED_ENVELOPE: dict[str, Any] = {
+        "page": 1,
+        "totalPages": 92,
+        "totalResults": 1839,
+        "results": [
+            {
+                "title": "Doctor Who",
+                "mediaType": "tv",
+                "releaseDate": "2005-03-26",
+                "mediaInfo": {"tmdbId": 123},
+            },
+            {
+                "title": "Doctor Strange",
+                "mediaType": "movie",
+                "releaseDate": "2016-10-25",
+                "mediaInfo": {"tmdbId": 291351},
+            },
+        ],
+    }
+
+    def _make_args(self) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``search`` subparser defaults."""
+        return argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=False,
+            verbose=False,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="search",
+            query="doctor",
+        )
+
+    def test_cmd_search_envelope_default_unwraps_results(self) -> None:
+        """Default ``cmd_search`` emits summary rows when the payload is a paginated envelope."""
+        from arr_cli.seerr import cmd_search
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_search, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Doctor Who")
+        self.assertEqual(rendered[1]["title"], "Doctor Strange")
+        # ``mediaInfo.tmdbId`` is preserved as the nested mapping the
+        # docstring promises, resolved against the unwrapped envelope.
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 123)
+        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 291351)
+
+    def test_cmd_search_flat_list_default_unchanged(self) -> None:
+        """The flat-list code path keeps the pre-change behaviour intact."""
+        from arr_cli.seerr import cmd_search
+
+        args = self._make_args()
+        flat_payload = [
+            {
+                "title": "Doctor Who",
+                "mediaType": "tv",
+                "releaseDate": "2005-03-26",
+                "mediaInfo": {"tmdbId": 123},
+            }
+        ]
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=flat_payload,
+        ):
+            output = _capture_stdout(cmd_search, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["title"], "Doctor Who")
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 123)
+
+    def test_cmd_search_envelope_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        from arr_cli.seerr import cmd_search
+
+        args = self._make_args()
+        args.verbose = True
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_search, args, None)
+        # ``--verbose`` keeps the envelope shape intact; downstream consumers
+        # still see ``page``/``totalPages``/``totalResults``/``results`` as
+        # the service emitted them.
+        self.assertEqual(
+            json.loads(output), self.PAGINATED_ENVELOPE
+        )
+
+    def test_cmd_search_envelope_dict_with_no_results_returns_empty(self) -> None:
+        """A paginated envelope without ``results`` maps to ``[]`` rather than crashing."""
+        from arr_cli.seerr import cmd_search
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value={
+                "page": 1,
+                "totalPages": 0,
+                "totalResults": 0,
+            },
+        ):
+            output = _capture_stdout(cmd_search, args, None)
+        self.assertEqual(json.loads(output), [])
+
+
+# ---------------------------------------------------------------------------
 # Test: ``cmd_available`` targets Seer's ``/api/v1/media`` (bug fix)
 # ---------------------------------------------------------------------------
 
