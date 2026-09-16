@@ -2423,6 +2423,129 @@ class TestCmdTrending(unittest.TestCase):
             ),
         )
 
+    # ------------------------------------------------------------------ US-1 AC5
+    def test_cmd_trending_http_error_exits_four_with_structured_stderr(
+        self,
+    ) -> None:
+        """Non-2xx on ``/api/v1/discover/trending`` surfaces as exit ``4`` + structured stderr.
+
+        Regression pinning US-1 AC5: the HTTP error path on the
+        ``trending`` endpoint must mirror the sibling seerr command
+        contract — :class:`HttpError(exit_code=4)` raised by
+        :func:`transport.get`, surfaced by :func:`main_wrapper` as a
+        structured ``service=seerr op=/api/v1/discover/trending
+        status=<code> message=...`` line on stderr so the
+        pipe-clean stdout contract (AGENTS.md §1) is preserved.
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                status=500,
+                body="Internal Server Error",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "trending"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(exit_code, 4)
+        # No payload on stdout — the structured error line goes to
+        # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        # preserved.
+        self.assertEqual(stdout, "")
+        # Structured line: service=seerr op=/api/v1/discover/trending status=500 message=...
+        self.assertTrue(
+            stderr.startswith(
+                "service=seerr op=/api/v1/discover/trending "
+                "status=500 message="
+            ),
+            msg=f"unexpected stderr shape: {stderr!r}",
+        )
+        self.assertIn("HTTP 500 for /api/v1/discover/trending", stderr)
+
+    # ------------------------------------------------------------------ US-1 AC4
+    def test_cmd_trending_limit_caps_human_rows(self) -> None:
+        """``--limit N`` caps the ``--human`` rendering to ``N`` rows + footer line.
+
+        Regression pinning US-1 AC4: the post-fetch cap on
+        ``seerr trending --human --limit N`` must mirror the sibling
+        list-command contract — the renderer slices the curated
+        summary to ``N`` rows and appends the pagination footer
+        ``"… (M more item[s]; use --limit to see more)"`` so the
+        operator is warned the displayed list is truncated.
+        """
+        from arr_cli.seerr import cmd_trending
+
+        # Build a 30-item envelope so ``--limit 10`` truncates to 10
+        # rows and the footer surfaces a non-zero hidden-count.
+        items: list[dict[str, Any]] = [
+            {
+                "title": f"Title {i:02d}",
+                "mediaType": "movie" if i % 2 == 0 else "tv",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 1000 + i},
+            }
+            for i in range(30)
+        ]
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 30,
+            "results": items,
+        }
+        args = self._make_args(human=True, limit=10)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=envelope,
+        ):
+            output = _capture_stdout(cmd_trending, args, None)
+        lines = output.splitlines()
+        # Header + separator + N data rows + (optional) truncation
+        # footer line. Counting data rows directly: skip the header
+        # and separator rows plus any pagination/footer line.
+        data_lines = [
+            line for line in lines[2:]
+            if line.strip()
+            and not line.startswith("\u2026")
+            and not line.startswith("…")
+        ]
+        self.assertEqual(
+            len(data_lines), 10,
+            msg=(
+                "--limit 10 must cap --human rows to 10; "
+                f"got {len(data_lines)} data lines:\n{output!r}"
+            ),
+        )
+        # The truncation footer line tells the operator the list was
+        # truncated and how many rows were hidden.
+        self.assertTrue(
+            any(
+                "more item" in line and "--limit" in line
+                for line in lines
+            ),
+            msg=(
+                "truncation footer missing — --limit was not "
+                f"honoured; output:\n{output!r}"
+            ),
+        )
+        # The footer must report 20 hidden items (30 - 10).
+        self.assertIn(
+            "20 more items",
+            output,
+            msg=(
+                "truncation footer must report the 20 hidden items; "
+                f"got:\n{output!r}"
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
