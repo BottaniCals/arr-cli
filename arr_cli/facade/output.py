@@ -812,7 +812,15 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
-    """Render a Seerr ``search`` payload as the curated summary."""
+    """Render a Seerr ``search`` payload as the curated summary.
+
+    ``GET /api/v1/search`` returns a paginated envelope of the shape
+    ``{page, totalPages, totalResults, results: [...]}``; iterate
+    ``results`` so the default summary is non-empty when the envelope
+    is well-formed. A bare list is unchanged behaviour.
+    """
+    if isinstance(payload, Mapping):
+        payload = payload.get("results")
     if not isinstance(payload, list):
         return []
     summaries: list[dict[str, Any]] = []
