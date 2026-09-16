@@ -229,19 +229,19 @@ class TestVerboseFlagCmdRequests(unittest.TestCase):
 class TestCmdUserHttpErrors(unittest.TestCase):
     """Regression tests pinning the exit-code contract for ``seerr user``.
 
-    The seerr ``user`` command is a single ``GET /auth/me`` probe.
+    The seerr ``user`` command is a single ``GET /api/v1/auth/me`` probe.
     :func:`arr_cli.facade.transport.get` raises
     :class:`arr_cli.facade.errors.HttpError` (exit ``4``) on any
     non-2xx response, which :func:`arr_cli.facade.cli_common.main_wrapper`
-    surfaces as a structured ``service=seerr op=/auth/me status=<code>
+    surfaces as a structured ``service=seerr op=/api/v1/auth/me status=<code>
     message=...`` stderr line. A 2xx response returns the user JSON
     on stdout and exit ``0``.
 
     These tests exercise the documented end-to-end contract:
 
-    * HTTP 200 on ``/auth/me`` returns the user object on stdout and
+    * HTTP 200 on ``/api/v1/auth/me`` returns the user object on stdout and
       exit ``0``.
-    * Any non-2xx response on ``/auth/me`` surfaces as exit ``4`` with
+    * Any non-2xx response on ``/api/v1/auth/me`` surfaces as exit ``4`` with
       a structured stderr line naming the path.
 
     Tests are hermetic via :mod:`responses` (AGENTS.md §7.5).
@@ -259,7 +259,7 @@ class TestCmdUserHttpErrors(unittest.TestCase):
             pass
 
     def test_cmd_user_success_returns_user_json_with_exit_zero(self) -> None:
-        # Regression: a 2xx response on ``/auth/me`` returns the user
+        # Regression: a 2xx response on ``/api/v1/auth/me`` returns the user
         # object on stdout and the process exits ``0``. Pins the
         # bug-report's "Expected Behavior" -- ``echo $?`` should be
         # ``0`` after the CLI prints the authenticated user JSON.
@@ -275,7 +275,7 @@ class TestCmdUserHttpErrors(unittest.TestCase):
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
-                "https://seerr.example/auth/me",
+                "https://seerr.example/api/v1/auth/me",
                 json=user_payload,
                 status=200,
             )
@@ -299,17 +299,16 @@ class TestCmdUserHttpErrors(unittest.TestCase):
         self.assertEqual(stderr, "")
 
     def test_cmd_user_non_2xx_exits_four_with_structured_stderr(self) -> None:
-        # Regression: any non-2xx response on ``/auth/me`` surfaces as
+        # Regression: any non-2xx response on ``/api/v1/auth/me`` surfaces as
         # exit ``4`` with a structured stderr line that names the path
         # (mirrors the bug-report's actual ``seerr user`` output
-        # shape, but with the new contract: ``op=/auth/me`` instead of
-        # ``op=/api/v1/user/me``).
+        # shape, with the contract: ``op=/api/v1/auth/me``).
         import arr_cli.seerr as seerr
 
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
-                "https://seerr.example/auth/me",
+                "https://seerr.example/api/v1/auth/me",
                 status=503,
                 body="Service Unavailable",
             )
@@ -328,14 +327,14 @@ class TestCmdUserHttpErrors(unittest.TestCase):
         # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
         # preserved.
         self.assertEqual(stdout, "")
-        # Structured line: service=seerr op=/auth/me status=503 message=...
+        # Structured line: service=seerr op=/api/v1/auth/me status=503 message=...
         self.assertTrue(
             stderr.startswith(
-                "service=seerr op=/auth/me status=503 message="
+                "service=seerr op=/api/v1/auth/me status=503 message="
             ),
             msg=f"unexpected stderr shape: {stderr!r}",
         )
-        self.assertIn("HTTP 503 for /auth/me", stderr)
+        self.assertIn("HTTP 503 for /api/v1/auth/me", stderr)
 
 
 # ---------------------------------------------------------------------------

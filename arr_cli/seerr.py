@@ -11,11 +11,12 @@ Seer instance:
 * ``search <query>``      -- ``GET /api/v1/search?query=...``       (REQ-10 AC3)
 * ``available <query>``   -- ``GET /api/v1/media?filter=available&take=1000`` (REQ-10 AC4)
 * ``user``                -- auth self-check (REQ-10 AC6); single
-                             ``GET /auth/me`` probe (the historical
-                             two-step ``/api/v1/user/me`` -> ``/auth/me``
-                             probe was removed when Seer's live
-                             OpenAPI spec confirmed only ``/auth/me``
-                             is exposed -- AGENTS.md §1 "Seer note").
+                             ``GET /api/v1/auth/me`` probe (the
+                             OpenAPI spec lists ``/auth/me`` relative
+                             to its ``/api/v1`` base, so the full
+                             path is ``/api/v1/auth/me`` -- AGENTS.md
+                             §1 "Seer note"; the bare ``/auth/me``
+                             resolves to the Next.js frontend SPA).
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -45,16 +46,19 @@ error mapping.
 Seerr-specific behaviour (REQ-10 AC6, AC7):
 
 * The ``user`` command performs a single auth probe against
-  ``GET /auth/me`` (REQ-10 AC6). Seer dropped ``/api/v1/user/me``
-  in favour of ``/auth/me`` only; the previous two-step
+  ``GET /api/v1/auth/me`` (REQ-10 AC6). The OpenAPI spec is
+  mounted at ``/api-docs`` with ``url: {server}/api/v1``, so the
+  spec's ``/auth/me`` is relative to that prefix and the full URL
+  is ``/api/v1/auth/me``. Seer dropped the historical
+  ``/api/v1/user/me`` primary path; the previous two-step
   ``/api/v1/user/me`` -> ``/auth/me`` fallback probe (with the
   narrow ``status == 404`` trigger) was removed because the
   OpenAPI validator's response for an unknown path is ``400``
   rather than ``404``, which masked the path divergence instead
-  of resolving it. The single ``/auth/me`` probe raises
+  of resolving it. The single ``/api/v1/auth/me`` probe raises
   :class:`HttpError(exit_code=4)` on any non-2xx response, which
   ``main_wrapper`` surfaces as a structured
-  ``service=seerr op=/auth/me status=...`` stderr line.
+  ``service=seerr op=/api/v1/auth/me status=...`` stderr line.
 
 * ``create-request`` (``POST /api/v1/request``) is **NOT** in MVP and
   MUST NOT appear in ``--help`` (REQ-10 AC7). The dispatch table
@@ -96,10 +100,12 @@ SERVICE_NAME = "seerr"
 
 
 #: Path for the auth self-check per REQ-10 AC6.
-#: ``GET /auth/me`` -- the canonical path on Seer (the unified
-#: Overseerr + Jellyseerr fork); the historical ``/api/v1/user/me``
-#: primary path is no longer exposed by Seer.
-USER_ME_PATH = "/auth/me"
+#: ``GET /api/v1/auth/me`` -- the canonical path on Seer (the unified
+#: Overseerr + Jellyseerr fork); the bare ``/auth/me`` path resolves
+#: to the Next.js frontend SPA, not the API. The OpenAPI spec is
+#: mounted at ``/api-docs`` with ``url: {server}/api/v1``, so the
+#: spec's ``/auth/me`` is relative to that prefix.
+USER_ME_PATH = "/api/v1/auth/me"
 
 
 # Module-level logger so the documented DEBUG probe records
@@ -168,22 +174,27 @@ def _get(
 
 
 def cmd_user(args: argparse.Namespace, cfg: ServiceConfig) -> int:
-    """Seerr ``user`` -- auth self-check via ``GET /auth/me`` (REQ-10 AC6).
+    """Seerr ``user`` -- auth self-check via ``GET /api/v1/auth/me`` (REQ-10 AC6).
 
     Seer (the unified Overseerr + Jellyseerr fork) exposes the
     canonical auth-self-check endpoint at :data:`USER_ME_PATH`
-    (``/auth/me``). The historical ``/api/v1/user/me`` primary path
-    was removed from Seer's live OpenAPI spec; the previous two-step
-    probe that fell back to ``/auth/me`` on a 404 from the primary
-    was therefore collapsed to a single ``/auth/me`` call so the
-    operator gets the authenticated user object on stdout and exit
-    ``0`` instead of an opaque ``400`` (OpenAPI validator's "path
-    unknown") response that bubbled up as exit ``4``.
+    (``/api/v1/auth/me``). The OpenAPI spec is mounted at
+    ``/api-docs`` with ``url: {server}/api/v1``, so the spec's
+    ``/auth/me`` is relative to that prefix; the bare ``/auth/me``
+    resolves to the Next.js frontend SPA. The historical
+    ``/api/v1/user/me`` primary path was removed from Seer's live
+    OpenAPI spec; the previous two-step probe that fell back to
+    ``/auth/me`` on a 404 from the primary was therefore collapsed
+    to a single ``/api/v1/auth/me`` call so the operator gets the
+    authenticated user object on stdout and exit ``0`` instead of an
+    opaque ``400`` (OpenAPI validator's "path unknown") response
+    that bubbled up as exit ``4``.
 
     Non-2xx responses raise :class:`HttpError(exit_code=4)` via
     :func:`transport.get`, which :func:`main_wrapper` surfaces as a
-    structured ``service=seerr op=/auth/me status=<code>`` stderr
-    line; the operator's diagnostic tools keep working unchanged.
+    structured ``service=seerr op=/api/v1/auth/me status=<code>``
+    stderr line; the operator's diagnostic tools keep working
+    unchanged.
 
     Authentication is handled transparently by the transport layer
     (``X-Api-Key`` header per REQ-2 AC3); this handler does not
@@ -464,7 +475,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         "user",
         help=(
             "fetch the current authenticated user "
-            "(auth self-check; GET /auth/me)"
+            "(auth self-check; GET /api/v1/auth/me)"
         ),
         parents=universal_parents(),
         add_help=False,
