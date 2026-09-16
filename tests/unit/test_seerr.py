@@ -1499,5 +1499,377 @@ class TestCmdTvHttpPath(unittest.TestCase):
             self.assertEqual(len(rsps.calls), 1)
 
 
+# ---------------------------------------------------------------------------
+# Test: ``cmd_movie`` -- per-movie details + optional Rotten Tomatoes ratings
+# ---------------------------------------------------------------------------
+
+
+class TestCmdMovie(unittest.TestCase):
+    """Regression tests pinning the endpoint, params, and summary shape for ``cmd_movie``.
+
+    Seer's per-movie detail endpoint is
+    ``GET /api/v1/movie/{movieId}?language=...``.
+    ``--ratings`` adds
+    ``GET /api/v1/movie/{movieId}/ratings?language=...`` and merges
+    the RT critic + audience scores into the default summary under
+    ``payload["ratings"]``. The Matrix payload (id=603) is ~110KB on
+    a live Seer instance and includes ``genres[]``; the renderer
+    flattens the ``genres`` array to a comma-joined string and
+    formats the raw ``runtime`` integer (minutes) as
+    ``"<X>h <Y>m"`` so the default ``--human`` rendering stays
+    readable instead of dumping 110KB of JSON or surfacing raw
+    minutes that operators cannot quickly parse.
+
+    Structural twin of :class:`TestCmdTv` so future drift between
+    the two commands fails the unit suite immediately.
+    """
+
+    DETAIL_PAYLOAD: dict[str, Any] = {
+        "id": 603,
+        "name": "The Matrix",
+        "originalTitle": "The Matrix",
+        "releaseDate": "1999-03-31",
+        "runtime": 136,
+        "genres": [{"id": 28, "name": "Action"}],
+        "tagline": "Welcome to the Real World.",
+    }
+
+    RATINGS_PAYLOAD: dict[str, Any] = {
+        "criticsScore": 83,
+        "audienceScore": 85,
+    }
+
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``movie`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "movie",
+            "id": "603",
+            "ratings": False,
+            "language": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def test_cmd_movie_default_summary_shape(self) -> None:
+        """Default ``cmd_movie`` emits the curated summary shape (no ratings fetch)."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ) as mock_get:
+            output = _capture_stdout(cmd_movie, args, None)
+        # Single GET -- the --ratings fetch MUST NOT happen on the
+        # default path so callers who don't ask for RT data don't pay
+        # the extra round trip.
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        rendered = json.loads(output)
+        self.assertEqual(rendered["name"], "The Matrix")
+        self.assertEqual(rendered["originalTitle"], "The Matrix")
+        self.assertEqual(rendered["releaseDate"], "1999-03-31")
+        # Raw runtime minutes (136) is reformatted as ``"<X>h <Y>m"``
+        # (``2h 16m``); the spec'd display format which matters because
+        # raw minutes is not human-readable.
+        self.assertEqual(rendered["runtime"], "2h 16m")
+        self.assertEqual(rendered["genres"], "Action")
+        self.assertEqual(rendered["tagline"], "Welcome to the Real World.")
+        # Ratings absent on the no-flag path so the operator sees a
+        # visible-but-empty ``"ratings": null`` cell rather than a
+        # misleading ``"<null>"`` placeholder.
+        self.assertIsNone(rendered["ratings"])
+
+    def test_cmd_movie_genres_flattened_to_string(self) -> None:
+        """Multi-entry ``genres`` array flattens to a comma-joined string."""
+        from arr_cli.seerr import cmd_movie
+
+        payload = {
+            **self.DETAIL_PAYLOAD,
+            "genres": [
+                {"id": 28, "name": "Action"},
+                {"id": 12, "name": "Adventure"},
+                {"id": 878, "name": "Science Fiction"},
+            ],
+        }
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_movie, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(
+            rendered["genres"],
+            "Action, Adventure, Science Fiction",
+        )
+
+    def test_cmd_movie_ratings_flag_merges_second_endpoint(self) -> None:
+        """``--ratings`` triggers a second GET and merges RT scores under ``ratings``."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args(ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            output = _capture_stdout(cmd_movie, args, None)
+        # Two calls: /api/v1/movie/<id> then /api/v1/movie/<id>/ratings.
+        self.assertEqual(len(mock_get.call_args_list), 2)
+        rendered = json.loads(output)
+        # Top-level fields still come from the detail payload ...
+        self.assertEqual(rendered["name"], "The Matrix")
+        # ... and the RT scores arrive nested under ``ratings``.
+        self.assertIsNotNone(rendered["ratings"])
+        self.assertEqual(rendered["ratings"]["criticsScore"], 83)
+        self.assertEqual(rendered["ratings"]["audienceScore"], 85)
+
+    def test_cmd_movie_verbose_emits_verbatim_payload(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the verbatim payload."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args(verbose=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ):
+            output = _capture_stdout(cmd_movie, args, None)
+        self.assertEqual(json.loads(output), self.DETAIL_PAYLOAD)
+
+    def test_cmd_movie_language_forwarded_on_both_calls(self) -> None:
+        """``--language en`` is forwarded as ``?language=en`` on both endpoints."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args(language="en", ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            _capture_stdout(cmd_movie, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 2)
+        for call in mock_get.call_args_list:
+            self.assertEqual(call.kwargs.get("params"), {"language": "en"})
+
+    def test_cmd_movie_no_language_omits_language_param(self) -> None:
+        """Without ``--language``, no ``language`` key rides on the query string."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ) as mock_get:
+            _capture_stdout(cmd_movie, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        # ``params`` is forwarded as the documented kwarg shape;
+        # ``None`` is the absence-of-language signal so we don't
+        # pollute the URL with an empty ``?language=``.
+        self.assertIsNone(mock_get.call_args_list[0].kwargs.get("params"))
+
+    def test_cmd_movie_hits_seerr_movie_endpoint(self) -> None:
+        """``cmd_movie`` hits ``/api/v1/movie/<id>`` exactly (no legacy shape)."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ) as mock_get:
+            _capture_stdout(cmd_movie, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        call = mock_get.call_args_list[0]
+        args_, _ = call
+        # ``transport.get`` is invoked as
+        # ``transport.get(SERVICE_NAME, path, ...)``; ``path`` is the
+        # second positional argument. Inspect both positional and
+        # keyword forms for forward-compat with future signature
+        # changes.
+        if len(args_) >= 2:
+            path: str | None = args_[1]
+        else:
+            path = call.kwargs.get("path")
+        self.assertEqual(
+            path, "/api/v1/movie/603",
+            msg=f"cmd_movie targeted unexpected path: {path!r}",
+        )
+
+    def test_cmd_movie_ratings_call_targets_ratings_subpath(self) -> None:
+        """``--ratings`` issues a second GET against ``/api/v1/movie/<id>/ratings``."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args(ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            _capture_stdout(cmd_movie, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 2)
+        # First call: detail; second: ratings sub-resource.
+        detail_call, ratings_call = mock_get.call_args_list
+        detail_args, _ = detail_call
+        ratings_args, _ = ratings_call
+        detail_path: str | None = (
+            detail_args[1] if len(detail_args) >= 2 else None
+        )
+        ratings_path: str | None = (
+            ratings_args[1] if len(ratings_args) >= 2 else None
+        )
+        self.assertEqual(detail_path, "/api/v1/movie/603")
+        self.assertEqual(ratings_path, "/api/v1/movie/603/ratings")
+
+    def test_cmd_movie_does_not_target_legacy_overseerr_paths(self) -> None:
+        """Defensive guard against copy-paste back to Overseerr-shaped paths.
+
+        Defends against a future regression that swings back to a
+        legacy Overseerr shape (e.g. ``/api/v1/movie/<id>`` with a
+        ``/ratings/v2`` subresource, or ``/api/v1/movies/...``
+        plural typos). Caught at the unit layer in milliseconds
+        rather than at the operator's instance as ``HTTP 404``.
+        """
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args(ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            _capture_stdout(cmd_movie, args, None)
+        forbidden_substrings = ("/multi", "/v2", "/v3", "/movies/")
+        for call in mock_get.call_args_list:
+            args_, _ = call
+            path = args_[1] if len(args_) >= 2 else call.kwargs.get("path")
+            self.assertIsNotNone(path)
+            for forbidden in forbidden_substrings:
+                self.assertNotIn(
+                    forbidden, path,
+                    msg=(
+                        f"cmd_movie path must not contain {forbidden!r} "
+                        f"(legacy Overseerr shape): got {path!r}"
+                    ),
+                )
+
+
+# ---------------------------------------------------------------------------
+# Test: ``cmd_movie`` HTTP path-pinning via the live ``seerr main`` entry point
+# ---------------------------------------------------------------------------
+
+
+class TestCmdMovieHttpPath(unittest.TestCase):
+    """End-to-end path pin via the real ``seerr main`` entry point.
+
+    Mirrors :class:`TestCmdTvHttpPath`: mock the actual HTTP layer
+    with :mod:`responses`, invoke ``seerr main`` with a real config,
+    and confirm the registered URL matchers fired. Any future
+    regression to a wrong path or query string leaves the mock
+    unmatched and surfaces as a ``ConnectionError`` exit code
+    rather than a silent 404.
+    """
+
+    DETAIL_PAYLOAD: dict[str, Any] = {
+        "id": 603,
+        "name": "The Matrix",
+        "originalTitle": "The Matrix",
+        "releaseDate": "1999-03-31",
+        "runtime": 136,
+        "genres": [{"id": 28, "name": "Action"}],
+        "tagline": "Welcome to the Real World.",
+    }
+
+    RATINGS_PAYLOAD: dict[str, Any] = {
+        "criticsScore": 83,
+        "audienceScore": 85,
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def test_cmd_movie_hits_api_v1_movie_endpoint(self) -> None:
+        """``seerr movie 603`` hits ``/api/v1/movie/603`` with no required params."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/movie/603",
+                json=self.DETAIL_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "movie", "603"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_cmd_movie_with_ratings_hits_both_endpoints(self) -> None:
+        """``seerr movie 603 --ratings`` hits the detail endpoint AND the ratings sub-resource."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/movie/603",
+                json=self.DETAIL_PAYLOAD,
+                status=200,
+            )
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/movie/603/ratings",
+                json=self.RATINGS_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "movie", "603", "--ratings",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            # Both registered mocks fired, so both endpoints were
+            # targeted with the documented path shapes. Any other path
+            # would have left a mock unmatched.
+            self.assertEqual(len(rsps.calls), 2)
+
+    def test_cmd_movie_language_forwards_as_query_param(self) -> None:
+        """``--language en`` rides the wire as ``?language=en`` on the detail endpoint."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/movie/603",
+                json=self.DETAIL_PAYLOAD,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"language": "en"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "movie", "603", "--language", "en",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
