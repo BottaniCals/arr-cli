@@ -3,7 +3,7 @@
 This module is the Seer entry point for the ``arr-cli`` MVP.
 Seer is the unified fork of Overseerr and Jellyseerr; the CLI
 talks to whatever Seer instance the operator points it at via
-``arr.conf``. It exposes ten read-only commands against a live
+``arr.conf``. It exposes twelve read-only commands against a live
 Seer instance:
 
 * ``requests``                       -- ``GET /api/v1/request``                 (REQ-10 AC1)
@@ -62,6 +62,33 @@ Seer instance:
                                         encoded in the path so no positional
                                         ``MEDIA_TYPE`` is accepted. Optional
                                         filters: ``--page`` and ``--language``.
+* ``discover-movies``                  -- ``GET /api/v1/discover/movies?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>``;
+                                        filterable movie browse against the
+                                        general discover endpoint. Shares the
+                                        paginated ``{page, results,
+                                        totalPages, totalResults}`` envelope
+                                        shape with ``upcoming-movies`` /
+                                        ``trending`` so the renderer mirrors
+                                        :func:`_summary_seerr_upcoming_movies`
+                                        exactly. Filters: ``--genre <int>``
+                                        (TMDB genre id), ``--sort <sortBy>``
+                                        (default ``popularity.desc``),
+                                        ``--language <LANG>`` (default
+                                        ``en-US``), plus the universal
+                                        ``--page`` / ``--limit``. The
+                                        upstream ``limit`` query parameter is
+                                        intentionally NOT forwarded; the
+                                        discover endpoints page instead, and
+                                        the universal ``--limit`` caps
+                                        client-side row output only.
+* ``discover-tv``                      -- ``GET /api/v1/discover/tv?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>``;
+                                        filterable TV browse against the
+                                        general discover endpoint. Same
+                                        envelope, renderer, and filter set as
+                                        ``discover-movies``. Structural twin
+                                        of ``discover-movies`` so future drift
+                                        between the two discover commands
+                                        fails the unit suite immediately.
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -138,12 +165,16 @@ __all__ = [
     "cmd_trending",
     "cmd_upcoming_movies",
     "cmd_upcoming_tv",
+    "cmd_discover_movies",
+    "cmd_discover_tv",
     # Path constants exposed so tests can assert against the exact
     # strings for each endpoint.
     "USER_ME_PATH",
     "TRENDING_PATH",
     "UPCOMING_MOVIES_PATH",
     "UPCOMING_TV_PATH",
+    "DISCOVER_MOVIES_PATH",
+    "DISCOVER_TV_PATH",
 ]
 
 
@@ -190,6 +221,29 @@ UPCOMING_MOVIES_PATH = "/api/v1/discover/movies/upcoming"
 #: exposed. Returns the same ``{page, results, totalPages,
 #: totalResults}`` envelope as :data:`TRENDING_PATH`.
 UPCOMING_TV_PATH = "/api/v1/discover/tv/upcoming"
+
+
+#: Path for the general movies discover endpoint.
+#: ``GET /api/v1/discover/movies`` -- the canonical Seer discover
+#: endpoint for browsing movies by genre / sort order / language.
+#: Accepts ``genre`` (TMDB genre id), ``sortBy`` (default
+#: ``popularity.desc``), ``language`` (``ISO 639-1``, default
+#: ``en-US``), and ``page`` query parameters. Returns the same
+#: ``{page, results, totalPages, totalResults}`` envelope as
+#: :data:`UPCOMING_MOVIES_PATH`. The ``limit`` query parameter is
+#: intentionally NOT forwarded to the upstream endpoint -- the
+#: discover endpoints page instead, and the universal ``--limit``
+#: flag caps client-side row output only.
+DISCOVER_MOVIES_PATH = "/api/v1/discover/movies"
+
+
+#: Path for the general TV discover endpoint.
+#: ``GET /api/v1/discover/tv`` -- the canonical Seer discover
+#: endpoint for browsing TV series by genre / sort order / language.
+#: Accepts the same ``genre`` / ``sortBy`` / ``language`` / ``page``
+#: query parameters as :data:`DISCOVER_MOVIES_PATH`. Returns the same
+#: ``{page, results, totalPages, totalResults}`` envelope.
+DISCOVER_TV_PATH = "/api/v1/discover/tv"
 
 
 # Module-level logger so the documented DEBUG probe records
@@ -805,6 +859,158 @@ def cmd_upcoming_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+def cmd_discover_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+    """Seerr ``discover-movies`` -- filterable movie browse against the general discover endpoint.
+
+    ``GET /api/v1/discover/movies`` returns the paginated envelope
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_upcoming_movies` consumes -- so the renderer is
+    a near-verbatim copy of :func:`_summary_seerr_upcoming_movies`.
+    Each item carries at minimum ``title``, ``mediaType``,
+    ``releaseDate`` and ``mediaInfo.tmdbId`` (same projection as the
+    ``upcoming-movies`` / ``trending`` / ``search`` commands).
+
+    Four optional filters ride on the query string:
+
+    * ``genre`` (TMDB genre id) -- only forwarded when ``--genre`` is
+      set; ``int`` type so an unparseable value exits ``1`` at parse
+      time before any HTTP request is issued.
+    * ``sortBy`` -- always forwarded; defaults to ``popularity.desc``
+      (the upstream default the operator wants, so no
+      ``omit-when-default`` rule for this flag).
+    * ``language`` (``ISO 639-1``) -- only forwarded when the
+      operator overrides the default ``en-US``; otherwise the default
+      rides the wire.
+    * ``page`` -- only forwarded when ``--page`` is set; no empty
+      ``?page=`` rides the wire.
+
+    The upstream ``limit`` query parameter is intentionally NOT
+    forwarded -- the discover endpoints page instead, and the
+    universal ``--limit`` caps client-side row output only.
+
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces as a
+    structured ``service=seerr op=discover-movies status=<code>``
+    stderr line; the operator's diagnostic tools keep working
+    unchanged.
+
+    Authentication is handled transparently by the transport layer
+    (``X-Api-Key`` header per REQ-2 AC3); this handler does not inspect
+    or echo the credential.
+    """
+    params: dict[str, Any] = {}
+    # ``sortBy`` defaults to ``popularity.desc`` because that is the
+    # documented default value the operator wants; we forward it
+    # unconditionally rather than gating on an
+    # ``omit-when-default`` rule (US-3 AC6: the documented default
+    # IS the value the operator wants).
+    params["sortBy"] = getattr(args, "sort", None) or "popularity.desc"
+    genre = getattr(args, "genre", None)
+    if genre is not None:
+        params["genre"] = genre
+    # ``--language`` defaults to ``en-US`` (the documented default);
+    # forward unconditionally for the same reason ``sortBy`` is
+    # unconditional. Operators who want a different locale pass
+    # ``--language`` explicitly.
+    params["language"] = (
+        getattr(args, "language", None) or "en-US"
+    )
+    page = getattr(args, "page", None)
+    if page is not None:
+        params["page"] = page
+    payload = _get(
+        DISCOVER_MOVIES_PATH,
+        args,
+        cfg,
+        params=params,
+        op="discover-movies",
+    )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_discover_movies``: nested ``mediaInfo.tmdbId``
+    # is resolved via dot-path traversal in ``_row_from_mapping``.
+    # Byte-identical literal to ``cmd_upcoming_movies`` /
+    # ``cmd_trending`` because the per-row projection is the same
+    # (same envelope, same item shape).
+    columns = [
+        "title",
+        "mediaType",
+        "releaseDate",
+        "mediaInfo.tmdbId",
+    ]
+    return _emit(payload, args, columns=columns)
+
+
+def cmd_discover_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+    """Seerr ``discover-tv`` -- filterable TV browse against the general discover endpoint.
+
+    ``GET /api/v1/discover/tv`` returns the paginated envelope
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_discover_movies` / :func:`cmd_upcoming_tv`
+    consume -- so the renderer is a near-verbatim copy of
+    :func:`_summary_seerr_discover_tv``. The media type is encoded in
+    the path so no positional ``MEDIA_TYPE`` is accepted (matches the
+    documented "keep it simple" surface for this endpoint).
+
+    Four optional filters ride on the query string -- same shape and
+    defaults as :func:`cmd_discover_movies`:
+
+    * ``genre`` (TMDB genre id) -- only forwarded when ``--genre`` is
+      set; ``int`` type so an unparseable value exits ``1`` at parse
+      time before any HTTP request is issued.
+    * ``sortBy`` -- always forwarded; defaults to ``popularity.desc``.
+    * ``language`` (``ISO 639-1``) -- always forwarded; defaults to
+      ``en-US``.
+    * ``page`` -- only forwarded when ``--page`` is set.
+
+    The upstream ``limit`` query parameter is intentionally NOT
+    forwarded -- the discover endpoints page instead, and the
+    universal ``--limit`` caps client-side row output only.
+
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces as a
+    structured ``service=seerr op=discover-tv status=<code>`` stderr
+    line; the operator's diagnostic tools keep working unchanged.
+
+    Authentication is handled transparently by the transport layer
+    (``X-Api-Key`` header per REQ-2 AC3); this handler does not inspect
+    or echo the credential.
+
+    Structural twin of :func:`cmd_discover_movies` so future drift
+    between the two discover commands fails the unit suite
+    immediately.
+    """
+    params: dict[str, Any] = {}
+    params["sortBy"] = getattr(args, "sort", None) or "popularity.desc"
+    genre = getattr(args, "genre", None)
+    if genre is not None:
+        params["genre"] = genre
+    params["language"] = (
+        getattr(args, "language", None) or "en-US"
+    )
+    page = getattr(args, "page", None)
+    if page is not None:
+        params["page"] = page
+    payload = _get(
+        DISCOVER_TV_PATH,
+        args,
+        cfg,
+        params=params,
+        op="discover-tv",
+    )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_discover_tv``: nested ``mediaInfo.tmdbId`` is
+    # resolved via dot-path traversal in ``_row_from_mapping``.
+    # Byte-identical literal to ``cmd_discover_movies`` because the
+    # per-row projection is the same (same envelope, same item shape).
+    columns = [
+        "title",
+        "mediaType",
+        "releaseDate",
+        "mediaInfo.tmdbId",
+    ]
+    return _emit(payload, args, columns=columns)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -832,6 +1038,8 @@ _DISPATCH = {
     "trending": cmd_trending,
     "upcoming-movies": cmd_upcoming_movies,
     "upcoming-tv": cmd_upcoming_tv,
+    "discover-movies": cmd_discover_movies,
+    "discover-tv": cmd_discover_tv,
 }
 
 
@@ -867,14 +1075,15 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         prog=SERVICE_NAME,
         description=(
             "Read-only CLI for Seer (the unified Overseerr + "
-            "Jellyseerr fork). Ten commands expose the "
+            "Jellyseerr fork). Twelve commands expose the "
             "household request queue, request summary counts, "
             "multi-source search, what's already available in "
             "the library, the current authenticated user, "
             "per-show TV details, per-movie details "
             "(optionally with Rotten Tomatoes ratings), the "
-            "live trending-discover feed, and upcoming movie "
-            "releases / TV premieres."
+            "live trending-discover feed, upcoming movie "
+            "releases / TV premieres, and the general "
+            "discover-by-genre / sort / language browse."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -1117,6 +1326,106 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         help=(
             "ISO 639-1 language code forwarded as the "
             "?language=<LANG> query parameter"
+        ),
+    )
+
+    discover_movies = subparsers.add_parser(
+        "discover-movies",
+        help=(
+            "filterable movie browse against the general "
+            "discover endpoint "
+            "(GET /api/v1/discover/movies"
+            "?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>)"
+        ),
+        parents=universal_parents(),
+        add_help=False,
+    )
+    discover_movies.add_argument(
+        "--genre",
+        type=int,
+        default=None,
+        metavar="ID",
+        help=(
+            "TMDB genre id forwarded as the ?genre=<ID> query "
+            "parameter (omit = no genre filter)"
+        ),
+    )
+    discover_movies.add_argument(
+        "--sort",
+        default="popularity.desc",
+        metavar="SORT_BY",
+        help=(
+            "sort key forwarded as the ?sortBy=<SORT_BY> query "
+            "parameter (default popularity.desc)"
+        ),
+    )
+    discover_movies.add_argument(
+        "--language",
+        default="en-US",
+        metavar="LANG",
+        help=(
+            "ISO 639-1 language code forwarded as the "
+            "?language=<LANG> query parameter (default en-US)"
+        ),
+    )
+    discover_movies.add_argument(
+        "--page",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "page number forwarded as the ?page=<N> query "
+            "parameter (omit = first page)"
+        ),
+    )
+
+    discover_tv = subparsers.add_parser(
+        "discover-tv",
+        help=(
+            "filterable TV browse against the general "
+            "discover endpoint "
+            "(GET /api/v1/discover/tv"
+            "?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>)"
+        ),
+        parents=universal_parents(),
+        add_help=False,
+    )
+    discover_tv.add_argument(
+        "--genre",
+        type=int,
+        default=None,
+        metavar="ID",
+        help=(
+            "TMDB genre id forwarded as the ?genre=<ID> query "
+            "parameter (omit = no genre filter)"
+        ),
+    )
+    discover_tv.add_argument(
+        "--sort",
+        default="popularity.desc",
+        metavar="SORT_BY",
+        help=(
+            "sort key forwarded as the ?sortBy=<SORT_BY> query "
+            "parameter (default popularity.desc)"
+        ),
+    )
+    discover_tv.add_argument(
+        "--language",
+        default="en-US",
+        metavar="LANG",
+        help=(
+            "ISO 639-1 language code forwarded as the "
+            "?language=<LANG> query parameter (default en-US)"
+        ),
+    )
+    discover_tv.add_argument(
+        "--page",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "page number forwarded as the ?page=<N> query "
+            "parameter (omit = first page)"
         ),
     )
 
