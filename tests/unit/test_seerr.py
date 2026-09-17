@@ -2551,5 +2551,527 @@ class TestCmdTrending(unittest.TestCase):
         )
 
 
+class TestCmdUpcomingMovies(unittest.TestCase):
+    """Regression tests pinning the endpoint, params, and summary shape for ``cmd_upcoming_movies``.
+
+    Seer's discover endpoint is
+    ``GET /api/v1/discover/movies/upcoming?page=<…>&language=<…>``.
+    It returns a paginated envelope of the shape
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_trending` consumes -- so the renderer mirrors
+    :func:`_summary_seerr_trending` exactly.
+
+    Defaults:
+
+    * Media type is fixed at the command level (encoded in the
+      path) -- no ``mediaType`` / ``timeWindow``-equivalent query
+      parameter is ever forwarded.
+    * ``page`` is only forwarded when ``--page`` is set (no empty
+      ``?page=`` rides the wire).
+    * ``language`` is only forwarded when ``--language`` is set
+      (no empty ``?language=`` rides the wire).
+    """
+
+    ENVELOPE: dict[str, Any] = {
+        "page": 1,
+        "totalPages": 1,
+        "totalResults": 2,
+        "results": [
+            {
+                "id": 201,
+                "title": "Mickey 17",
+                "mediaType": "movie",
+                "releaseDate": "2025-03-07",
+                "mediaInfo": {"tmdbId": 696506},
+            },
+            {
+                "id": 202,
+                "title": "Captain America: Brave New World",
+                "mediaType": "movie",
+                "releaseDate": "2025-02-14",
+                "mediaInfo": {"tmdbId": 822119},
+            },
+        ],
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def test_cmd_upcoming_movies_dispatch_table_registration(self) -> None:
+        """``cmd_upcoming_movies`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
+        import arr_cli.seerr as seerr
+
+        # Dispatch table entry points to a callable handler.
+        self.assertIn("upcoming-movies", seerr._DISPATCH)
+        self.assertTrue(
+            callable(seerr._DISPATCH["upcoming-movies"]),
+            msg="cmd_upcoming_movies is not callable",
+        )
+        # Public surface: the handler and the path constant are exported
+        # so tests can assert against the literal endpoint.
+        self.assertIn("cmd_upcoming_movies", seerr.__all__)
+        self.assertIn("UPCOMING_MOVIES_PATH", seerr.__all__)
+        self.assertEqual(
+            seerr.UPCOMING_MOVIES_PATH,
+            "/api/v1/discover/movies/upcoming",
+        )
+
+    def test_seerr_upcoming_movies_default_hits_endpoint(self) -> None:
+        """``seerr upcoming-movies`` hits the endpoint with no ``page`` / ``language`` on the wire.
+
+        Pins the documented "keep it simple" CLI surface: the
+        command does NOT forward ``mediaType`` / ``timeWindow`` (the
+        media type is fixed in the path) and the universal ``--page``
+        / ``--language`` flags are only forwarded when the operator
+        passes them. The empty ``query_param_matcher({})`` match
+        asserts no extra query keys ride the default request.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "upcoming-movies"]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/discover/movies/upcoming`` AND no params rode
+            # on the wire. Any other path or query value would have
+            # left the mock unmatched and surfaced a connection error.
+            self.assertEqual(len(rsps.calls), 1)
+            # The response body's per-item ``title`` field is rendered
+            # onto stdout via the default TSV summary.
+            self.assertIn("Mickey 17", stdout)
+
+    def test_seerr_upcoming_movies_with_page_and_language(self) -> None:
+        """``seerr upcoming-movies --page 3 --language fr-FR`` forwards both filters."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"page": "3", "language": "fr-FR"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "upcoming-movies",
+                    "--page", "3",
+                    "--language", "fr-FR",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_upcoming_movies_human_renders_tsv(self) -> None:
+        """``--human`` renders the curated summary as a tabular TSV with the documented column headers."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "upcoming-movies",
+                        "--human",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Header line names the columns the renderer projects:
+            # ``title``, ``mediaType``, ``releaseDate``,
+            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
+            # nested key).
+            header_line = stdout.splitlines()[0]
+            for column in (
+                "title",
+                "mediaType",
+                "releaseDate",
+                "mediaInfo.tmdbId",
+            ):
+                self.assertIn(
+                    column, header_line,
+                    msg=(
+                        f"column {column!r} missing from --human header: "
+                        f"{header_line!r}"
+                    ),
+                )
+
+    def test_seerr_upcoming_movies_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "upcoming-movies",
+                        "--verbose",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Verbose mode dumps the response envelope as JSON, unchanged.
+            self.assertEqual(json.loads(stdout), self.ENVELOPE)
+
+    def test_seerr_upcoming_movies_http_error_returns_exit_4(self) -> None:
+        """Non-2xx on the ``upcoming-movies`` endpoint surfaces as exit ``4`` + structured stderr.
+
+        Mirrors the sibling ``trending`` HTTP-error contract: the
+        transport raises :class:`HttpError(exit_code=4)`,
+        :func:`main_wrapper` translates it to a structured
+        ``service=seerr op=upcoming-movies status=<code>`` line on
+        stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        preserved. ``assertIn`` is used so the assertion is robust
+        to additional stderr framing (e.g. message trailers appended
+        by ``main_wrapper``).
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                status=500,
+                body="Internal Server Error",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "upcoming-movies"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(exit_code, 4)
+        # No payload on stdout — the structured error line goes to
+        # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        # preserved.
+        self.assertEqual(stdout, "")
+        # Structured line: ``service=seerr op=/api/v1/discover/movies/upcoming status=500``.
+        self.assertIn(
+            "service=seerr op=/api/v1/discover/movies/upcoming status=500",
+            stderr,
+            msg=(
+                "expected structured HTTP-error stderr line; "
+                f"got {stderr!r}"
+            ),
+        )
+
+
+class TestCmdUpcomingTv(unittest.TestCase):
+    """Regression tests pinning the endpoint, params, and summary shape for ``cmd_upcoming_tv``.
+
+    Seer's discover endpoint is
+    ``GET /api/v1/discover/tv/upcoming?page=<…>&language=<…>``.
+    It returns a paginated envelope of the shape
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_trending` consumes -- so the renderer mirrors
+    :func:`_summary_seerr_trending` exactly.
+
+    Defaults:
+
+    * Media type is fixed at the command level (encoded in the
+      path) -- no ``mediaType`` / ``timeWindow``-equivalent query
+      parameter is ever forwarded.
+    * ``page`` is only forwarded when ``--page`` is set (no empty
+      ``?page=`` rides the wire).
+    * ``language`` is only forwarded when ``--language`` is set
+      (no empty ``?language=`` rides the wire).
+
+    Structural twin of :class:`TestCmdUpcomingMovies` so future
+    drift between the two upcoming commands fails the unit suite
+    immediately.
+    """
+
+    ENVELOPE: dict[str, Any] = {
+        "page": 1,
+        "totalPages": 1,
+        "totalResults": 2,
+        "results": [
+            {
+                "id": 301,
+                "title": "Severance",
+                "mediaType": "tv",
+                "releaseDate": "2025-01-17",
+                "mediaInfo": {"tmdbId": 95396},
+            },
+            {
+                "id": 302,
+                "title": "The Pitt",
+                "mediaType": "tv",
+                "releaseDate": "2025-01-09",
+                "mediaInfo": {"tmdbId": 249135},
+            },
+        ],
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def test_cmd_upcoming_tv_dispatch_table_registration(self) -> None:
+        """``cmd_upcoming_tv`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
+        import arr_cli.seerr as seerr
+
+        # Dispatch table entry points to a callable handler.
+        self.assertIn("upcoming-tv", seerr._DISPATCH)
+        self.assertTrue(
+            callable(seerr._DISPATCH["upcoming-tv"]),
+            msg="cmd_upcoming_tv is not callable",
+        )
+        # Public surface: the handler and the path constant are exported
+        # so tests can assert against the literal endpoint.
+        self.assertIn("cmd_upcoming_tv", seerr.__all__)
+        self.assertIn("UPCOMING_TV_PATH", seerr.__all__)
+        self.assertEqual(
+            seerr.UPCOMING_TV_PATH,
+            "/api/v1/discover/tv/upcoming",
+        )
+
+    def test_seerr_upcoming_tv_default_hits_endpoint(self) -> None:
+        """``seerr upcoming-tv`` hits the endpoint with no ``page`` / ``language`` on the wire.
+
+        Pins the documented "keep it simple" CLI surface: the
+        command does NOT forward ``mediaType`` / ``timeWindow`` (the
+        media type is fixed in the path) and the universal ``--page``
+        / ``--language`` flags are only forwarded when the operator
+        passes them. The empty ``query_param_matcher({})`` match
+        asserts no extra query keys ride the default request.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "upcoming-tv"]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/discover/tv/upcoming`` AND no params rode on
+            # the wire. Any other path or query value would have left
+            # the mock unmatched and surfaced a connection error.
+            self.assertEqual(len(rsps.calls), 1)
+            # The response body's per-item ``title`` field is rendered
+            # onto stdout via the default TSV summary.
+            self.assertIn("Severance", stdout)
+
+    def test_seerr_upcoming_tv_with_page_and_language(self) -> None:
+        """``seerr upcoming-tv --page 3 --language fr-FR`` forwards both filters."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"page": "3", "language": "fr-FR"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "upcoming-tv",
+                    "--page", "3",
+                    "--language", "fr-FR",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_upcoming_tv_human_renders_tsv(self) -> None:
+        """``--human`` renders the curated summary as a tabular TSV with the documented column headers."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "upcoming-tv",
+                        "--human",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Header line names the columns the renderer projects:
+            # ``title``, ``mediaType``, ``releaseDate``,
+            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
+            # nested key).
+            header_line = stdout.splitlines()[0]
+            for column in (
+                "title",
+                "mediaType",
+                "releaseDate",
+                "mediaInfo.tmdbId",
+            ):
+                self.assertIn(
+                    column, header_line,
+                    msg=(
+                        f"column {column!r} missing from --human header: "
+                        f"{header_line!r}"
+                    ),
+                )
+
+    def test_seerr_upcoming_tv_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "upcoming-tv",
+                        "--verbose",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Verbose mode dumps the response envelope as JSON, unchanged.
+            self.assertEqual(json.loads(stdout), self.ENVELOPE)
+
+    def test_seerr_upcoming_tv_http_error_returns_exit_4(self) -> None:
+        """Non-2xx on the ``upcoming-tv`` endpoint surfaces as exit ``4`` + structured stderr.
+
+        Mirrors the sibling ``trending`` HTTP-error contract: the
+        transport raises :class:`HttpError(exit_code=4)`,
+        :func:`main_wrapper` translates it to a structured
+        ``service=seerr op=upcoming-tv status=<code>`` line on
+        stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        preserved. ``assertIn`` is used so the assertion is robust
+        to additional stderr framing (e.g. message trailers appended
+        by ``main_wrapper``).
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                status=500,
+                body="Internal Server Error",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "upcoming-tv"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(exit_code, 4)
+        # No payload on stdout — the structured error line goes to
+        # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        # preserved.
+        self.assertEqual(stdout, "")
+        # Structured line: ``service=seerr op=/api/v1/discover/tv/upcoming status=500``.
+        self.assertIn(
+            "service=seerr op=/api/v1/discover/tv/upcoming status=500",
+            stderr,
+            msg=(
+                "expected structured HTTP-error stderr line; "
+                f"got {stderr!r}"
+            ),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
