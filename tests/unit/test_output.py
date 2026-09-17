@@ -2309,6 +2309,22 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "isOnHold": False,
             }
         ],
+        ("seerr", "discover-movies"): [
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ],
+        ("seerr", "discover-tv"): [
+            {
+                "title": "Foo",
+                "mediaType": "tv",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ],
     }
     return payloads[(svc, cmd)]
 

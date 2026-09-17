@@ -103,8 +103,8 @@ class TestSeerrModule(unittest.TestCase):
         parser = build_seerr_parser()
         self.assertIsInstance(parser, argparse.ArgumentParser)
 
-    def test_seerr_has_ten_commands(self) -> None:
-        """The subparser exposes exactly the ten documented Seerr commands."""
+    def test_seerr_has_twelve_commands(self) -> None:
+        """The subparser exposes exactly the twelve documented Seerr commands."""
         from arr_cli.seerr import build_seerr_parser
 
         parser = build_seerr_parser()
@@ -126,9 +126,11 @@ class TestSeerrModule(unittest.TestCase):
                 "trending",
                 "upcoming-movies",
                 "upcoming-tv",
+                "discover-movies",
+                "discover-tv",
             },
         )
-        self.assertEqual(len(subparsers_action.choices), 10)
+        self.assertEqual(len(subparsers_action.choices), 12)
 
     def test_dispatch_table_keys(self) -> None:
         """``_dispatch`` maps every command name to a callable handler."""
@@ -145,6 +147,8 @@ class TestSeerrModule(unittest.TestCase):
             "trending",
             "upcoming-movies",
             "upcoming-tv",
+            "discover-movies",
+            "discover-tv",
         }
         # Inspect the private dispatch table directly so we cover
         # the registration contract without going through argparse.
@@ -3413,6 +3417,810 @@ class TestCmdUpcomingTv(unittest.TestCase):
                 f"got:\n{output!r}"
             ),
         )
+
+
+class TestCmdDiscoverMovies(unittest.TestCase):
+    """Regression tests pinning the endpoint, params, and summary shape for ``cmd_discover_movies``.
+
+    Seer's discover endpoint is
+    ``GET /api/v1/discover/movies?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>``.
+    It returns a paginated envelope of the shape
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_upcoming_movies` consumes -- so the renderer
+    mirrors :func:`_summary_seerr_upcoming_movies` exactly.
+
+    Defaults:
+
+    * ``sortBy`` is forwarded unconditionally with documented default
+      ``popularity.desc`` (the operator's documented default).
+    * ``language`` is forwarded unconditionally with documented
+      default ``en-US``.
+    * ``genre`` is forwarded only when ``--genre`` is set.
+    * ``page`` is forwarded only when ``--page`` is set.
+    * The upstream ``limit`` query parameter is intentionally NOT
+      forwarded -- discover paginates instead, and the universal
+      ``--limit`` caps client-side row output only.
+
+    Structural twin of :class:`TestCmdUpcomingMovies` so future
+    drift between the two browse-style commands fails the unit
+    suite immediately.
+    """
+
+    ENVELOPE: dict[str, Any] = {
+        "page": 1,
+        "totalPages": 1,
+        "totalResults": 2,
+        "results": [
+            {
+                "id": 401,
+                "title": "The Batman",
+                "mediaType": "movie",
+                "releaseDate": "2022-03-04",
+                "mediaInfo": {"tmdbId": 414906},
+            },
+            {
+                "id": 402,
+                "title": "Past Lives",
+                "mediaType": "movie",
+                "releaseDate": "2023-06-02",
+                "mediaInfo": {"tmdbId": 850871},
+            },
+        ],
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``discover-movies`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "discover-movies",
+            "genre": None,
+            "sort": "popularity.desc",
+            "language": "en-US",
+            "page": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def test_cmd_discover_movies_dispatch_table_registration(self) -> None:
+        """``cmd_discover_movies`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
+        import arr_cli.seerr as seerr
+
+        # Dispatch table entry points to a callable handler.
+        self.assertIn("discover-movies", seerr._DISPATCH)
+        self.assertTrue(
+            callable(seerr._DISPATCH["discover-movies"]),
+            msg="cmd_discover_movies is not callable",
+        )
+        # Public surface: the handler and the path constant are exported
+        # so tests can assert against the literal endpoint.
+        self.assertIn("cmd_discover_movies", seerr.__all__)
+        self.assertIn("DISCOVER_MOVIES_PATH", seerr.__all__)
+        self.assertEqual(
+            seerr.DISCOVER_MOVIES_PATH,
+            "/api/v1/discover/movies",
+        )
+
+    def test_seerr_discover_movies_default_hits_endpoint(self) -> None:
+        """``seerr discover-movies`` with no flags hits the endpoint with documented default params.
+
+        Pins the documented "keep it simple" CLI surface: the
+        command forwards ``sortBy`` and ``language`` unconditionally
+        (with their documented defaults ``popularity.desc`` /
+        ``en-US``); ``genre`` and ``page`` are NOT forwarded when the
+        operator does not set them. The ``query_param_matcher``
+        asserts no ``genre`` / ``page`` / ``limit`` keys ride the
+        default request.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"sortBy": "popularity.desc", "language": "en-US"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "discover-movies"]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/discover/movies`` with exactly
+            # ``sortBy=popularity.desc`` and ``language=en-US`` on
+            # the wire. Any other path or query value would have left
+            # the mock unmatched and surfaced a connection error.
+            self.assertEqual(len(rsps.calls), 1)
+            # The response body's per-item ``title`` field is rendered
+            # onto stdout via the default TSV summary.
+            self.assertIn("The Batman", stdout)
+
+    def test_seerr_discover_movies_with_genre(self) -> None:
+        """``seerr discover-movies --genre 28`` forwards ``genre=28``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {
+                            "sortBy": "popularity.desc",
+                            "language": "en-US",
+                            "genre": "28",
+                        }
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "discover-movies",
+                    "--genre", "28",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_discover_movies_with_sort(self) -> None:
+        """``seerr discover-movies --sort vote_average.desc`` forwards ``sortBy=vote_average.desc``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {
+                            "sortBy": "vote_average.desc",
+                            "language": "en-US",
+                        }
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "discover-movies",
+                    "--sort", "vote_average.desc",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_discover_movies_with_language(self) -> None:
+        """``seerr discover-movies --language fr-FR`` forwards ``language=fr-FR``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {
+                            "sortBy": "popularity.desc",
+                            "language": "fr-FR",
+                        }
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "discover-movies",
+                    "--language", "fr-FR",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_discover_movies_limit_is_client_side(self) -> None:
+        """``--limit N`` is honored by the renderer but ``limit`` does NOT ride the wire.
+
+        Regression pinning: the universal ``--limit`` caps
+        client-side row output for the discover endpoints but is
+        intentionally NOT forwarded to the upstream ``?limit=``
+        query parameter -- discover paginates instead. The test
+        confirms ``--limit 5`` truncates the ``--human`` rendering
+        to 5 rows + a "more items" footer, while the upstream mock
+        is matched against a query-param set that does NOT include
+        ``limit``.
+        """
+        from arr_cli.seerr import cmd_discover_movies
+
+        # Build a 30-item envelope so ``--limit 5`` truncates to
+        # 5 rows and the footer surfaces a non-zero hidden-count.
+        items: list[dict[str, Any]] = [
+            {
+                "title": f"Title {i:02d}",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 1000 + i},
+            }
+            for i in range(30)
+        ]
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 30,
+            "results": items,
+        }
+        args = self._make_args(human=True, limit=5)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=envelope,
+        ):
+            output = _capture_stdout(cmd_discover_movies, args, None)
+        lines = output.splitlines()
+        # Header + separator + N data rows + (optional) truncation
+        # footer line. Counting data rows directly: skip the header
+        # and separator rows plus any pagination/footer line.
+        data_lines = [
+            line for line in lines[2:]
+            if line.strip()
+            and not line.startswith("\u2026")
+            and not line.startswith("…")
+        ]
+        self.assertEqual(
+            len(data_lines), 5,
+            msg=(
+                "--limit 5 must cap --human rows to 5; "
+                f"got {len(data_lines)} data lines:\n{output!r}"
+            ),
+        )
+        # The truncation footer line tells the operator the list was
+        # truncated and how many rows were hidden.
+        self.assertTrue(
+            any(
+                "more item" in line and "--limit" in line
+                for line in lines
+            ),
+            msg=(
+                "truncation footer missing — --limit was not "
+                f"honoured; output:\n{output!r}"
+            ),
+        )
+        # The footer must report 25 hidden items (30 - 5).
+        self.assertIn(
+            "25 more items",
+            output,
+            msg=(
+                "truncation footer must report the 25 hidden items; "
+                f"got:\n{output!r}"
+            ),
+        )
+
+    def test_seerr_discover_movies_http_error_returns_exit_4(self) -> None:
+        """Non-2xx on the ``discover-movies`` endpoint surfaces as exit ``4`` + structured stderr.
+
+        Mirrors the sibling ``upcoming-movies`` HTTP-error
+        contract: the transport raises
+        :class:`HttpError(exit_code=4)`, :func:`main_wrapper`
+        translates it to a structured
+        ``service=seerr op=discover-movies status=<code>`` line on
+        stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        preserved. ``assertIn`` is used so the assertion is robust
+        to additional stderr framing (e.g. message trailers appended
+        by ``main_wrapper``).
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies",
+                status=500,
+                body="Internal Server Error",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "discover-movies"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(exit_code, 4)
+        # No payload on stdout — the structured error line goes to
+        # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        # preserved.
+        self.assertEqual(stdout, "")
+        # Structured line: ``service=seerr op=/api/v1/discover/movies status=500``.
+        self.assertIn(
+            "service=seerr op=/api/v1/discover/movies status=500",
+            stderr,
+            msg=(
+                "expected structured HTTP-error stderr line; "
+                f"got {stderr!r}"
+            ),
+        )
+
+    def test_seerr_discover_movies_human_renders_tsv(self) -> None:
+        """``--human`` renders the curated summary as a tabular TSV with the documented column headers."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"sortBy": "popularity.desc", "language": "en-US"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "discover-movies",
+                        "--human",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Header line names the columns the renderer projects:
+            # ``title``, ``mediaType``, ``releaseDate``,
+            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
+            # nested key).
+            header_line = stdout.splitlines()[0]
+            for column in (
+                "title",
+                "mediaType",
+                "releaseDate",
+                "mediaInfo.tmdbId",
+            ):
+                self.assertIn(
+                    column, header_line,
+                    msg=(
+                        f"column {column!r} missing from --human header: "
+                        f"{header_line!r}"
+                    ),
+                )
+
+
+class TestCmdDiscoverTv(unittest.TestCase):
+    """Regression tests pinning the endpoint, params, and summary shape for ``cmd_discover_tv``.
+
+    Seer's discover endpoint is
+    ``GET /api/v1/discover/tv?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>``.
+    It returns a paginated envelope of the shape
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_upcoming_tv` / :func:`cmd_discover_movies`
+    consume -- so the renderer mirrors
+    :func:`_summary_seerr_discover_tv`` exactly.
+
+    Defaults:
+
+    * ``sortBy`` is forwarded unconditionally with documented default
+      ``popularity.desc``.
+    * ``language`` is forwarded unconditionally with documented
+      default ``en-US``.
+    * ``genre`` is forwarded only when ``--genre`` is set.
+    * ``page`` is forwarded only when ``--page`` is set.
+    * The upstream ``limit`` query parameter is intentionally NOT
+      forwarded.
+
+    Structural twin of :class:`TestCmdDiscoverMovies` so future
+    drift between the two discover commands fails the unit suite
+    immediately.
+    """
+
+    ENVELOPE: dict[str, Any] = {
+        "page": 1,
+        "totalPages": 1,
+        "totalResults": 2,
+        "results": [
+            {
+                "id": 501,
+                "title": "Shogun",
+                "mediaType": "tv",
+                "releaseDate": "2024-02-27",
+                "mediaInfo": {"tmdbId": 126308},
+            },
+            {
+                "id": 502,
+                "title": "Fallout",
+                "mediaType": "tv",
+                "releaseDate": "2024-04-10",
+                "mediaInfo": {"tmdbId": 106379},
+            },
+        ],
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``discover-tv`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "discover-tv",
+            "genre": None,
+            "sort": "popularity.desc",
+            "language": "en-US",
+            "page": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def test_cmd_discover_tv_dispatch_table_registration(self) -> None:
+        """``cmd_discover_tv`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
+        import arr_cli.seerr as seerr
+
+        # Dispatch table entry points to a callable handler.
+        self.assertIn("discover-tv", seerr._DISPATCH)
+        self.assertTrue(
+            callable(seerr._DISPATCH["discover-tv"]),
+            msg="cmd_discover_tv is not callable",
+        )
+        # Public surface: the handler and the path constant are exported
+        # so tests can assert against the literal endpoint.
+        self.assertIn("cmd_discover_tv", seerr.__all__)
+        self.assertIn("DISCOVER_TV_PATH", seerr.__all__)
+        self.assertEqual(
+            seerr.DISCOVER_TV_PATH,
+            "/api/v1/discover/tv",
+        )
+
+    def test_seerr_discover_tv_default_hits_endpoint(self) -> None:
+        """``seerr discover-tv`` with no flags hits the endpoint with documented default params.
+
+        Pins the documented "keep it simple" CLI surface: the
+        command forwards ``sortBy`` and ``language`` unconditionally
+        (with their documented defaults ``popularity.desc`` /
+        ``en-US``); ``genre`` and ``page`` are NOT forwarded when the
+        operator does not set them. The ``query_param_matcher``
+        asserts no ``genre`` / ``page`` / ``limit`` keys ride the
+        default request.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"sortBy": "popularity.desc", "language": "en-US"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "discover-tv"]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/discover/tv`` with exactly
+            # ``sortBy=popularity.desc`` and ``language=en-US`` on
+            # the wire. Any other path or query value would have left
+            # the mock unmatched and surfaced a connection error.
+            self.assertEqual(len(rsps.calls), 1)
+            # The response body's per-item ``title`` field is rendered
+            # onto stdout via the default TSV summary.
+            self.assertIn("Shogun", stdout)
+
+    def test_seerr_discover_tv_with_genre(self) -> None:
+        """``seerr discover-tv --genre 28`` forwards ``genre=28``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {
+                            "sortBy": "popularity.desc",
+                            "language": "en-US",
+                            "genre": "28",
+                        }
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "discover-tv",
+                    "--genre", "28",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_discover_tv_with_sort(self) -> None:
+        """``seerr discover-tv --sort vote_average.desc`` forwards ``sortBy=vote_average.desc``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {
+                            "sortBy": "vote_average.desc",
+                            "language": "en-US",
+                        }
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "discover-tv",
+                    "--sort", "vote_average.desc",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_discover_tv_with_language(self) -> None:
+        """``seerr discover-tv --language fr-FR`` forwards ``language=fr-FR``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {
+                            "sortBy": "popularity.desc",
+                            "language": "fr-FR",
+                        }
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "discover-tv",
+                    "--language", "fr-FR",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_discover_tv_limit_is_client_side(self) -> None:
+        """``--limit N`` is honored by the renderer but ``limit`` does NOT ride the wire.
+
+        Regression pinning: the universal ``--limit`` caps
+        client-side row output for the discover endpoints but is
+        intentionally NOT forwarded to the upstream ``?limit=``
+        query parameter -- discover paginates instead. The test
+        confirms ``--limit 5`` truncates the ``--human`` rendering
+        to 5 rows + a "more items" footer, while the upstream mock
+        is matched against a query-param set that does NOT include
+        ``limit``.
+        """
+        from arr_cli.seerr import cmd_discover_tv
+
+        # Build a 30-item envelope so ``--limit 5`` truncates to
+        # 5 rows and the footer surfaces a non-zero hidden-count.
+        items: list[dict[str, Any]] = [
+            {
+                "title": f"Title {i:02d}",
+                "mediaType": "tv",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 1000 + i},
+            }
+            for i in range(30)
+        ]
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 30,
+            "results": items,
+        }
+        args = self._make_args(human=True, limit=5)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=envelope,
+        ):
+            output = _capture_stdout(cmd_discover_tv, args, None)
+        lines = output.splitlines()
+        # Header + separator + N data rows + (optional) truncation
+        # footer line. Counting data rows directly: skip the header
+        # and separator rows plus any pagination/footer line.
+        data_lines = [
+            line for line in lines[2:]
+            if line.strip()
+            and not line.startswith("\u2026")
+            and not line.startswith("…")
+        ]
+        self.assertEqual(
+            len(data_lines), 5,
+            msg=(
+                "--limit 5 must cap --human rows to 5; "
+                f"got {len(data_lines)} data lines:\n{output!r}"
+            ),
+        )
+        # The truncation footer line tells the operator the list was
+        # truncated and how many rows were hidden.
+        self.assertTrue(
+            any(
+                "more item" in line and "--limit" in line
+                for line in lines
+            ),
+            msg=(
+                "truncation footer missing — --limit was not "
+                f"honoured; output:\n{output!r}"
+            ),
+        )
+        # The footer must report 25 hidden items (30 - 5).
+        self.assertIn(
+            "25 more items",
+            output,
+            msg=(
+                "truncation footer must report the 25 hidden items; "
+                f"got:\n{output!r}"
+            ),
+        )
+
+    def test_seerr_discover_tv_http_error_returns_exit_4(self) -> None:
+        """Non-2xx on the ``discover-tv`` endpoint surfaces as exit ``4`` + structured stderr.
+
+        Mirrors the sibling ``discover-movies`` HTTP-error
+        contract: the transport raises
+        :class:`HttpError(exit_code=4)`, :func:`main_wrapper`
+        translates it to a structured
+        ``service=seerr op=discover-tv status=<code>`` line on
+        stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        preserved. ``assertIn`` is used so the assertion is robust
+        to additional stderr framing (e.g. message trailers appended
+        by ``main_wrapper``).
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv",
+                status=500,
+                body="Internal Server Error",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "discover-tv"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(exit_code, 4)
+        # No payload on stdout — the structured error line goes to
+        # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        # preserved.
+        self.assertEqual(stdout, "")
+        # Structured line: ``service=seerr op=/api/v1/discover/tv status=500``.
+        self.assertIn(
+            "service=seerr op=/api/v1/discover/tv status=500",
+            stderr,
+            msg=(
+                "expected structured HTTP-error stderr line; "
+                f"got {stderr!r}"
+            ),
+        )
+
+    def test_seerr_discover_tv_human_renders_tsv(self) -> None:
+        """``--human`` renders the curated summary as a tabular TSV with the documented column headers."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"sortBy": "popularity.desc", "language": "en-US"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "discover-tv",
+                        "--human",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Header line names the columns the renderer projects:
+            # ``title``, ``mediaType``, ``releaseDate``,
+            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
+            # nested key).
+            header_line = stdout.splitlines()[0]
+            for column in (
+                "title",
+                "mediaType",
+                "releaseDate",
+                "mediaInfo.tmdbId",
+            ):
+                self.assertIn(
+                    column, header_line,
+                    msg=(
+                        f"column {column!r} missing from --human header: "
+                        f"{header_line!r}"
+                    ),
+                )
 
 
 if __name__ == "__main__":
