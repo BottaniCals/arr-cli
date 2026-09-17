@@ -246,10 +246,136 @@ DISCOVER_MOVIES_PATH = "/api/v1/discover/movies"
 DISCOVER_TV_PATH = "/api/v1/discover/tv"
 
 
+#: Path for the movie genres endpoint.
+#: ``GET /api/v1/genres/movie`` -- the canonical TMDB-backed genre
+#: list for movies. Stable across Overseerr → Jellyseerr → Seer;
+#: the live ``/api-docs/swagger-ui-init.js`` OpenAPI spec on the
+#: operator's instance is the source of truth per AGENTS.md §1
+#: "Seer note". Returns ``[{id: int, name: str}, ...]`` (no
+#: envelope wrapping).
+GENRES_MOVIE_PATH = "/api/v1/genres/movie"
+
+
+#: Path for the TV genres endpoint.
+#: ``GET /api/v1/genres/tv`` -- the canonical TMDB-backed genre
+#: list for TV. Stable across Overseerr → Jellyseerr → Seer;
+#: the live ``/api-docs/swagger-ui-init.js`` OpenAPI spec on the
+#: operator's instance is the source of truth per AGENTS.md §1
+#: "Seer note". Returns ``[{id: int, name: str}, ...]`` (no
+#: envelope wrapping).
+GENRES_TV_PATH = "/api/v1/genres/tv"
+
+
 # Module-level logger so the documented DEBUG probe records
 # (design.md "Pre-locking Verifications -- Seerr") surface through
 # the standard ``logging`` configuration without a private handler.
 _logger = logging.getLogger("arr_cli.seerr")
+
+
+# ---------------------------------------------------------------------------
+# Module-level HTTP helpers
+# ---------------------------------------------------------------------------
+
+
+def seerr_genres(
+    media_type: str,
+    args: argparse.Namespace,
+    cfg: ServiceConfig,
+) -> list[Any]:
+    """Return the TMDB genre list for ``media_type`` as ``[{id, name}, ...]``.
+
+    Thin module-level HTTP helper that lives next to the other
+    module-level ``seerr_*`` helpers (e.g. the ``cmd_*`` handlers
+    in this module) and follows the same per-call ``_get`` pattern.
+    Dispatches to :data:`GENRES_MOVIE_PATH` or
+    :data:`GENRES_TV_PATH` based on ``media_type`` and lets the
+    facade errors propagate unchanged so
+    :func:`arr_cli.facade.cli_common.main_wrapper` can translate
+    them into the documented ``service=seerr op=... status=...``
+    stderr line + exit code.
+
+    Parameters
+    ----------
+    media_type:
+        One of ``"movie"`` or ``"tv"``. The argparse ``choices=`` on
+        the ``genres`` subparser already rejects anything else with
+        ``SystemExit(2)`` at parse time, but the function keeps a
+        defensive guard so it can be reused safely from non-CLI
+        entry points (tests, future library consumers).
+    args:
+        The parsed argparse namespace; forwarded to :func:`_get`
+        so the documented ``--connect-timeout`` / ``--read-timeout``
+        / ``--debug`` flags are honored consistently with the
+        other seerr handlers.
+    cfg:
+        The loaded :class:`ServiceConfig`; forwarded to
+        :func:`_get` so auth (``X-Api-Key``) is injected by the
+        facade per REQ-2 AC3.
+
+    Returns
+    -------
+    list[Any]
+        The verbatim JSON list returned by the upstream endpoint,
+        i.e. ``[{id: int, name: str}, ...]``. The renderer in
+        :func:`arr_cli.facade.output._summary_seerr_genres` projects
+        this list to the curated ``id`` / ``name`` summary shape
+        so the default stdout stays small.
+
+    Raises
+    ------
+    ConfigError
+        When ``media_type`` is not ``"movie"`` or ``"tv"`` -- the
+        facade's :class:`ConfigError` (exit code 1) is the
+        documented shape for client-side validation failures, so
+        the guard raises the same class the other seerr helpers
+        would for a malformed request.
+    """
+    if media_type == "movie":
+        path = GENRES_MOVIE_PATH
+    elif media_type == "tv":
+        path = GENRES_TV_PATH
+    else:
+        raise ConfigError(
+            SERVICE_NAME,
+            "genres",
+            f"{SERVICE_NAME}: media_type must be 'movie' or 'tv'; "
+            f"got {media_type!r}",
+        )
+    # The path-constant format is ``/api/v1/...`` -- absolute, no
+    # concatenation required. If a future variant needs a trailing
+    # path fragment, the facade's percent-encoding policy keeps
+    # user-supplied tokens safe; static literal concatenation is
+    # safe today.
+    # ``op`` carries the documented ``op=`` value surfaced via
+    # :class:`ArrError` so the stderr line reads
+    # ``service=seerr op=genres/<media_type> status=...`` on
+    # failure. Match the convention used by the other seerr
+    # handlers (e.g. ``search`` / ``requests``).
+    payload = _get(
+        path,
+        args,
+        cfg,
+        op=f"genres/{media_type}",
+    )
+    # Defensive unwrap: ``GET /api/v1/genres/<mediaType>`` returns a
+    # bare list (no envelope), but a future Seer version that wraps
+    # the response in ``{results: [...]}`` would still surface as
+    # a list-like payload here. Keep the renderer contract flat
+    # (a list of ``{id, name}``) so the renderer does not have to
+    # know about either shape.
+    if isinstance(payload, Mapping):
+        inner = payload.get("results")
+        if isinstance(inner, list):
+            return inner
+        # Non-``results``-keyed mapping -- fall back to a list of
+        # single-value iterations so the renderer prints the
+        # document rather than swallowing it.
+        return list(payload.values()) if payload else []
+    if isinstance(payload, list):
+        return payload
+    # Bare scalar / ``None`` -- surface as an empty list so the
+    # renderer prints its "no rows" footer rather than crashing.
+    return []
 
 
 # ---------------------------------------------------------------------------
