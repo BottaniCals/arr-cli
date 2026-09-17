@@ -195,7 +195,7 @@ passed.
 > it requires confirming `/api/rules` against the operator's live
 > `/api/swagger`.
 
-### 4.5 Seer (`seerr` — 10 commands)
+### 4.5 Seer (`seerr` — 12 commands)
 
 | Command                   | HTTP | Path                                    | Notes                                                                            |
 | ------------------------- | :--: | --------------------------------------- | -------------------------------------------------------------------------------- |
@@ -209,6 +209,8 @@ passed.
 | `seerr trending [MEDIA_TYPE] [TIME_WINDOW]` | GET | `/api/v1/discover/trending?mediaType=<…>&timeWindow=<…>&language=<…>` | `MEDIA_TYPE ∈ {movie, tv} (omit = all); TIME_WINDOW ∈ {day, week}, default week. Accepts optional `--language`. |
 | `seerr upcoming-movies`            | GET  | `/api/v1/discover/movies/upcoming?page=<…>&language=<…>` | Paginated upcoming movie releases. Universal flags only; no positional media type (fixed at command level). |
 | `seerr upcoming-tv`                | GET  | `/api/v1/discover/tv/upcoming?page=<…>&language=<…>`      | Paginated upcoming TV premieres. Universal flags only; no positional media type (fixed at command level). |
+| `seerr discover-movies`            | GET  | `/api/v1/discover/movies?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>` | Filterable movie discover; defaults `sortBy=popularity.desc`, `language=en-US`, `page=1`. Optional `--genre <id>` (int), `--sort <sortBy>`, `--language <code>`, `--page <n>`. `--limit` is client-side only (caps the renderer, never sent on the wire). |
+| `seerr discover-tv`                | GET  | `/api/v1/discover/tv?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>`      | Filterable TV discover; same flag surface as `discover-movies`. Structural twin; same defaults. `--limit` is client-side only. |
 
 > **Upstream: Seer.** The `seerr` CLI targets
 > [Seer](https://github.com/seerr-team/seerr), the unified fork of
