@@ -103,8 +103,8 @@ class TestSeerrModule(unittest.TestCase):
         parser = build_seerr_parser()
         self.assertIsInstance(parser, argparse.ArgumentParser)
 
-    def test_seerr_has_eight_commands(self) -> None:
-        """The subparser exposes exactly the eight documented Seerr commands."""
+    def test_seerr_has_ten_commands(self) -> None:
+        """The subparser exposes exactly the ten documented Seerr commands."""
         from arr_cli.seerr import build_seerr_parser
 
         parser = build_seerr_parser()
@@ -124,9 +124,11 @@ class TestSeerrModule(unittest.TestCase):
                 "tv",
                 "movie",
                 "trending",
+                "upcoming-movies",
+                "upcoming-tv",
             },
         )
-        self.assertEqual(len(subparsers_action.choices), 8)
+        self.assertEqual(len(subparsers_action.choices), 10)
 
     def test_dispatch_table_keys(self) -> None:
         """``_dispatch`` maps every command name to a callable handler."""
@@ -141,6 +143,8 @@ class TestSeerrModule(unittest.TestCase):
             "tv",
             "movie",
             "trending",
+            "upcoming-movies",
+            "upcoming-tv",
         }
         # Inspect the private dispatch table directly so we cover
         # the registration contract without going through argparse.
@@ -2507,6 +2511,870 @@ class TestCmdTrending(unittest.TestCase):
             return_value=envelope,
         ):
             output = _capture_stdout(cmd_trending, args, None)
+        lines = output.splitlines()
+        # Header + separator + N data rows + (optional) truncation
+        # footer line. Counting data rows directly: skip the header
+        # and separator rows plus any pagination/footer line.
+        data_lines = [
+            line for line in lines[2:]
+            if line.strip()
+            and not line.startswith("\u2026")
+            and not line.startswith("…")
+        ]
+        self.assertEqual(
+            len(data_lines), 10,
+            msg=(
+                "--limit 10 must cap --human rows to 10; "
+                f"got {len(data_lines)} data lines:\n{output!r}"
+            ),
+        )
+        # The truncation footer line tells the operator the list was
+        # truncated and how many rows were hidden.
+        self.assertTrue(
+            any(
+                "more item" in line and "--limit" in line
+                for line in lines
+            ),
+            msg=(
+                "truncation footer missing — --limit was not "
+                f"honoured; output:\n{output!r}"
+            ),
+        )
+        # The footer must report 20 hidden items (30 - 10).
+        self.assertIn(
+            "20 more items",
+            output,
+            msg=(
+                "truncation footer must report the 20 hidden items; "
+                f"got:\n{output!r}"
+            ),
+        )
+
+
+class TestCmdUpcomingMovies(unittest.TestCase):
+    """Regression tests pinning the endpoint, params, and summary shape for ``cmd_upcoming_movies``.
+
+    Seer's discover endpoint is
+    ``GET /api/v1/discover/movies/upcoming?page=<…>&language=<…>``.
+    It returns a paginated envelope of the shape
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_trending` consumes -- so the renderer mirrors
+    :func:`_summary_seerr_trending` exactly.
+
+    Defaults:
+
+    * Media type is fixed at the command level (encoded in the
+      path) -- no ``mediaType`` / ``timeWindow``-equivalent query
+      parameter is ever forwarded.
+    * ``page`` is only forwarded when ``--page`` is set (no empty
+      ``?page=`` rides the wire).
+    * ``language`` is only forwarded when ``--language`` is set
+      (no empty ``?language=`` rides the wire).
+    """
+
+    ENVELOPE: dict[str, Any] = {
+        "page": 1,
+        "totalPages": 1,
+        "totalResults": 2,
+        "results": [
+            {
+                "id": 201,
+                "title": "Mickey 17",
+                "mediaType": "movie",
+                "releaseDate": "2025-03-07",
+                "mediaInfo": {"tmdbId": 696506},
+            },
+            {
+                "id": 202,
+                "title": "Captain America: Brave New World",
+                "mediaType": "movie",
+                "releaseDate": "2025-02-14",
+                "mediaInfo": {"tmdbId": 822119},
+            },
+        ],
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    # ------------------------------------------------------------------ 3.5
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``upcoming-movies`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "upcoming-movies",
+            "page": None,
+            "language": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def test_cmd_upcoming_movies_dispatch_table_registration(self) -> None:
+        """``cmd_upcoming_movies`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
+        import arr_cli.seerr as seerr
+
+        # Dispatch table entry points to a callable handler.
+        self.assertIn("upcoming-movies", seerr._DISPATCH)
+        self.assertTrue(
+            callable(seerr._DISPATCH["upcoming-movies"]),
+            msg="cmd_upcoming_movies is not callable",
+        )
+        # Public surface: the handler and the path constant are exported
+        # so tests can assert against the literal endpoint.
+        self.assertIn("cmd_upcoming_movies", seerr.__all__)
+        self.assertIn("UPCOMING_MOVIES_PATH", seerr.__all__)
+        self.assertEqual(
+            seerr.UPCOMING_MOVIES_PATH,
+            "/api/v1/discover/movies/upcoming",
+        )
+
+    def test_seerr_upcoming_movies_default_hits_endpoint(self) -> None:
+        """``seerr upcoming-movies`` hits the endpoint with no ``page`` / ``language`` on the wire.
+
+        Pins the documented "keep it simple" CLI surface: the
+        command does NOT forward ``mediaType`` / ``timeWindow`` (the
+        media type is fixed in the path) and the universal ``--page``
+        / ``--language`` flags are only forwarded when the operator
+        passes them. The empty ``query_param_matcher({})`` match
+        asserts no extra query keys ride the default request.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "upcoming-movies"]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/discover/movies/upcoming`` AND no params rode
+            # on the wire. Any other path or query value would have
+            # left the mock unmatched and surfaced a connection error.
+            self.assertEqual(len(rsps.calls), 1)
+            # The response body's per-item ``title`` field is rendered
+            # onto stdout via the default TSV summary.
+            self.assertIn("Mickey 17", stdout)
+
+    def test_seerr_upcoming_movies_with_page_and_language(self) -> None:
+        """``seerr upcoming-movies --page 3 --language fr-FR`` forwards both filters."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"page": "3", "language": "fr-FR"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "upcoming-movies",
+                    "--page", "3",
+                    "--language", "fr-FR",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_upcoming_movies_human_renders_tsv(self) -> None:
+        """``--human`` renders the curated summary as a tabular TSV with the documented column headers."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "upcoming-movies",
+                        "--human",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Header line names the columns the renderer projects:
+            # ``title``, ``mediaType``, ``releaseDate``,
+            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
+            # nested key).
+            header_line = stdout.splitlines()[0]
+            for column in (
+                "title",
+                "mediaType",
+                "releaseDate",
+                "mediaInfo.tmdbId",
+            ):
+                self.assertIn(
+                    column, header_line,
+                    msg=(
+                        f"column {column!r} missing from --human header: "
+                        f"{header_line!r}"
+                    ),
+                )
+
+    def test_seerr_upcoming_movies_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "upcoming-movies",
+                        "--verbose",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Verbose mode dumps the response envelope as JSON, unchanged.
+            self.assertEqual(json.loads(stdout), self.ENVELOPE)
+
+    def test_seerr_upcoming_movies_http_error_returns_exit_4(self) -> None:
+        """Non-2xx on the ``upcoming-movies`` endpoint surfaces as exit ``4`` + structured stderr.
+
+        Mirrors the sibling ``trending`` HTTP-error contract: the
+        transport raises :class:`HttpError(exit_code=4)`,
+        :func:`main_wrapper` translates it to a structured
+        ``service=seerr op=upcoming-movies status=<code>`` line on
+        stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        preserved. ``assertIn`` is used so the assertion is robust
+        to additional stderr framing (e.g. message trailers appended
+        by ``main_wrapper``).
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies/upcoming",
+                status=500,
+                body="Internal Server Error",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "upcoming-movies"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(exit_code, 4)
+        # No payload on stdout — the structured error line goes to
+        # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        # preserved.
+        self.assertEqual(stdout, "")
+        # Structured line: ``service=seerr op=/api/v1/discover/movies/upcoming status=500``.
+        self.assertIn(
+            "service=seerr op=/api/v1/discover/movies/upcoming status=500",
+            stderr,
+            msg=(
+                "expected structured HTTP-error stderr line; "
+                f"got {stderr!r}"
+            ),
+        )
+
+    # ------------------------------------------------------------------ 3.8
+    def test_summary_seerr_upcoming_movies_envelope_unwraps_results(self) -> None:
+        """Renderer iterates ``results`` of a paginated envelope, not the envelope itself."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        rendered = _summary_seerr_upcoming_movies(self.ENVELOPE)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Mickey 17")
+        self.assertEqual(rendered[1]["title"], "Captain America: Brave New World")
+        # Nested ``mediaInfo.tmdbId`` is preserved.
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 696506)
+        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 822119)
+
+    def test_summary_seerr_upcoming_movies_bare_list_unchanged(self) -> None:
+        """Renderer iterates a bare list payload (defensive envelope-drift guard)."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        rendered = _summary_seerr_upcoming_movies(self.ENVELOPE["results"])
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Mickey 17")
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 696506)
+
+    def test_summary_seerr_upcoming_movies_envelope_without_results_returns_empty(
+        self,
+    ) -> None:
+        """An envelope missing the ``results`` key maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        rendered = _summary_seerr_upcoming_movies(
+            {"page": 1, "totalPages": 0, "totalResults": 0}
+        )
+        self.assertEqual(rendered, [])
+
+    def test_summary_seerr_upcoming_movies_non_mapping_non_list_returns_empty(
+        self,
+    ) -> None:
+        """A scalar / ``None`` payload maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        self.assertEqual(_summary_seerr_upcoming_movies(None), [])
+        self.assertEqual(_summary_seerr_upcoming_movies("not a list"), [])
+        self.assertEqual(_summary_seerr_upcoming_movies(42), [])
+
+    def test_summary_seerr_upcoming_movies_envelope_drops_non_mapping_items(
+        self,
+    ) -> None:
+        """Non-Mapping items inside ``results`` are dropped silently."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 3,
+            "results": [
+                {
+                    "title": "Foo",
+                    "mediaType": "movie",
+                    "releaseDate": "2024-01-01",
+                    "mediaInfo": {"tmdbId": 1},
+                },
+                "stray non-mapping item",
+                {
+                    "title": "Bar",
+                    "mediaType": "movie",
+                    "releaseDate": "2024-02-01",
+                    "mediaInfo": {"tmdbId": 2},
+                },
+            ],
+        }
+        rendered = _summary_seerr_upcoming_movies(envelope)
+        # Two curated rows survive; the stray string is dropped.
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(rendered[1]["title"], "Bar")
+
+    # ------------------------------------------------------------------ US-1 AC4
+    def test_cmd_upcoming_movies_limit_caps_human_rows(self) -> None:
+        """``--limit N`` caps the ``--human`` rendering to ``N`` rows + footer line.
+
+        Regression pinning US-1 AC4: the post-fetch cap on
+        ``seerr upcoming-movies --human --limit N`` must mirror the
+        sibling list-command contract — the renderer slices the
+        curated summary to ``N`` rows and appends the pagination
+        footer ``"… (M more item[s]; use --limit to see more)"`` so
+        the operator is warned the displayed list is truncated.
+        """
+        from arr_cli.seerr import cmd_upcoming_movies
+
+        # Build a 30-item envelope so ``--limit 10`` truncates to 10
+        # rows and the footer surfaces a non-zero hidden-count.
+        items: list[dict[str, Any]] = [
+            {
+                "title": f"Title {i:02d}",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 1000 + i},
+            }
+            for i in range(30)
+        ]
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 30,
+            "results": items,
+        }
+        args = self._make_args(human=True, limit=10)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=envelope,
+        ):
+            output = _capture_stdout(cmd_upcoming_movies, args, None)
+        lines = output.splitlines()
+        # Header + separator + N data rows + (optional) truncation
+        # footer line. Counting data rows directly: skip the header
+        # and separator rows plus any pagination/footer line.
+        data_lines = [
+            line for line in lines[2:]
+            if line.strip()
+            and not line.startswith("\u2026")
+            and not line.startswith("…")
+        ]
+        self.assertEqual(
+            len(data_lines), 10,
+            msg=(
+                "--limit 10 must cap --human rows to 10; "
+                f"got {len(data_lines)} data lines:\n{output!r}"
+            ),
+        )
+        # The truncation footer line tells the operator the list was
+        # truncated and how many rows were hidden.
+        self.assertTrue(
+            any(
+                "more item" in line and "--limit" in line
+                for line in lines
+            ),
+            msg=(
+                "truncation footer missing — --limit was not "
+                f"honoured; output:\n{output!r}"
+            ),
+        )
+        # The footer must report 20 hidden items (30 - 10).
+        self.assertIn(
+            "20 more items",
+            output,
+            msg=(
+                "truncation footer must report the 20 hidden items; "
+                f"got:\n{output!r}"
+            ),
+        )
+
+
+class TestCmdUpcomingTv(unittest.TestCase):
+    """Regression tests pinning the endpoint, params, and summary shape for ``cmd_upcoming_tv``.
+
+    Seer's discover endpoint is
+    ``GET /api/v1/discover/tv/upcoming?page=<…>&language=<…>``.
+    It returns a paginated envelope of the shape
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_trending` consumes -- so the renderer mirrors
+    :func:`_summary_seerr_trending` exactly.
+
+    Defaults:
+
+    * Media type is fixed at the command level (encoded in the
+      path) -- no ``mediaType`` / ``timeWindow``-equivalent query
+      parameter is ever forwarded.
+    * ``page`` is only forwarded when ``--page`` is set (no empty
+      ``?page=`` rides the wire).
+    * ``language`` is only forwarded when ``--language`` is set
+      (no empty ``?language=`` rides the wire).
+
+    Structural twin of :class:`TestCmdUpcomingMovies` so future
+    drift between the two upcoming commands fails the unit suite
+    immediately.
+    """
+
+    ENVELOPE: dict[str, Any] = {
+        "page": 1,
+        "totalPages": 1,
+        "totalResults": 2,
+        "results": [
+            {
+                "id": 301,
+                "title": "Severance",
+                "mediaType": "tv",
+                "releaseDate": "2025-01-17",
+                "mediaInfo": {"tmdbId": 95396},
+            },
+            {
+                "id": 302,
+                "title": "The Pitt",
+                "mediaType": "tv",
+                "releaseDate": "2025-01-09",
+                "mediaInfo": {"tmdbId": 249135},
+            },
+        ],
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    # ------------------------------------------------------------------ 3.5
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``upcoming-tv`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "upcoming-tv",
+            "page": None,
+            "language": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def test_cmd_upcoming_tv_dispatch_table_registration(self) -> None:
+        """``cmd_upcoming_tv`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
+        import arr_cli.seerr as seerr
+
+        # Dispatch table entry points to a callable handler.
+        self.assertIn("upcoming-tv", seerr._DISPATCH)
+        self.assertTrue(
+            callable(seerr._DISPATCH["upcoming-tv"]),
+            msg="cmd_upcoming_tv is not callable",
+        )
+        # Public surface: the handler and the path constant are exported
+        # so tests can assert against the literal endpoint.
+        self.assertIn("cmd_upcoming_tv", seerr.__all__)
+        self.assertIn("UPCOMING_TV_PATH", seerr.__all__)
+        self.assertEqual(
+            seerr.UPCOMING_TV_PATH,
+            "/api/v1/discover/tv/upcoming",
+        )
+
+    def test_seerr_upcoming_tv_default_hits_endpoint(self) -> None:
+        """``seerr upcoming-tv`` hits the endpoint with no ``page`` / ``language`` on the wire.
+
+        Pins the documented "keep it simple" CLI surface: the
+        command does NOT forward ``mediaType`` / ``timeWindow`` (the
+        media type is fixed in the path) and the universal ``--page``
+        / ``--language`` flags are only forwarded when the operator
+        passes them. The empty ``query_param_matcher({})`` match
+        asserts no extra query keys ride the default request.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "upcoming-tv"]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/discover/tv/upcoming`` AND no params rode on
+            # the wire. Any other path or query value would have left
+            # the mock unmatched and surfaced a connection error.
+            self.assertEqual(len(rsps.calls), 1)
+            # The response body's per-item ``title`` field is rendered
+            # onto stdout via the default TSV summary.
+            self.assertIn("Severance", stdout)
+
+    def test_seerr_upcoming_tv_with_page_and_language(self) -> None:
+        """``seerr upcoming-tv --page 3 --language fr-FR`` forwards both filters."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"page": "3", "language": "fr-FR"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "upcoming-tv",
+                    "--page", "3",
+                    "--language", "fr-FR",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_upcoming_tv_human_renders_tsv(self) -> None:
+        """``--human`` renders the curated summary as a tabular TSV with the documented column headers."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "upcoming-tv",
+                        "--human",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Header line names the columns the renderer projects:
+            # ``title``, ``mediaType``, ``releaseDate``,
+            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
+            # nested key).
+            header_line = stdout.splitlines()[0]
+            for column in (
+                "title",
+                "mediaType",
+                "releaseDate",
+                "mediaInfo.tmdbId",
+            ):
+                self.assertIn(
+                    column, header_line,
+                    msg=(
+                        f"column {column!r} missing from --human header: "
+                        f"{header_line!r}"
+                    ),
+                )
+
+    def test_seerr_upcoming_tv_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher({})
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "upcoming-tv",
+                        "--verbose",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Verbose mode dumps the response envelope as JSON, unchanged.
+            self.assertEqual(json.loads(stdout), self.ENVELOPE)
+
+    def test_seerr_upcoming_tv_http_error_returns_exit_4(self) -> None:
+        """Non-2xx on the ``upcoming-tv`` endpoint surfaces as exit ``4`` + structured stderr.
+
+        Mirrors the sibling ``trending`` HTTP-error contract: the
+        transport raises :class:`HttpError(exit_code=4)`,
+        :func:`main_wrapper` translates it to a structured
+        ``service=seerr op=upcoming-tv status=<code>`` line on
+        stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        preserved. ``assertIn`` is used so the assertion is robust
+        to additional stderr framing (e.g. message trailers appended
+        by ``main_wrapper``).
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv/upcoming",
+                status=500,
+                body="Internal Server Error",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "upcoming-tv"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(exit_code, 4)
+        # No payload on stdout — the structured error line goes to
+        # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        # preserved.
+        self.assertEqual(stdout, "")
+        # Structured line: ``service=seerr op=/api/v1/discover/tv/upcoming status=500``.
+        self.assertIn(
+            "service=seerr op=/api/v1/discover/tv/upcoming status=500",
+            stderr,
+            msg=(
+                "expected structured HTTP-error stderr line; "
+                f"got {stderr!r}"
+            ),
+        )
+
+    # ------------------------------------------------------------------ 3.8
+    def test_summary_seerr_upcoming_tv_envelope_unwraps_results(self) -> None:
+        """Renderer iterates ``results`` of a paginated envelope, not the envelope itself."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        rendered = _summary_seerr_upcoming_tv(self.ENVELOPE)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Severance")
+        self.assertEqual(rendered[1]["title"], "The Pitt")
+        # Nested ``mediaInfo.tmdbId`` is preserved.
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 95396)
+        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 249135)
+
+    def test_summary_seerr_upcoming_tv_bare_list_unchanged(self) -> None:
+        """Renderer iterates a bare list payload (defensive envelope-drift guard)."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        rendered = _summary_seerr_upcoming_tv(self.ENVELOPE["results"])
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Severance")
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 95396)
+
+    def test_summary_seerr_upcoming_tv_envelope_without_results_returns_empty(
+        self,
+    ) -> None:
+        """An envelope missing the ``results`` key maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        rendered = _summary_seerr_upcoming_tv(
+            {"page": 1, "totalPages": 0, "totalResults": 0}
+        )
+        self.assertEqual(rendered, [])
+
+    def test_summary_seerr_upcoming_tv_non_mapping_non_list_returns_empty(
+        self,
+    ) -> None:
+        """A scalar / ``None`` payload maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        self.assertEqual(_summary_seerr_upcoming_tv(None), [])
+        self.assertEqual(_summary_seerr_upcoming_tv("not a list"), [])
+        self.assertEqual(_summary_seerr_upcoming_tv(42), [])
+
+    def test_summary_seerr_upcoming_tv_envelope_drops_non_mapping_items(
+        self,
+    ) -> None:
+        """Non-Mapping items inside ``results`` are dropped silently."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 3,
+            "results": [
+                {
+                    "title": "Foo",
+                    "mediaType": "tv",
+                    "releaseDate": "2024-01-01",
+                    "mediaInfo": {"tmdbId": 1},
+                },
+                "stray non-mapping item",
+                {
+                    "title": "Bar",
+                    "mediaType": "tv",
+                    "releaseDate": "2024-02-01",
+                    "mediaInfo": {"tmdbId": 2},
+                },
+            ],
+        }
+        rendered = _summary_seerr_upcoming_tv(envelope)
+        # Two curated rows survive; the stray string is dropped.
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(rendered[1]["title"], "Bar")
+
+    # ------------------------------------------------------------------ US-2 AC4
+    def test_cmd_upcoming_tv_limit_caps_human_rows(self) -> None:
+        """``--limit N`` caps the ``--human`` rendering to ``N`` rows + footer line.
+
+        Regression pinning US-2 AC4: the post-fetch cap on
+        ``seerr upcoming-tv --human --limit N`` must mirror the
+        sibling list-command contract — the renderer slices the
+        curated summary to ``N`` rows and appends the pagination
+        footer ``"… (M more item[s]; use --limit to see more)"`` so
+        the operator is warned the displayed list is truncated.
+        """
+        from arr_cli.seerr import cmd_upcoming_tv
+
+        # Build a 30-item envelope so ``--limit 10`` truncates to 10
+        # rows and the footer surfaces a non-zero hidden-count.
+        items: list[dict[str, Any]] = [
+            {
+                "title": f"Title {i:02d}",
+                "mediaType": "tv",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 1000 + i},
+            }
+            for i in range(30)
+        ]
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 30,
+            "results": items,
+        }
+        args = self._make_args(human=True, limit=10)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=envelope,
+        ):
+            output = _capture_stdout(cmd_upcoming_tv, args, None)
         lines = output.splitlines()
         # Header + separator + N data rows + (optional) truncation
         # footer line. Counting data rows directly: skip the header

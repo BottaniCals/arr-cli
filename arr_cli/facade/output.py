@@ -930,6 +930,95 @@ def _summary_seerr_trending(payload: Any) -> list[dict[str, Any]]:
     return summaries
 
 
+def _summary_seerr_upcoming_movies(payload: Any) -> list[dict[str, Any]]:
+    """Render a Seerr ``upcoming-movies`` payload as the curated summary.
+
+    ``GET /api/v1/discover/movies/upcoming`` returns a paginated
+    envelope of the shape ``{page, totalPages, totalResults,
+    results: [...]}`` -- the same envelope
+    :func:`_summary_seerr_trending` consumes -- so the projection is
+    intentionally identical: ``title``, ``mediaType``, ``releaseDate``,
+    ``mediaInfo.tmdbId``. A bare list is unchanged behaviour
+    (defensive against envelope-drift across Seer versions). The
+    only difference from :func:`_summary_seerr_trending` is the
+    dispatch key -- same envelope, same per-item shape, so the
+    renderer is byte-identical to keep row-for-row alignment when
+    the operator tabulates ``seerr trending`` and ``seerr
+    upcoming-movies`` together.
+    """
+    if isinstance(payload, Mapping):
+        payload = payload.get("results")
+    if not isinstance(payload, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        media_info = item.get("mediaInfo")
+        if isinstance(media_info, Mapping):
+            media_info_obj: dict[str, Any] = {
+                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
+            }
+        else:
+            media_info_obj = {"tmdbId": 0}
+        summaries.append(
+            {
+                "title": _safe_get(item, "title", default=None),
+                "mediaType": _safe_get(item, "mediaType", default=None),
+                "releaseDate": _safe_get(
+                    item, "releaseDate", default=None
+                ),
+                "mediaInfo": media_info_obj,
+            }
+        )
+    return summaries
+
+
+def _summary_seerr_upcoming_tv(payload: Any) -> list[dict[str, Any]]:
+    """Render a Seerr ``upcoming-tv`` payload as the curated summary.
+
+    ``GET /api/v1/discover/tv/upcoming`` returns a paginated envelope
+    of the shape ``{page, totalPages, totalResults, results: [...]}``
+    -- the same envelope :func:`_summary_seerr_trending` and
+    :func:`_summary_seerr_upcoming_movies` consume -- so the
+    projection is intentionally identical: ``title``,
+    ``mediaType``, ``releaseDate``, ``mediaInfo.tmdbId``. A bare
+    list is unchanged behaviour (defensive against envelope-drift
+    across Seer versions). The only difference from
+    :func:`_summary_seerr_upcoming_movies` is the dispatch key --
+    same envelope, same per-item shape, so the renderer is
+    byte-identical and keeps row-for-row alignment when the
+    operator tabulates ``seerr upcoming-movies`` and ``seerr
+    upcoming-tv`` together.
+    """
+    if isinstance(payload, Mapping):
+        payload = payload.get("results")
+    if not isinstance(payload, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        media_info = item.get("mediaInfo")
+        if isinstance(media_info, Mapping):
+            media_info_obj: dict[str, Any] = {
+                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
+            }
+        else:
+            media_info_obj = {"tmdbId": 0}
+        summaries.append(
+            {
+                "title": _safe_get(item, "title", default=None),
+                "mediaType": _safe_get(item, "mediaType", default=None),
+                "releaseDate": _safe_get(
+                    item, "releaseDate", default=None
+                ),
+                "mediaInfo": media_info_obj,
+            }
+        )
+    return summaries
+
+
 def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
     """Render a Seerr ``tv <id>`` payload as the curated summary.
 
@@ -1178,6 +1267,8 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("seerr", "tv"): _summary_seerr_tv,
     ("seerr", "movie"): _summary_seerr_movie,
     ("seerr", "trending"): _summary_seerr_trending,
+    ("seerr", "upcoming-movies"): _summary_seerr_upcoming_movies,
+    ("seerr", "upcoming-tv"): _summary_seerr_upcoming_tv,
     ("maintainerr", "pending"): _summary_maintainerr_pending,
 }
 

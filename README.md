@@ -195,7 +195,7 @@ passed.
 > it requires confirming `/api/rules` against the operator's live
 > `/api/swagger`.
 
-### 4.5 Seer (`seerr` — 8 commands)
+### 4.5 Seer (`seerr` — 10 commands)
 
 | Command                   | HTTP | Path                                    | Notes                                                                            |
 | ------------------------- | :--: | --------------------------------------- | -------------------------------------------------------------------------------- |
@@ -207,6 +207,8 @@ passed.
 | `seerr tv <id>`           | GET  | `/api/v1/tv/<id>?language=<LANG>`       | Adds `…/ratings` on `--ratings`; both endpoints accept `?language=<LANG>`.       |
 | `seerr movie <id>`        | GET  | `/api/v1/movie/<id>?language=<LANG>`    | Adds `…/ratings` on `--ratings`; both endpoints accept `?language=<LANG>`. Structural twin of `seerr tv <id>`. |
 | `seerr trending [MEDIA_TYPE] [TIME_WINDOW]` | GET | `/api/v1/discover/trending?mediaType=<…>&timeWindow=<…>&language=<…>` | `MEDIA_TYPE ∈ {movie, tv} (omit = all); TIME_WINDOW ∈ {day, week}, default week. Accepts optional `--language`. |
+| `seerr upcoming-movies`            | GET  | `/api/v1/discover/movies/upcoming?page=<…>&language=<…>` | Paginated upcoming movie releases. Universal flags only; no positional media type (fixed at command level). |
+| `seerr upcoming-tv`                | GET  | `/api/v1/discover/tv/upcoming?page=<…>&language=<…>`      | Paginated upcoming TV premieres. Universal flags only; no positional media type (fixed at command level). |
 
 > **Upstream: Seer.** The `seerr` CLI targets
 > [Seer](https://github.com/seerr-team/seerr), the unified fork of

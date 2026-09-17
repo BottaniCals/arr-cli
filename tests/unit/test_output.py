@@ -2257,6 +2257,22 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "mediaInfo": {"tmdbId": 999},
             }
         ],
+        ("seerr", "upcoming-movies"): [
+            {
+                "title": "Foo",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ],
+        ("seerr", "upcoming-tv"): [
+            {
+                "title": "Foo",
+                "mediaType": "tv",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ],
         ("seerr", "tv"): [
             {
                 "name": "Doctor Who",

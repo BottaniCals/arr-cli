@@ -93,6 +93,8 @@ within the pre-1.0 contract documented in `README.md`.
   with `seerr search`. `--limit`, `--human`, and `--verbose`
   route through the standard renderer priority chain
   (`--human` > `--verbose` > default summary > verbatim JSON).
+- `seerr upcoming-movies` -- upcoming movie releases via `GET /api/v1/discover/movies/upcoming?page=<…>&language=<…>`. Default summary mirrors `seerr trending` (envelope `results` iterated; per-item projection `title`, `mediaType`, `releaseDate`, `mediaInfo.tmdbId`). Universal flags only; no positional media type (fixed at command level).
+- `seerr upcoming-tv` -- upcoming TV premieres via `GET /api/v1/discover/tv/upcoming?page=<…>&language=<…>`. Default summary mirrors `seerr trending` (envelope `results` iterated; per-item projection `title`, `mediaType`, `releaseDate`, `mediaInfo.tmdbId`). Universal flags only; no positional media type (fixed at command level).
 
 ### Fixed
 
