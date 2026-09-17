@@ -7,6 +7,19 @@ within the pre-1.0 contract documented in `README.md`.
 
 ## [Unreleased]
 
+### Added
+
+- `seerr discover-movies` -- filterable movie discover against
+  `GET /api/v1/discover/movies`. Defaults `sortBy=popularity.desc`,
+  `language=en-US`, `page=1`. Optional filters `--genre <id>` (int),
+  `--sort <sortBy>`, `--language <code>`, `--page <n>`. Universal
+  `--limit` is client-side only (caps the renderer, never sent on
+  the wire). Pair with `seerr genres movie` to look up TMDB genre ids.
+- `seerr discover-tv` -- structural twin of `discover-movies` for TV
+  against `GET /api/v1/discover/tv`. Same flag surface, same defaults,
+  same client-side `--limit` contract. Pair with `seerr genres tv` to
+  look up TMDB genre ids.
+
 ### Removed
 
 - `seerr media <tmdbId>` -- the command has been removed because
