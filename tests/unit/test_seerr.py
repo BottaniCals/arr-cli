@@ -103,7 +103,7 @@ class TestSeerrModule(unittest.TestCase):
         parser = build_seerr_parser()
         self.assertIsInstance(parser, argparse.ArgumentParser)
 
-    def test_seerr_has_eight_commands(self) -> None:
+    def test_seerr_has_ten_commands(self) -> None:
         """The subparser exposes exactly the ten documented Seerr commands."""
         from arr_cli.seerr import build_seerr_parser
 
@@ -2605,6 +2605,27 @@ class TestCmdUpcomingMovies(unittest.TestCase):
         except OSError:
             pass
 
+    # ------------------------------------------------------------------ 3.5
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``upcoming-movies`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "upcoming-movies",
+            "page": None,
+            "language": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
     def test_cmd_upcoming_movies_dispatch_table_registration(self) -> None:
         """``cmd_upcoming_movies`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
         import arr_cli.seerr as seerr
@@ -2809,6 +2830,156 @@ class TestCmdUpcomingMovies(unittest.TestCase):
             ),
         )
 
+    # ------------------------------------------------------------------ 3.8
+    def test_summary_seerr_upcoming_movies_envelope_unwraps_results(self) -> None:
+        """Renderer iterates ``results`` of a paginated envelope, not the envelope itself."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        rendered = _summary_seerr_upcoming_movies(self.ENVELOPE)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Mickey 17")
+        self.assertEqual(rendered[1]["title"], "Captain America: Brave New World")
+        # Nested ``mediaInfo.tmdbId`` is preserved.
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 696506)
+        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 822119)
+
+    def test_summary_seerr_upcoming_movies_bare_list_unchanged(self) -> None:
+        """Renderer iterates a bare list payload (defensive envelope-drift guard)."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        rendered = _summary_seerr_upcoming_movies(self.ENVELOPE["results"])
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Mickey 17")
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 696506)
+
+    def test_summary_seerr_upcoming_movies_envelope_without_results_returns_empty(
+        self,
+    ) -> None:
+        """An envelope missing the ``results`` key maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        rendered = _summary_seerr_upcoming_movies(
+            {"page": 1, "totalPages": 0, "totalResults": 0}
+        )
+        self.assertEqual(rendered, [])
+
+    def test_summary_seerr_upcoming_movies_non_mapping_non_list_returns_empty(
+        self,
+    ) -> None:
+        """A scalar / ``None`` payload maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        self.assertEqual(_summary_seerr_upcoming_movies(None), [])
+        self.assertEqual(_summary_seerr_upcoming_movies("not a list"), [])
+        self.assertEqual(_summary_seerr_upcoming_movies(42), [])
+
+    def test_summary_seerr_upcoming_movies_envelope_drops_non_mapping_items(
+        self,
+    ) -> None:
+        """Non-Mapping items inside ``results`` are dropped silently."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_movies
+
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 3,
+            "results": [
+                {
+                    "title": "Foo",
+                    "mediaType": "movie",
+                    "releaseDate": "2024-01-01",
+                    "mediaInfo": {"tmdbId": 1},
+                },
+                "stray non-mapping item",
+                {
+                    "title": "Bar",
+                    "mediaType": "movie",
+                    "releaseDate": "2024-02-01",
+                    "mediaInfo": {"tmdbId": 2},
+                },
+            ],
+        }
+        rendered = _summary_seerr_upcoming_movies(envelope)
+        # Two curated rows survive; the stray string is dropped.
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(rendered[1]["title"], "Bar")
+
+    # ------------------------------------------------------------------ US-1 AC4
+    def test_cmd_upcoming_movies_limit_caps_human_rows(self) -> None:
+        """``--limit N`` caps the ``--human`` rendering to ``N`` rows + footer line.
+
+        Regression pinning US-1 AC4: the post-fetch cap on
+        ``seerr upcoming-movies --human --limit N`` must mirror the
+        sibling list-command contract — the renderer slices the
+        curated summary to ``N`` rows and appends the pagination
+        footer ``"… (M more item[s]; use --limit to see more)"`` so
+        the operator is warned the displayed list is truncated.
+        """
+        from arr_cli.seerr import cmd_upcoming_movies
+
+        # Build a 30-item envelope so ``--limit 10`` truncates to 10
+        # rows and the footer surfaces a non-zero hidden-count.
+        items: list[dict[str, Any]] = [
+            {
+                "title": f"Title {i:02d}",
+                "mediaType": "movie",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 1000 + i},
+            }
+            for i in range(30)
+        ]
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 30,
+            "results": items,
+        }
+        args = self._make_args(human=True, limit=10)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=envelope,
+        ):
+            output = _capture_stdout(cmd_upcoming_movies, args, None)
+        lines = output.splitlines()
+        # Header + separator + N data rows + (optional) truncation
+        # footer line. Counting data rows directly: skip the header
+        # and separator rows plus any pagination/footer line.
+        data_lines = [
+            line for line in lines[2:]
+            if line.strip()
+            and not line.startswith("\u2026")
+            and not line.startswith("…")
+        ]
+        self.assertEqual(
+            len(data_lines), 10,
+            msg=(
+                "--limit 10 must cap --human rows to 10; "
+                f"got {len(data_lines)} data lines:\n{output!r}"
+            ),
+        )
+        # The truncation footer line tells the operator the list was
+        # truncated and how many rows were hidden.
+        self.assertTrue(
+            any(
+                "more item" in line and "--limit" in line
+                for line in lines
+            ),
+            msg=(
+                "truncation footer missing — --limit was not "
+                f"honoured; output:\n{output!r}"
+            ),
+        )
+        # The footer must report 20 hidden items (30 - 10).
+        self.assertIn(
+            "20 more items",
+            output,
+            msg=(
+                "truncation footer must report the 20 hidden items; "
+                f"got:\n{output!r}"
+            ),
+        )
+
 
 class TestCmdUpcomingTv(unittest.TestCase):
     """Regression tests pinning the endpoint, params, and summary shape for ``cmd_upcoming_tv``.
@@ -2867,6 +3038,27 @@ class TestCmdUpcomingTv(unittest.TestCase):
             shutil.rmtree(self.tmp_dir)
         except OSError:
             pass
+
+    # ------------------------------------------------------------------ 3.5
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``upcoming-tv`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "upcoming-tv",
+            "page": None,
+            "language": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
 
     def test_cmd_upcoming_tv_dispatch_table_registration(self) -> None:
         """``cmd_upcoming_tv`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
@@ -3069,6 +3261,156 @@ class TestCmdUpcomingTv(unittest.TestCase):
             msg=(
                 "expected structured HTTP-error stderr line; "
                 f"got {stderr!r}"
+            ),
+        )
+
+    # ------------------------------------------------------------------ 3.8
+    def test_summary_seerr_upcoming_tv_envelope_unwraps_results(self) -> None:
+        """Renderer iterates ``results`` of a paginated envelope, not the envelope itself."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        rendered = _summary_seerr_upcoming_tv(self.ENVELOPE)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Severance")
+        self.assertEqual(rendered[1]["title"], "The Pitt")
+        # Nested ``mediaInfo.tmdbId`` is preserved.
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 95396)
+        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 249135)
+
+    def test_summary_seerr_upcoming_tv_bare_list_unchanged(self) -> None:
+        """Renderer iterates a bare list payload (defensive envelope-drift guard)."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        rendered = _summary_seerr_upcoming_tv(self.ENVELOPE["results"])
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Severance")
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 95396)
+
+    def test_summary_seerr_upcoming_tv_envelope_without_results_returns_empty(
+        self,
+    ) -> None:
+        """An envelope missing the ``results`` key maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        rendered = _summary_seerr_upcoming_tv(
+            {"page": 1, "totalPages": 0, "totalResults": 0}
+        )
+        self.assertEqual(rendered, [])
+
+    def test_summary_seerr_upcoming_tv_non_mapping_non_list_returns_empty(
+        self,
+    ) -> None:
+        """A scalar / ``None`` payload maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        self.assertEqual(_summary_seerr_upcoming_tv(None), [])
+        self.assertEqual(_summary_seerr_upcoming_tv("not a list"), [])
+        self.assertEqual(_summary_seerr_upcoming_tv(42), [])
+
+    def test_summary_seerr_upcoming_tv_envelope_drops_non_mapping_items(
+        self,
+    ) -> None:
+        """Non-Mapping items inside ``results`` are dropped silently."""
+        from arr_cli.facade.output import _summary_seerr_upcoming_tv
+
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 3,
+            "results": [
+                {
+                    "title": "Foo",
+                    "mediaType": "tv",
+                    "releaseDate": "2024-01-01",
+                    "mediaInfo": {"tmdbId": 1},
+                },
+                "stray non-mapping item",
+                {
+                    "title": "Bar",
+                    "mediaType": "tv",
+                    "releaseDate": "2024-02-01",
+                    "mediaInfo": {"tmdbId": 2},
+                },
+            ],
+        }
+        rendered = _summary_seerr_upcoming_tv(envelope)
+        # Two curated rows survive; the stray string is dropped.
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(rendered[1]["title"], "Bar")
+
+    # ------------------------------------------------------------------ US-2 AC4
+    def test_cmd_upcoming_tv_limit_caps_human_rows(self) -> None:
+        """``--limit N`` caps the ``--human`` rendering to ``N`` rows + footer line.
+
+        Regression pinning US-2 AC4: the post-fetch cap on
+        ``seerr upcoming-tv --human --limit N`` must mirror the
+        sibling list-command contract — the renderer slices the
+        curated summary to ``N`` rows and appends the pagination
+        footer ``"… (M more item[s]; use --limit to see more)"`` so
+        the operator is warned the displayed list is truncated.
+        """
+        from arr_cli.seerr import cmd_upcoming_tv
+
+        # Build a 30-item envelope so ``--limit 10`` truncates to 10
+        # rows and the footer surfaces a non-zero hidden-count.
+        items: list[dict[str, Any]] = [
+            {
+                "title": f"Title {i:02d}",
+                "mediaType": "tv",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 1000 + i},
+            }
+            for i in range(30)
+        ]
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 30,
+            "results": items,
+        }
+        args = self._make_args(human=True, limit=10)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=envelope,
+        ):
+            output = _capture_stdout(cmd_upcoming_tv, args, None)
+        lines = output.splitlines()
+        # Header + separator + N data rows + (optional) truncation
+        # footer line. Counting data rows directly: skip the header
+        # and separator rows plus any pagination/footer line.
+        data_lines = [
+            line for line in lines[2:]
+            if line.strip()
+            and not line.startswith("\u2026")
+            and not line.startswith("…")
+        ]
+        self.assertEqual(
+            len(data_lines), 10,
+            msg=(
+                "--limit 10 must cap --human rows to 10; "
+                f"got {len(data_lines)} data lines:\n{output!r}"
+            ),
+        )
+        # The truncation footer line tells the operator the list was
+        # truncated and how many rows were hidden.
+        self.assertTrue(
+            any(
+                "more item" in line and "--limit" in line
+                for line in lines
+            ),
+            msg=(
+                "truncation footer missing — --limit was not "
+                f"honoured; output:\n{output!r}"
+            ),
+        )
+        # The footer must report 20 hidden items (30 - 10).
+        self.assertIn(
+            "20 more items",
+            output,
+            msg=(
+                "truncation footer must report the 20 hidden items; "
+                f"got:\n{output!r}"
             ),
         )
 
