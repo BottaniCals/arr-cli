@@ -3,35 +3,46 @@
 This module is the Seer entry point for the ``arr-cli`` MVP.
 Seer is the unified fork of Overseerr and Jellyseerr; the CLI
 talks to whatever Seer instance the operator points it at via
-``arr.conf``. It exposes seven read-only commands against a live
+``arr.conf``. It exposes eight read-only commands against a live
 Seer instance:
 
-* ``requests``            -- ``GET /api/v1/request``                 (REQ-10 AC1)
-* ``request-count``       -- ``GET /api/v1/request/count``           (REQ-10 AC2)
-* ``search <query>``      -- ``GET /api/v1/search?query=...``       (REQ-10 AC3)
-* ``available <query>``   -- ``GET /api/v1/media?filter=available&take=1000`` (REQ-10 AC4)
-* ``user``                -- auth self-check (REQ-10 AC6); single
-                             ``GET /api/v1/auth/me`` probe (the
-                             OpenAPI spec lists ``/auth/me`` relative
-                             to its ``/api/v1`` base, so the full
-                             path is ``/api/v1/auth/me`` -- AGENTS.md
-                             §1 "Seer note"; the bare ``/auth/me``
-                             resolves to the Next.js frontend SPA).
-* ``tv <id>``             -- single-show detail fetch
-                             ``GET /api/v1/tv/{tvId}?language=...``;
-                             with ``--ratings``, also ``GET
-                             /api/v1/tv/{tvId}/ratings`` merged in
-                             for Rotten Tomatoes critic + audience
-                             scores (REQ-10 AC5).
-* ``movie <id>``          -- single-movie detail fetch
-                             ``GET /api/v1/movie/{movieId}?language=...``;
-                             with ``--ratings``, also ``GET
-                             /api/v1/movie/{movieId}/ratings`` merged
-                             in for Rotten Tomatoes critic + audience
-                             scores. Structural twin of ``tv <id>``
-                             so future drift between the two
-                             commands fails the unit suite
-                             immediately.
+* ``requests``                       -- ``GET /api/v1/request``                 (REQ-10 AC1)
+* ``request-count``                  -- ``GET /api/v1/request/count``           (REQ-10 AC2)
+* ``search <query>``                 -- ``GET /api/v1/search?query=...``       (REQ-10 AC3)
+* ``available <query>``              -- ``GET /api/v1/media?filter=available&take=1000`` (REQ-10 AC4)
+* ``user``                           -- auth self-check (REQ-10 AC6); single
+                                        ``GET /api/v1/auth/me`` probe (the
+                                        OpenAPI spec lists ``/auth/me`` relative
+                                        to its ``/api/v1`` base, so the full
+                                        path is ``/api/v1/auth/me`` -- AGENTS.md
+                                        §1 "Seer note"; the bare ``/auth/me``
+                                        resolves to the Next.js frontend SPA).
+* ``tv <id>``                        -- single-show detail fetch
+                                        ``GET /api/v1/tv/{tvId}?language=...``;
+                                        with ``--ratings``, also ``GET
+                                        /api/v1/tv/{tvId}/ratings`` merged in
+                                        for Rotten Tomatoes critic + audience
+                                        scores (REQ-10 AC5).
+* ``movie <id>``                     -- single-movie detail fetch
+                                        ``GET /api/v1/movie/{movieId}?language=...``;
+                                        with ``--ratings``, also ``GET
+                                        /api/v1/movie/{movieId}/ratings`` merged
+                                        in for Rotten Tomatoes critic + audience
+                                        scores. Structural twin of ``tv <id>``
+                                        so future drift between the two
+                                        commands fails the unit suite
+                                        immediately.
+* ``trending [MEDIA_TYPE] [TIME_WINDOW]``
+                                    -- ``GET /api/v1/discover/trending?timeWindow=week[&mediaType=...][&language=...]``;
+                                        optional positional ``MEDIA_TYPE``
+                                        (``movie`` / ``tv``; omit = all media
+                                        types) and ``TIME_WINDOW``
+                                        (``day`` / ``week``; default ``week``).
+                                        Shares the paginated
+                                        ``{page, results, totalPages, totalResults}``
+                                        envelope shape with ``search`` so the
+                                        renderer mirrors
+                                        :func:`_summary_seerr_search` exactly.
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -105,9 +116,11 @@ __all__ = [
     "cmd_user",
     "cmd_tv",
     "cmd_movie",
-    # Path constant exposed so tests can assert against the exact
-    # string for the auth self-check endpoint.
+    "cmd_trending",
+    # Path constants exposed so tests can assert against the exact
+    # strings for each endpoint.
     "USER_ME_PATH",
+    "TRENDING_PATH",
 ]
 
 
@@ -123,6 +136,15 @@ SERVICE_NAME = "seerr"
 #: mounted at ``/api-docs`` with ``url: {server}/api/v1``, so the
 #: spec's ``/auth/me`` is relative to that prefix.
 USER_ME_PATH = "/api/v1/auth/me"
+
+
+#: Path for the trending discover endpoint.
+#: ``GET /api/v1/discover/trending`` -- the canonical Seer discover
+#: endpoint; accepts ``timeWindow`` (``day`` / ``week``), optional
+#: ``mediaType`` (``movie`` / ``tv``; omit = all media types) and
+#: optional ``language`` (``ISO 639-1``) query parameters. The live
+#: OpenAPI spec is the source of truth per AGENTS.md §1 "Seer note".
+TRENDING_PATH = "/api/v1/discover/trending"
 
 
 # Module-level logger so the documented DEBUG probe records
@@ -554,6 +576,69 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+def cmd_trending(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+    """Seerr ``trending [MEDIA_TYPE] [TIME_WINDOW]`` -- what's trending on Seer right now.
+
+    ``GET /api/v1/discover/trending`` returns the paginated envelope
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_search` consumes -- so the renderer is a
+    near-verbatim copy of :func:`_summary_seerr_search`. Each item
+    carries at minimum ``title``, ``mediaType``, ``releaseDate`` and
+    ``mediaInfo.tmdbId`` (same projection as the ``search`` command).
+
+    Three optional filters ride on the query string:
+
+    * ``timeWindow`` (``day`` / ``week``) -- always sent (default
+      ``week`` from the subparser); the documented default IS the
+      value the operator wants, so there is no
+      ``omit-when-default`` rule for this flag.
+    * ``mediaType`` (``movie`` / ``tv``) -- only forwarded when the
+      operator passed a positional ``MEDIA_TYPE``; omitting it asks
+      Seer for "all media types".
+    * ``language`` (``ISO 639-1``) -- only forwarded when
+      ``--language`` is set; no empty ``?language=`` rides the wire.
+
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces as a
+    structured ``service=seerr op=/api/v1/discover/trending status=<code>``
+    stderr line; the operator's diagnostic tools keep working unchanged.
+
+    Authentication is handled transparently by the transport layer
+    (``X-Api-Key`` header per REQ-2 AC3); this handler does not inspect
+    or echo the credential.
+    """
+    params: dict[str, Any] = {}
+    # ``timeWindow`` always rides on the query string because the
+    # documented default (``week``) IS the value the operator wants
+    # -- there's no omit-when-default rule for this flag (US-3 AC6).
+    params["timeWindow"] = getattr(args, "time_window", "week") or "week"
+    media_type = getattr(args, "media_type", None)
+    if media_type:
+        params["mediaType"] = media_type
+    language = getattr(args, "language", None)
+    if language:
+        params["language"] = language
+    payload = _get(
+        TRENDING_PATH,
+        args,
+        cfg,
+        params=params,
+        op="trending",
+    )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_trending``: nested ``mediaInfo.tmdbId`` is
+    # resolved via dot-path traversal in ``_row_from_mapping``.
+    # Sibling literal of the ``cmd_search`` ``columns`` so the two
+    # commands share the same per-row projection.
+    columns = [
+        "title",
+        "mediaType",
+        "releaseDate",
+        "mediaInfo.tmdbId",
+    ]
+    return _emit(payload, args, columns=columns)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -578,6 +663,7 @@ _DISPATCH = {
     "user": cmd_user,
     "tv": cmd_tv,
     "movie": cmd_movie,
+    "trending": cmd_trending,
 }
 
 
@@ -613,12 +699,13 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         prog=SERVICE_NAME,
         description=(
             "Read-only CLI for Seer (the unified Overseerr + "
-            "Jellyseerr fork). Seven commands expose the "
+            "Jellyseerr fork). Eight commands expose the "
             "household request queue, request summary counts, "
             "multi-source search, what's already available in "
             "the library, the current authenticated user, "
-            "per-show TV details, and per-movie details "
-            "(optionally with Rotten Tomatoes ratings)."
+            "per-show TV details, per-movie details "
+            "(optionally with Rotten Tomatoes ratings), and "
+            "the live trending-discover feed."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -759,6 +846,48 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         help=(
             "ISO 639-1 language code forwarded as the "
             "?language=<LANG> query parameter on both endpoints"
+        ),
+    )
+
+    trending = subparsers.add_parser(
+        "trending",
+        help=(
+            "list trending movies/TV "
+            "(GET /api/v1/discover/trending?timeWindow=week"
+            "[&mediaType=...][&language=...])"
+        ),
+        parents=universal_parents(),
+        add_help=False,
+    )
+    trending.add_argument(
+        "media_type",
+        nargs=argparse.OPTIONAL,
+        default=None,
+        choices=("movie", "tv"),
+        metavar="MEDIA_TYPE",
+        help=(
+            "optional media-type filter "
+            "(movie or tv; omit = all media types)"
+        ),
+    )
+    trending.add_argument(
+        "time_window",
+        nargs=argparse.OPTIONAL,
+        default="week",
+        choices=("day", "week"),
+        metavar="TIME_WINDOW",
+        help=(
+            "optional time-window filter "
+            "(day or week; default week)"
+        ),
+    )
+    trending.add_argument(
+        "--language",
+        default=None,
+        metavar="LANG",
+        help=(
+            "ISO 639-1 language code forwarded as the "
+            "?language=<LANG> query parameter"
         ),
     )
 

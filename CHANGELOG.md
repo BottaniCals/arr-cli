@@ -80,6 +80,19 @@ within the pre-1.0 contract documented in `README.md`.
   minutes to `"<X>h <Y>m"`), `tagline`. Structural twin of
   `seerr tv <id>` so future drift between the two commands fails
   the unit suite immediately.
+- `seerr trending [MEDIA_TYPE] [TIME_WINDOW]` -- Seer's
+  `GET /api/v1/discover/trending?page=&language=&mediaType=&timeWindow=`
+  endpoint. Both optional positional args are constrained by
+  argparse `choices=` (`MEDIA_TYPE` ∈ {`movie`, `tv`};
+  `TIME_WINDOW` ∈ {`day`, `week`}, defaulting to `week`); an
+  optional `--language` matches the per-service localization
+  surface used by `seerr tv <id>` / `seerr movie <id>`. Default
+  summary projects `title`, `mediaType`, `releaseDate`,
+  `mediaInfo.tmdbId` per result and unwraps the documented
+  `{page, results, totalPages, totalResults}` envelope shared
+  with `seerr search`. `--limit`, `--human`, and `--verbose`
+  route through the standard renderer priority chain
+  (`--human` > `--verbose` > default summary > verbatim JSON).
 
 ### Fixed
 

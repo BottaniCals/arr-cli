@@ -103,8 +103,8 @@ class TestSeerrModule(unittest.TestCase):
         parser = build_seerr_parser()
         self.assertIsInstance(parser, argparse.ArgumentParser)
 
-    def test_seerr_has_six_commands(self) -> None:
-        """The subparser exposes exactly the seven documented Seerr commands."""
+    def test_seerr_has_eight_commands(self) -> None:
+        """The subparser exposes exactly the eight documented Seerr commands."""
         from arr_cli.seerr import build_seerr_parser
 
         parser = build_seerr_parser()
@@ -123,9 +123,10 @@ class TestSeerrModule(unittest.TestCase):
                 "user",
                 "tv",
                 "movie",
+                "trending",
             },
         )
-        self.assertEqual(len(subparsers_action.choices), 7)
+        self.assertEqual(len(subparsers_action.choices), 8)
 
     def test_dispatch_table_keys(self) -> None:
         """``_dispatch`` maps every command name to a callable handler."""
@@ -139,6 +140,7 @@ class TestSeerrModule(unittest.TestCase):
             "user",
             "tv",
             "movie",
+            "trending",
         }
         # Inspect the private dispatch table directly so we cover
         # the registration contract without going through argparse.
@@ -1869,6 +1871,680 @@ class TestCmdMovieHttpPath(unittest.TestCase):
             )
             self.assertEqual(exit_code, 0)
             self.assertEqual(len(rsps.calls), 1)
+
+
+# ---------------------------------------------------------------------------
+# Test: ``cmd_trending`` -- live trending discover feed
+# ---------------------------------------------------------------------------
+
+
+class TestCmdTrending(unittest.TestCase):
+    """Regression tests pinning the endpoint, params, and summary shape for ``cmd_trending``.
+
+    Seer's discover endpoint is
+    ``GET /api/v1/discover/trending?timeWindow=week[&mediaType=...][&language=...]``.
+    It returns a paginated envelope of the shape
+    ``{page, totalPages, totalResults, results: [...]}`` -- the same
+    shape :func:`cmd_search` consumes -- so the renderer mirrors
+    :func:`_summary_seerr_search` exactly.
+
+    Defaults:
+
+    * ``timeWindow`` defaults to ``week`` and ALWAYS rides on the
+      query string (US-3 AC6: the documented default IS the value
+      the operator wants).
+    * ``mediaType`` is only forwarded when the operator passes the
+      positional ``MEDIA_TYPE`` (omit = all media types).
+    * ``language`` is only forwarded when ``--language`` is set
+      (no empty ``?language=`` rides the wire).
+
+    ``choices=`` validation on both positionals runs at parse time:
+    invalid values raise ``SystemExit(2)`` via argparse before any
+    HTTP request is issued.
+    """
+
+    ENVELOPE: dict[str, Any] = {
+        "page": 1,
+        "totalPages": 1,
+        "totalResults": 2,
+        "results": [
+            {
+                "id": 101,
+                "title": "Dune: Part Two",
+                "mediaType": "movie",
+                "releaseDate": "2024-03-01",
+                "mediaInfo": {"tmdbId": 693134},
+            },
+            {
+                "id": 102,
+                "title": "Shōgun",
+                "mediaType": "tv",
+                "releaseDate": "2024-02-27",
+                "mediaInfo": {"tmdbId": 127309},
+            },
+        ],
+    }
+
+    BARE_LIST: list[dict[str, Any]] = [
+        {
+            "title": "Dune: Part Two",
+            "mediaType": "movie",
+            "releaseDate": "2024-03-01",
+            "mediaInfo": {"tmdbId": 693134},
+        }
+    ]
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    # ------------------------------------------------------------------ 3.1
+    def test_cmd_trending_dispatch_table_registration(self) -> None:
+        """``cmd_trending`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
+        import arr_cli.seerr as seerr
+
+        # Dispatch table entry points to a callable handler.
+        self.assertIn("trending", seerr._DISPATCH)
+        self.assertTrue(
+            callable(seerr._DISPATCH["trending"]),
+            msg="cmd_trending is not callable",
+        )
+        # Public surface: the handler and the path constant are exported
+        # so tests can assert against the literal.
+        self.assertIn("cmd_trending", seerr.__all__)
+        self.assertIn("TRENDING_PATH", seerr.__all__)
+        self.assertEqual(
+            seerr.TRENDING_PATH, "/api/v1/discover/trending"
+        )
+
+    # ------------------------------------------------------------------ 3.2
+    def test_seerr_trending_default_hits_endpoint_with_timewindow_week(
+        self,
+    ) -> None:
+        """``seerr trending`` hits ``/api/v1/discover/trending`` with ``timeWindow=week`` default."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"timeWindow": "week"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "trending"]
+            )
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/discover/trending`` AND ``timeWindow=week``
+            # was on the wire and matched. Any other path or query
+            # value would have left the mock unmatched and surfaced a
+            # connection error.
+            self.assertEqual(len(rsps.calls), 1)
+
+    # ------------------------------------------------------------------ 3.3
+    def test_seerr_trending_movie_passes_media_type_movie(self) -> None:
+        """``seerr trending movie`` forwards ``mediaType=movie`` alongside ``timeWindow=week``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"mediaType": "movie", "timeWindow": "week"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "trending", "movie"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_trending_tv_passes_media_type_tv(self) -> None:
+        """``seerr trending tv`` forwards ``mediaType=tv`` alongside ``timeWindow=week``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"mediaType": "tv", "timeWindow": "week"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "trending", "tv"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_trending_invalid_media_type_rejected_at_parse_time(
+        self,
+    ) -> None:
+        """``seerr trending foo`` rejects ``foo`` at parse time; no HTTP request issued.
+
+        ``choices=`` validation runs at parse time and triggers
+        argparse's ``error()`` path. ``main_wrapper`` translates
+        that ``SystemExit(2)`` into a :class:`ConfigError` so the
+        operator sees the documented exit code ``1`` (AGENTS.md §6
+        "ConfigError -- malformed CLI input") and a structured
+        ``service=config op=parse message=...`` stderr line. The
+        transport layer is never reached, so the registered mock
+        stays unfired.
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "trending", "foo",
+                    ]
+                )
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(len(rsps.calls), 0)
+            # argparse's ``error()`` writes its diagnostic to stderr,
+            # keeping stdout pipe-clean so downstream consumers
+            # aren't disturbed by an invalid invocation.
+            self.assertEqual(stdout_buf.getvalue(), "")
+            # Structured ConfigError line confirms the parse-error
+            # surface (mirrors the cli_common contract). Argparse's
+            # ``error()`` writes its own usage line to stderr first,
+            # then ``main_wrapper`` appends the structured
+            # ``service=config op=parse ...`` follow-up line.
+            self.assertIn(
+                "service=config op=parse",
+                stderr_buf.getvalue(),
+                msg=(
+                    "expected structured parse-error stderr line; "
+                    f"got {stderr_buf.getvalue()!r}"
+                ),
+            )
+
+    # ------------------------------------------------------------------ 3.4
+    def test_seerr_trending_movie_day_passes_timewindow_day(self) -> None:
+        """``seerr trending movie day`` forwards ``mediaType=movie&timeWindow=day``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"mediaType": "movie", "timeWindow": "day"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "trending", "movie", "day",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_trending_tv_week_passes_explicit_week(self) -> None:
+        """``seerr trending tv week`` forwards ``mediaType=tv&timeWindow=week`` (explicit)."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"mediaType": "tv", "timeWindow": "week"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "trending", "tv", "week",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_trending_one_positional_defaults_timewindow_to_week(
+        self,
+    ) -> None:
+        """``seerr trending movie`` (one positional) defaults ``timeWindow`` to ``week``."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"mediaType": "movie", "timeWindow": "week"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "trending", "movie"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_trending_invalid_time_window_rejected_at_parse_time(
+        self,
+    ) -> None:
+        """``seerr trending movie hour`` rejects ``hour`` at parse time; no HTTP issued.
+
+        Mirrors :func:`test_seerr_trending_invalid_media_type_rejected_at_parse_time`:
+        ``choices=`` validation runs at parse time, ``main_wrapper``
+        translates the resulting ``SystemExit(2)`` to a
+        :class:`ConfigError` (exit ``1``), and the transport layer
+        is never reached.
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "trending", "movie", "hour",
+                    ]
+                )
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(len(rsps.calls), 0)
+            self.assertEqual(stdout_buf.getvalue(), "")
+            self.assertIn(
+                "service=config op=parse",
+                stderr_buf.getvalue(),
+                msg=(
+                    "expected structured parse-error stderr line; "
+                    f"got {stderr_buf.getvalue()!r}"
+                ),
+            )
+
+    # ------------------------------------------------------------------ 3.5
+    def test_seerr_trending_language_forwards_on_wire(self) -> None:
+        """``seerr trending --language en`` forwards ``language=en`` alongside other params."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {
+                            "mediaType": "movie",
+                            "timeWindow": "week",
+                            "language": "en",
+                        }
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "trending", "movie",
+                    "--language", "en",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    def test_seerr_trending_no_language_omits_language_key(self) -> None:
+        """Without ``--language``, no ``language`` key rides on the query string."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                json=self.ENVELOPE,
+                status=200,
+                match=[
+                    responses.matchers.query_param_matcher(
+                        {"timeWindow": "week"}
+                    )
+                ],
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "trending"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    # ------------------------------------------------------------------ 3.6
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``trending`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "trending",
+            "media_type": None,
+            "time_window": "week",
+            "language": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def test_cmd_trending_human_renders_table(self) -> None:
+        """``--human`` renders the curated summary as a tabular view."""
+        from arr_cli.seerr import cmd_trending
+
+        args = self._make_args(human=True, media_type="movie")
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_trending, args, None)
+        # The header line names the columns the renderer projects:
+        # ``title``, ``mediaType``, ``releaseDate``,
+        # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
+        # nested key).
+        header_line = output.splitlines()[0]
+        for column in (
+            "title",
+            "mediaType",
+            "releaseDate",
+            "mediaInfo.tmdbId",
+        ):
+            self.assertIn(
+                column, header_line,
+                msg=(
+                    f"column {column!r} missing from --human header: "
+                    f"{header_line!r}"
+                ),
+            )
+        # One rendered data row per ``results`` entry.
+        data_lines = [
+            line for line in output.splitlines()[2:]
+            if line.strip()
+            and not line.startswith("\u2026")
+            and not line.startswith("…")
+        ]
+        self.assertEqual(len(data_lines), 2)
+
+    # ------------------------------------------------------------------ 3.7
+    def test_cmd_trending_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        from arr_cli.seerr import cmd_trending
+
+        args = self._make_args(verbose=True, media_type="movie")
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_trending, args, None)
+        self.assertEqual(json.loads(output), self.ENVELOPE)
+
+    # ------------------------------------------------------------------ 3.8
+    def test_summary_seerr_trending_envelope_unwraps_results(self) -> None:
+        """Renderer iterates ``results`` of a paginated envelope, not the envelope itself."""
+        from arr_cli.facade.output import _summary_seerr_trending
+
+        rendered = _summary_seerr_trending(self.ENVELOPE)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Dune: Part Two")
+        self.assertEqual(rendered[1]["title"], "Sh\u014dgun")
+        # Nested ``mediaInfo.tmdbId`` is preserved.
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 693134)
+        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 127309)
+
+    def test_summary_seerr_trending_bare_list_unchanged(self) -> None:
+        """Renderer iterates a bare list payload (defensive envelope-drift guard)."""
+        from arr_cli.facade.output import _summary_seerr_trending
+
+        rendered = _summary_seerr_trending(self.BARE_LIST)
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["title"], "Dune: Part Two")
+        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 693134)
+
+    def test_summary_seerr_trending_envelope_without_results_returns_empty(
+        self,
+    ) -> None:
+        """An envelope missing the ``results`` key maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_trending
+
+        rendered = _summary_seerr_trending(
+            {"page": 1, "totalPages": 0, "totalResults": 0}
+        )
+        self.assertEqual(rendered, [])
+
+    def test_summary_seerr_trending_non_mapping_non_list_returns_empty(
+        self,
+    ) -> None:
+        """A scalar / ``None`` payload maps to ``[]`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_trending
+
+        self.assertEqual(_summary_seerr_trending(None), [])
+        self.assertEqual(_summary_seerr_trending("not a list"), [])
+        self.assertEqual(_summary_seerr_trending(42), [])
+
+    def test_summary_seerr_trending_envelope_drops_non_mapping_items(
+        self,
+    ) -> None:
+        """Non-Mapping items inside ``results`` are dropped silently."""
+        from arr_cli.facade.output import _summary_seerr_trending
+
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 3,
+            "results": [
+                {
+                    "title": "Foo",
+                    "mediaType": "movie",
+                    "releaseDate": "2024-01-01",
+                    "mediaInfo": {"tmdbId": 1},
+                },
+                "stray non-mapping item",
+                {
+                    "title": "Bar",
+                    "mediaType": "tv",
+                    "releaseDate": "2024-02-01",
+                    "mediaInfo": {"tmdbId": 2},
+                },
+            ],
+        }
+        rendered = _summary_seerr_trending(envelope)
+        # Two curated rows survive; the stray string is dropped.
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(rendered[1]["title"], "Bar")
+
+    # ------------------------------------------------------------------ 3.9
+    def test_cmd_trending_default_invocation_omits_page_param(self) -> None:
+        """Default invocation's params dict does not contain a ``page`` key.
+
+        The CLI surface does not expose a ``--page`` flag, so no
+        ``?page=`` rides on the wire by default -- matches the
+        documented CLI surface in the spec.
+        """
+        from arr_cli.seerr import cmd_trending
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=self.ENVELOPE
+        ) as mock_get:
+            _capture_stdout(cmd_trending, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        params = mock_get.call_args_list[0].kwargs.get("params") or {}
+        self.assertNotIn(
+            "page", params,
+            msg=(
+                "cmd_trending must not inject a `page` key into the "
+                "query string when the CLI surface does not expose "
+                f"a --page flag; got params={params!r}"
+            ),
+        )
+
+    # ------------------------------------------------------------------ US-1 AC5
+    def test_cmd_trending_http_error_exits_four_with_structured_stderr(
+        self,
+    ) -> None:
+        """Non-2xx on ``/api/v1/discover/trending`` surfaces as exit ``4`` + structured stderr.
+
+        Regression pinning US-1 AC5: the HTTP error path on the
+        ``trending`` endpoint must mirror the sibling seerr command
+        contract — :class:`HttpError(exit_code=4)` raised by
+        :func:`transport.get`, surfaced by :func:`main_wrapper` as a
+        structured ``service=seerr op=/api/v1/discover/trending
+        status=<code> message=...`` line on stderr so the
+        pipe-clean stdout contract (AGENTS.md §1) is preserved.
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/trending",
+                status=500,
+                body="Internal Server Error",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "trending"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(exit_code, 4)
+        # No payload on stdout — the structured error line goes to
+        # stderr so the pipe-clean stdout contract (AGENTS.md §1) is
+        # preserved.
+        self.assertEqual(stdout, "")
+        # Structured line: service=seerr op=/api/v1/discover/trending status=500 message=...
+        self.assertTrue(
+            stderr.startswith(
+                "service=seerr op=/api/v1/discover/trending "
+                "status=500 message="
+            ),
+            msg=f"unexpected stderr shape: {stderr!r}",
+        )
+        self.assertIn("HTTP 500 for /api/v1/discover/trending", stderr)
+
+    # ------------------------------------------------------------------ US-1 AC4
+    def test_cmd_trending_limit_caps_human_rows(self) -> None:
+        """``--limit N`` caps the ``--human`` rendering to ``N`` rows + footer line.
+
+        Regression pinning US-1 AC4: the post-fetch cap on
+        ``seerr trending --human --limit N`` must mirror the sibling
+        list-command contract — the renderer slices the curated
+        summary to ``N`` rows and appends the pagination footer
+        ``"… (M more item[s]; use --limit to see more)"`` so the
+        operator is warned the displayed list is truncated.
+        """
+        from arr_cli.seerr import cmd_trending
+
+        # Build a 30-item envelope so ``--limit 10`` truncates to 10
+        # rows and the footer surfaces a non-zero hidden-count.
+        items: list[dict[str, Any]] = [
+            {
+                "title": f"Title {i:02d}",
+                "mediaType": "movie" if i % 2 == 0 else "tv",
+                "releaseDate": "2024-01-01",
+                "mediaInfo": {"tmdbId": 1000 + i},
+            }
+            for i in range(30)
+        ]
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 30,
+            "results": items,
+        }
+        args = self._make_args(human=True, limit=10)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=envelope,
+        ):
+            output = _capture_stdout(cmd_trending, args, None)
+        lines = output.splitlines()
+        # Header + separator + N data rows + (optional) truncation
+        # footer line. Counting data rows directly: skip the header
+        # and separator rows plus any pagination/footer line.
+        data_lines = [
+            line for line in lines[2:]
+            if line.strip()
+            and not line.startswith("\u2026")
+            and not line.startswith("…")
+        ]
+        self.assertEqual(
+            len(data_lines), 10,
+            msg=(
+                "--limit 10 must cap --human rows to 10; "
+                f"got {len(data_lines)} data lines:\n{output!r}"
+            ),
+        )
+        # The truncation footer line tells the operator the list was
+        # truncated and how many rows were hidden.
+        self.assertTrue(
+            any(
+                "more item" in line and "--limit" in line
+                for line in lines
+            ),
+            msg=(
+                "truncation footer missing — --limit was not "
+                f"honoured; output:\n{output!r}"
+            ),
+        )
+        # The footer must report 20 hidden items (30 - 10).
+        self.assertIn(
+            "20 more items",
+            output,
+            msg=(
+                "truncation footer must report the 20 hidden items; "
+                f"got:\n{output!r}"
+            ),
+        )
 
 
 if __name__ == "__main__":

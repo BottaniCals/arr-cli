@@ -885,6 +885,51 @@ def _summary_seerr_available(payload: Any) -> list[dict[str, Any]]:
     return summaries
 
 
+def _summary_seerr_trending(payload: Any) -> list[dict[str, Any]]:
+    """Render a Seerr ``trending`` payload as the curated summary.
+
+    ``GET /api/v1/discover/trending`` returns a paginated envelope of
+    the shape ``{page, totalPages, totalResults, results: [...]}``;
+    iterate ``results`` so the default summary is non-empty when the
+    envelope is well-formed. A bare list is unchanged behaviour
+    (defensive against envelope-drift across Seer versions).
+
+    The per-item projection is intentionally identical to
+    :func:`_summary_seerr_search` because both endpoints share the
+    same ``TrendingItem`` / ``SearchResult`` shape (``title``,
+    ``mediaType``, ``releaseDate``, ``mediaInfo.tmdbId``). Keeping
+    the projections byte-identical means the default summary for
+    ``seerr search`` and ``seerr trending`` lines up row-for-row
+    when both are tabulated together.
+    """
+    if isinstance(payload, Mapping):
+        payload = payload.get("results")
+    if not isinstance(payload, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        media_info = item.get("mediaInfo")
+        if isinstance(media_info, Mapping):
+            media_info_obj: dict[str, Any] = {
+                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
+            }
+        else:
+            media_info_obj = {"tmdbId": 0}
+        summaries.append(
+            {
+                "title": _safe_get(item, "title", default=None),
+                "mediaType": _safe_get(item, "mediaType", default=None),
+                "releaseDate": _safe_get(
+                    item, "releaseDate", default=None
+                ),
+                "mediaInfo": media_info_obj,
+            }
+        )
+    return summaries
+
+
 def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
     """Render a Seerr ``tv <id>`` payload as the curated summary.
 
@@ -1132,6 +1177,7 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("seerr", "available"): _summary_seerr_available,
     ("seerr", "tv"): _summary_seerr_tv,
     ("seerr", "movie"): _summary_seerr_movie,
+    ("seerr", "trending"): _summary_seerr_trending,
     ("maintainerr", "pending"): _summary_maintainerr_pending,
 }
 
