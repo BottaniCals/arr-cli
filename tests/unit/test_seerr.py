@@ -104,7 +104,7 @@ class TestSeerrModule(unittest.TestCase):
         self.assertIsInstance(parser, argparse.ArgumentParser)
 
     def test_seerr_has_eight_commands(self) -> None:
-        """The subparser exposes exactly the eight documented Seerr commands."""
+        """The subparser exposes exactly the ten documented Seerr commands."""
         from arr_cli.seerr import build_seerr_parser
 
         parser = build_seerr_parser()
@@ -124,9 +124,11 @@ class TestSeerrModule(unittest.TestCase):
                 "tv",
                 "movie",
                 "trending",
+                "upcoming-movies",
+                "upcoming-tv",
             },
         )
-        self.assertEqual(len(subparsers_action.choices), 8)
+        self.assertEqual(len(subparsers_action.choices), 10)
 
     def test_dispatch_table_keys(self) -> None:
         """``_dispatch`` maps every command name to a callable handler."""
@@ -141,6 +143,8 @@ class TestSeerrModule(unittest.TestCase):
             "tv",
             "movie",
             "trending",
+            "upcoming-movies",
+            "upcoming-tv",
         }
         # Inspect the private dispatch table directly so we cover
         # the registration contract without going through argparse.

@@ -3,7 +3,7 @@
 This module is the Seer entry point for the ``arr-cli`` MVP.
 Seer is the unified fork of Overseerr and Jellyseerr; the CLI
 talks to whatever Seer instance the operator points it at via
-``arr.conf``. It exposes eight read-only commands against a live
+``arr.conf``. It exposes ten read-only commands against a live
 Seer instance:
 
 * ``requests``                       -- ``GET /api/v1/request``                 (REQ-10 AC1)
@@ -43,6 +43,25 @@ Seer instance:
                                         envelope shape with ``search`` so the
                                         renderer mirrors
                                         :func:`_summary_seerr_search` exactly.
+* ``upcoming-movies``                  -- ``GET /api/v1/discover/movies/upcoming?page=...&language=...``;
+                                        upcoming movie releases from Seer.
+                                        Shares the paginated
+                                        ``{page, results, totalPages, totalResults}``
+                                        envelope shape with ``trending`` and
+                                        ``search`` so the renderer mirrors
+                                        :func:`_summary_seerr_trending` exactly.
+                                        Optional filters: ``--page`` and
+                                        ``--language`` (no ``timeWindow`` /
+                                        ``mediaType`` knobs -- those would be
+                                        additional API surface the documented
+                                        CLI does not expose).
+* ``upcoming-tv``                      -- ``GET /api/v1/discover/tv/upcoming?page=...&language=...``;
+                                        upcoming TV premieres from Seer. Same
+                                        envelope shape and renderer as
+                                        ``upcoming-movies``; the media type is
+                                        encoded in the path so no positional
+                                        ``MEDIA_TYPE`` is accepted. Optional
+                                        filters: ``--page`` and ``--language``.
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -117,10 +136,14 @@ __all__ = [
     "cmd_tv",
     "cmd_movie",
     "cmd_trending",
+    "cmd_upcoming_movies",
+    "cmd_upcoming_tv",
     # Path constants exposed so tests can assert against the exact
     # strings for each endpoint.
     "USER_ME_PATH",
     "TRENDING_PATH",
+    "UPCOMING_MOVIES_PATH",
+    "UPCOMING_TV_PATH",
 ]
 
 
@@ -145,6 +168,28 @@ USER_ME_PATH = "/api/v1/auth/me"
 #: optional ``language`` (``ISO 639-1``) query parameters. The live
 #: OpenAPI spec is the source of truth per AGENTS.md §1 "Seer note".
 TRENDING_PATH = "/api/v1/discover/trending"
+
+
+#: Path for the upcoming movies discover endpoint.
+#: ``GET /api/v1/discover/movies/upcoming`` -- the canonical Seer
+#: discover endpoint for upcoming movie releases. Accepts optional
+#: ``page`` and ``language`` (``ISO 639-1``) query parameters; the
+#: media type is encoded in the path so no ``mediaType`` filter is
+#: exposed (the documented CLI surface keeps it simple -- only
+#: ``--page`` and ``--language`` ride on the wire). Returns the
+#: same ``{page, results, totalPages, totalResults}`` envelope as
+#: :data:`TRENDING_PATH`.
+UPCOMING_MOVIES_PATH = "/api/v1/discover/movies/upcoming"
+
+
+#: Path for the upcoming TV discover endpoint.
+#: ``GET /api/v1/discover/tv/upcoming`` -- the canonical Seer
+#: discover endpoint for upcoming TV premieres. Accepts optional
+#: ``page`` and ``language`` (``ISO 639-1``) query parameters; the
+#: media type is encoded in the path so no ``mediaType`` filter is
+#: exposed. Returns the same ``{page, results, totalPages,
+#: totalResults}`` envelope as :data:`TRENDING_PATH`.
+UPCOMING_TV_PATH = "/api/v1/discover/tv/upcoming"
 
 
 # Module-level logger so the documented DEBUG probe records
@@ -639,6 +684,127 @@ def cmd_trending(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+def cmd_upcoming_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+    """Seerr ``upcoming-movies`` -- upcoming movie releases from Seer.
+
+    ``GET /api/v1/discover/movies/upcoming`` returns the paginated
+    envelope ``{page, totalPages, totalResults, results: [...]}`` --
+    the same shape :func:`cmd_trending` consumes -- so the renderer
+    is a near-verbatim copy of :func:`_summary_seerr_trending`. Each
+    item carries at minimum ``title``, ``mediaType``, ``releaseDate``
+    and ``mediaInfo.tmdbId`` (same projection as the ``trending``
+    command).
+
+    Two optional filters ride on the query string:
+
+    * ``page`` -- only forwarded when ``--page`` is set; no empty
+      ``?page=`` rides the wire.
+    * ``language`` (``ISO 639-1``) -- only forwarded when
+      ``--language`` is set; no empty ``?language=`` rides the wire.
+
+    The CLI surface deliberately does NOT expose ``timeWindow``,
+    ``mediaType`` or any other API knob beyond ``--page`` and
+    ``--language`` -- the documented "keep it simple" surface for
+    this endpoint.
+
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces as a
+    structured ``service=seerr op=/api/v1/discover/movies/upcoming
+    status=<code>`` stderr line; the operator's diagnostic tools
+    keep working unchanged.
+
+    Authentication is handled transparently by the transport layer
+    (``X-Api-Key`` header per REQ-2 AC3); this handler does not
+    inspect or echo the credential.
+    """
+    params: dict[str, Any] = {}
+    page = getattr(args, "page", None)
+    if page is not None:
+        params["page"] = page
+    language = getattr(args, "language", None)
+    if language:
+        params["language"] = language
+    payload = _get(
+        UPCOMING_MOVIES_PATH,
+        args,
+        cfg,
+        params=params or None,
+        op="upcoming-movies",
+    )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_upcoming_movies``: nested ``mediaInfo.tmdbId``
+    # is resolved via dot-path traversal in ``_row_from_mapping``.
+    # Byte-identical literal to ``cmd_trending`` because the per-row
+    # projection is the same (same envelope, same item shape).
+    columns = [
+        "title",
+        "mediaType",
+        "releaseDate",
+        "mediaInfo.tmdbId",
+    ]
+    return _emit(payload, args, columns=columns)
+
+
+def cmd_upcoming_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+    """Seerr ``upcoming-tv`` -- upcoming TV premieres from Seer.
+
+    ``GET /api/v1/discover/tv/upcoming`` returns the paginated
+    envelope ``{page, totalPages, totalResults, results: [...]}`` --
+    the same shape :func:`cmd_trending` / :func:`cmd_upcoming_movies`
+    consume -- so the renderer is a near-verbatim copy of
+    :func:`_summary_seerr_trending`. The media type is encoded in the
+    path so no positional ``MEDIA_TYPE`` is accepted (matches the
+    documented "keep it simple" surface for this endpoint).
+
+    Two optional filters ride on the query string:
+
+    * ``page`` -- only forwarded when ``--page`` is set; no empty
+      ``?page=`` rides the wire.
+    * ``language`` (``ISO 639-1``) -- only forwarded when
+      ``--language`` is set; no empty ``?language=`` rides the wire.
+
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces as a
+    structured ``service=seerr op=/api/v1/discover/tv/upcoming
+    status=<code>`` stderr line; the operator's diagnostic tools
+    keep working unchanged.
+
+    Authentication is handled transparently by the transport layer
+    (``X-Api-Key`` header per REQ-2 AC3); this handler does not
+    inspect or echo the credential.
+
+    Structural twin of :func:`cmd_upcoming_movies` so future drift
+    between the two upcoming commands fails the unit suite
+    immediately.
+    """
+    params: dict[str, Any] = {}
+    page = getattr(args, "page", None)
+    if page is not None:
+        params["page"] = page
+    language = getattr(args, "language", None)
+    if language:
+        params["language"] = language
+    payload = _get(
+        UPCOMING_TV_PATH,
+        args,
+        cfg,
+        params=params or None,
+        op="upcoming-tv",
+    )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_upcoming_tv``: nested ``mediaInfo.tmdbId`` is
+    # resolved via dot-path traversal in ``_row_from_mapping``.
+    # Byte-identical literal to ``cmd_upcoming_movies`` because the
+    # per-row projection is the same (same envelope, same item shape).
+    columns = [
+        "title",
+        "mediaType",
+        "releaseDate",
+        "mediaInfo.tmdbId",
+    ]
+    return _emit(payload, args, columns=columns)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -664,6 +830,8 @@ _DISPATCH = {
     "tv": cmd_tv,
     "movie": cmd_movie,
     "trending": cmd_trending,
+    "upcoming-movies": cmd_upcoming_movies,
+    "upcoming-tv": cmd_upcoming_tv,
 }
 
 
@@ -699,13 +867,14 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         prog=SERVICE_NAME,
         description=(
             "Read-only CLI for Seer (the unified Overseerr + "
-            "Jellyseerr fork). Eight commands expose the "
+            "Jellyseerr fork). Ten commands expose the "
             "household request queue, request summary counts, "
             "multi-source search, what's already available in "
             "the library, the current authenticated user, "
             "per-show TV details, per-movie details "
-            "(optionally with Rotten Tomatoes ratings), and "
-            "the live trending-discover feed."
+            "(optionally with Rotten Tomatoes ratings), the "
+            "live trending-discover feed, and upcoming movie "
+            "releases / TV premieres."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -882,6 +1051,66 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         ),
     )
     trending.add_argument(
+        "--language",
+        default=None,
+        metavar="LANG",
+        help=(
+            "ISO 639-1 language code forwarded as the "
+            "?language=<LANG> query parameter"
+        ),
+    )
+
+    upcoming_movies = subparsers.add_parser(
+        "upcoming-movies",
+        help=(
+            "list upcoming movie releases "
+            "(GET /api/v1/discover/movies/upcoming"
+            "[?page=<N>][&language=<LANG>])"
+        ),
+        parents=universal_parents(),
+        add_help=False,
+    )
+    upcoming_movies.add_argument(
+        "--page",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "page number forwarded as the ?page=<N> query "
+            "parameter (omit = first page)"
+        ),
+    )
+    upcoming_movies.add_argument(
+        "--language",
+        default=None,
+        metavar="LANG",
+        help=(
+            "ISO 639-1 language code forwarded as the "
+            "?language=<LANG> query parameter"
+        ),
+    )
+
+    upcoming_tv = subparsers.add_parser(
+        "upcoming-tv",
+        help=(
+            "list upcoming TV premieres "
+            "(GET /api/v1/discover/tv/upcoming"
+            "[?page=<N>][&language=<LANG>])"
+        ),
+        parents=universal_parents(),
+        add_help=False,
+    )
+    upcoming_tv.add_argument(
+        "--page",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "page number forwarded as the ?page=<N> query "
+            "parameter (omit = first page)"
+        ),
+    )
+    upcoming_tv.add_argument(
         "--language",
         default=None,
         metavar="LANG",
