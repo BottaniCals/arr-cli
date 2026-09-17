@@ -258,20 +258,20 @@ Each task touches 1-3 related files. Reference user stories via `_Requirements: 
     - The columns-block → summary-shape alignment regression iterates every `_SUMMARY_RENDERERS` key and calls `_synthetic_payload(svc, cmd)`; without these entries the helper raises `KeyError` and `make ci` fails (same deviation precedent documented in the `seerr-trending-cmd` plan)
     - _Requirements: US-4_
 
-- [ ] 5. Update `README.md` §4.5 Seer command table and `CHANGELOG.md` `[Unreleased]` section
-  - [ ] 5.1 Bump the `seerr — 8 commands` section header in `README.md` §4.5 → `seerr — 10 commands`
+- [x] 5. Update `README.md` §4.5 Seer command table and `CHANGELOG.md` `[Unreleased]` section
+  - [x] 5.1 Bump the `seerr — 8 commands` section header in `README.md` §4.5 → `seerr — 10 commands`
     - _Requirements: US-1, US-2_
-  - [ ] 5.2 Append a `seerr upcoming-movies` row to the table in `README.md` §4.5 immediately after the `seerr trending` row
+  - [x] 5.2 Append a `seerr upcoming-movies` row to the table in `README.md` §4.5 immediately after the `seerr trending` row
     - Command: `` `seerr upcoming-movies` ``
     - Path: `` `/api/v1/discover/movies/upcoming?page=<…>&language=<…>` ``
     - Notes: `Accepts optional --page and --language.`
     - _Requirements: US-1, US-3_
-  - [ ] 5.3 Append a `seerr upcoming-tv` row to the table in `README.md` §4.5 immediately after the `seerr upcoming-movies` row
+  - [x] 5.3 Append a `seerr upcoming-tv` row to the table in `README.md` §4.5 immediately after the `seerr upcoming-movies` row
     - Command: `` `seerr upcoming-tv` ``
     - Path: `` `/api/v1/discover/tv/upcoming?page=<…>&language=<…>` ``
     - Notes: `Accepts optional --page and --language.`
     - _Requirements: US-2, US-3_
-  - [ ] 5.4 Add two entries under `[Unreleased]` → `Added` in `CHANGELOG.md`
+  - [x] 5.4 Add two entries under `[Unreleased]` → `Added` in `CHANGELOG.md`
     - `` - `seerr upcoming-movies` — list upcoming movie releases via `GET /api/v1/discover/movies/upcoming`. ``
     - `` - `seerr upcoming-tv` — list upcoming TV premieres via `GET /api/v1/discover/tv/upcoming`. ``
     - _Requirements: US-1, US-2_
