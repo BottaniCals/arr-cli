@@ -108,14 +108,14 @@ Each task touches 1-3 related files. Reference user stories via `_Requirements: 
     - Add `--genre` (int), `--sort` (str), `--language` (str) plus the universal `--page`/`--limit`; register both subcommands in the `_DISPATCH` dict.
     - _Requirements: US-3.1, US-3.2, US-3.3, US-3.4, US-3.5, US-3.6, US-3.7_
 
-- [ ] 2. Add summary renderers in `arr_cli/facade/output.py` and register in `_SUMMARY_RENDERERS`
-  - [ ] 2.1 Implement `_summary_seerr_discover_movies(payload) -> curated`
+- [x] 2. Add summary renderers in `arr_cli/facade/output.py` and register in `_SUMMARY_RENDERERS`
+  - [x] 2.1 Implement `_summary_seerr_discover_movies(payload) -> curated`
     - Reuse the column shape from `_summary_seerr_upcoming_movies`; emit `{page, results, totalPages, totalResults}` plus the curated per-row fields.
     - _Requirements: US-1.7_
-  - [ ] 2.2 Implement `_summary_seerr_discover_tv(payload) -> curated`
+  - [x] 2.2 Implement `_summary_seerr_discover_tv(payload) -> curated`
     - Structural twin of `_summary_seerr_discover_movies` for the TV envelope.
     - _Requirements: US-2.4_
-  - [ ] 2.3 Register both renderers in `_SUMMARY_RENDERERS`
+  - [x] 2.3 Register both renderers in `_SUMMARY_RENDERERS`
     - Add keys `("seerr", "discover-movies")` and `("seerr", "discover-tv")` pointing to the new callables (matching the existing tuple-keyed shape used by `("seerr", "upcoming-movies")` and `("seerr", "upcoming-tv")`).
     - _Requirements: US-1.7, US-2.4_
 
