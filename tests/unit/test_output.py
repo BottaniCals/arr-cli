@@ -403,6 +403,7 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
     ],
     ("jellyfin", "favorites"): [
         {
+            "Id": "abc12345",
             "Name": "Foo",
             "Type": "Movie",
             "ProductionYear": 2020,
@@ -630,6 +631,52 @@ class TestEmitHumanSummarizeRoute(unittest.TestCase):
                         f"rendered rows; got:\n{data_blob!r}"
                     ),
                 )
+
+    def test_jellyfin_favorites_human_header_includes_id(self) -> None:
+        # Regression for ``jellyfin-favorites-summary-id-field``: the
+        # ``--human`` tabular view of ``jellyfin favorites`` must
+        # surface ``Id`` as a leftmost column token so the table is
+        # chainable into ``jellyfin item <id>``. The curated summary
+        # projection and the ``columns`` literal move together (per
+        # AGENTS.md §1 "summary-shape keys" invariant); this test
+        # pins the human side.
+        payload = [
+            {
+                "Id": "523c6aa176971feab5e0fb18ebde0b8f",
+                "Name": "Fireheart: The Legend of Tadas Blinda",
+                "Type": "Movie",
+                "ProductionYear": 2011,
+                "SeriesName": None,
+            }
+        ]
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=True,
+            verbose_mode=False,
+            service="jellyfin",
+            command="favorites",
+            columns=["Id", "Name", "Type", "ProductionYear", "SeriesName"],
+        )
+        header = out.splitlines()[0]
+        self.assertIn(
+            "Id",
+            header,
+            msg=(
+                f"jellyfin --human favorites header {header!r} missing "
+                "the 'Id' column -- the table is no longer chainable "
+                "into ``jellyfin item <id>``"
+            ),
+        )
+        # Id must be the leftmost token (matches the curated-summary
+        # order and the ``seerr genres`` id-first convention).
+        self.assertTrue(
+            header.index("Id") < header.index("Name"),
+            msg=(
+                f"jellyfin --human favorites header {header!r} does "
+                "not place 'Id' to the left of 'Name'"
+            ),
+        )
 
 
 class TestEmitHumanVerbatimFallback(unittest.TestCase):
@@ -1282,6 +1329,7 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
     def test_favorites_shape(self) -> None:
         payload = [
             {
+                "Id": "abc12345",
                 "Name": "Foo",
                 "Type": "Movie",
                 "ProductionYear": 2020,
@@ -1292,6 +1340,7 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
         self.assertEqual(
             rendered[0],
             {
+                "Id": "abc12345",
                 "Name": "Foo",
                 "Type": "Movie",
                 "ProductionYear": 2020,
@@ -1309,6 +1358,7 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
         payload = {
             "Items": [
                 {
+                    "Id": "523c6aa176971feab5e0fb18ebde0b8f",
                     "Name": "Fireheart",
                     "Type": "Movie",
                     "ProductionYear": 2011,
@@ -1323,12 +1373,40 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
             rendered,
             [
                 {
+                    "Id": "523c6aa176971feab5e0fb18ebde0b8f",
                     "Name": "Fireheart",
                     "Type": "Movie",
                     "ProductionYear": 2011,
                     "SeriesName": None,
                 }
             ],
+        )
+
+    def test_favorites_includes_id(self) -> None:
+        # Regression for ``jellyfin-favorites-summary-id-field``: the
+        # curated summary must surface the upstream ``Id`` verbatim so
+        # callers can pipe the row into ``jellyfin item <id>``.
+        payload = [
+            {
+                "Id": "523c6aa176971feab5e0fb18ebde0b8f",
+                "Name": "Fireheart: The Legend of Tadas Blinda",
+                "Type": "Movie",
+                "ProductionYear": 2011,
+                "SeriesName": None,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "favorites")](payload)
+        self.assertEqual(
+            rendered[0]["Id"],
+            "523c6aa176971feab5e0fb18ebde0b8f",
+            msg=(
+                "curated favorites row dropped Id -- the row is no "
+                "longer chainable into ``jellyfin item <id>``"
+            ),
+        )
+        self.assertEqual(
+            rendered[0]["Name"],
+            "Fireheart: The Legend of Tadas Blinda",
         )
 
 
@@ -2566,6 +2644,7 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         ],
         ("jellyfin", "favorites"): [
             {
+                "Id": "abc12345",
                 "Name": "Foo",
                 "Type": "Movie",
                 "ProductionYear": 2024,

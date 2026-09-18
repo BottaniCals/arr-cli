@@ -122,6 +122,18 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `jellyfin favorites` now emits `Id` in both the default curated
+  summary and the `--human` tabular view, restoring
+  pipe-chainability into `jellyfin item <id>`. The
+  `_summary_jellyfin_favorites` projection dict literal and the
+  `cmd_favorites` `columns` literal both prepended `Id`; the two
+  test fixtures (`_SUMMARY_RENDERERS_FAVORITES`,
+  `_HUMAN_RENDERER_TEST_PAYLOADS["jellyfin"]["favorites"]`) and the
+  two `TestSummaryJellyfinFavorites` assertions
+  (`test_favorites_shape`, `test_envelope_with_items_is_unwrapped`)
+  move with the renderer fix so future drift of this exact
+  projection fails the unit suite immediately.
+  See `.bugs/jellyfin-favorites-summary-id-field/bug-review.md`.
 - `seerr search <query>` now hits Seer's consolidated
   `/api/v1/search` endpoint instead of the legacy Overseerr
   `/api/v1/search/multi` path that Seer does not expose. Every
