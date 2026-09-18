@@ -528,10 +528,10 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
     ],
     ("seerr", "search"): [
         {
+            "id": 603,
             "title": "Foo",
             "mediaType": "movie",
             "releaseDate": "2024-01-01",
-            "mediaInfo": {"tmdbId": 999},
             "overview": "Lorem ipsum",
         }
     ],
@@ -1737,34 +1737,68 @@ class TestSummarySeerrRequests(unittest.TestCase):
 
 
 class TestSummarySeerrSearch(unittest.TestCase):
-    """``_SUMMARY_RENDERERS[("seerr", "search")]`` matches the spec."""
+    """``_SUMMARY_RENDERERS[("seerr", "search")]`` matches the spec.
+
+    The per-row projection surfaces the top-level ``id`` field
+    because the operator's Seer ``/api/v1/search`` payload does not
+    expose a nested ``mediaInfo`` envelope. Mirrors the projection
+    chosen for :func:`_summary_seerr_available` and matches the
+    live-API artefact saved at
+    ``/home/renald/.openclaw/workspace/.tmp/media-cli-qa-2026-09-18/seerr-search-matrix-verbose.json``.
+    """
 
     def test_search_shape(self) -> None:
         payload = [
             {
-                "title": "Foo",
+                "id": 603,
+                "title": "The Matrix",
                 "mediaType": "movie",
-                "releaseDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "releaseDate": "1999-03-31",
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
         self.assertEqual(
             rendered[0],
             {
-                "title": "Foo",
+                "id": 603,
+                "title": "The Matrix",
                 "mediaType": "movie",
-                "releaseDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "releaseDate": "1999-03-31",
             },
         )
 
-    def test_search_missing_media_info(self) -> None:
+    def test_search_tv_row_sources_title_from_name(self) -> None:
+        """TV rows expose ``name`` (not ``title``) at the top level."""
+        payload = [
+            {
+                "id": 123,
+                "name": "Doctor Who",
+                "mediaType": "tv",
+                "releaseDate": "2005-03-26",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "id": 123,
+                "title": "Doctor Who",
+                "mediaType": "tv",
+                "releaseDate": "2005-03-26",
+            },
+        )
+
+    def test_search_missing_id_keeps_none(self) -> None:
+        """``id`` is read with ``_safe_get``; missing rows surface as ``None``."""
         payload = [
             {"title": "Foo", "mediaType": "movie", "releaseDate": "y"}
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
-        self.assertEqual(rendered[0]["mediaInfo"], {"tmdbId": 0})
+        self.assertIsNone(rendered[0]["id"])
+        # No fabricated ``mediaInfo`` key -- the historical placeholder
+        # is gone, so a row with no upstream id does not pretend to
+        # have a ``tmdbId: 0`` dict.
+        self.assertNotIn("mediaInfo", rendered[0])
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
@@ -3110,10 +3144,10 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         ],
         ("seerr", "search"): [
             {
+                "id": 603,
                 "title": "Foo",
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
             }
         ],
         ("seerr", "available"): [

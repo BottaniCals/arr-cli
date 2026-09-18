@@ -895,6 +895,19 @@ def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
     ``{page, totalPages, totalResults, results: [...]}``; iterate
     ``results`` so the default summary is non-empty when the envelope
     is well-formed. A bare list is unchanged behaviour.
+
+    The per-item projection surfaces the top-level ``id`` field the
+    upstream payload actually carries. Unlike the historical
+    ``mediaInfo.tmdbId`` shape, the rows in the operator's Seer
+    ``/api/v1/search`` response do not expose a nested ``mediaInfo``
+    envelope -- the TMDB/TVDB id lives at the top level as ``id``
+    (same convention as :func:`_summary_seerr_available`). The
+    historical fabricated ``{"tmdbId": 0}`` placeholder was
+    misleading because every row was projected as ``tmdbId: 0`` even
+    for hits with well-known ids (e.g. ``603`` for *The Matrix*).
+    Branch on ``mediaType`` so TV rows source their title from
+    ``name`` (TV rows expose ``name`` only, no top-level ``title``)
+    while movie rows source it from ``title``.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -904,22 +917,10 @@ def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        media_info = item.get("mediaInfo")
-        if isinstance(media_info, Mapping):
-            media_info_obj: dict[str, Any] = {
-                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
-            }
-        else:
-            media_info_obj = {"tmdbId": 0}
-        # Mirror the ``_summary_seerr_trending`` pattern: branch on
-        # ``mediaType`` so TV rows source their title from top-level
-        # ``name`` (TV rows expose ``name`` only, no top-level
-        # ``title``) while movie rows source it from ``title``. A
-        # brief comment is intentional so future drift between
-        # search and trending projections fails code review.
         is_tv = _safe_get(item, "mediaType", default="") == "tv"
         summaries.append(
             {
+                "id": _safe_get(item, "id", default=None),
                 "title": _safe_get(
                     item, "name" if is_tv else "title", default=None
                 ),
@@ -927,7 +928,6 @@ def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
                 "releaseDate": _safe_get(
                     item, "releaseDate", default=None
                 ),
-                "mediaInfo": media_info_obj,
             }
         )
     return summaries
