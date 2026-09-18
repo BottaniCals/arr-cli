@@ -813,7 +813,7 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # AST helper only recognises ``ast.Assign`` targets --
     # matches every other ``columns`` literal in this module.
     columns = [
-        "name",
+        "title",
         "originalTitle",
         "releaseDate",
         "runtime",
