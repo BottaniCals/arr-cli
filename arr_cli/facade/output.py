@@ -902,13 +902,16 @@ def _summary_seerr_trending(payload: Any) -> list[dict[str, Any]]:
     envelope is well-formed. A bare list is unchanged behaviour
     (defensive against envelope-drift across Seer versions).
 
-    The per-item projection is intentionally identical to
-    :func:`_summary_seerr_search` because both endpoints share the
-    same ``TrendingItem`` / ``SearchResult`` shape (``title``,
-    ``mediaType``, ``releaseDate``, ``mediaInfo.tmdbId``). Keeping
-    the projections byte-identical means the default summary for
-    ``seerr search`` and ``seerr trending`` lines up row-for-row
-    when both are tabulated together.
+    The ``results[]`` array can mix ``mediaType`` values (both
+    ``movie`` and ``tv``) when ``seerr trending`` runs without a
+    media-type positional, so the per-item projection branches on
+    each item's ``mediaType``: ``movie`` items use ``title`` /
+    ``releaseDate``; ``tv`` items use ``name`` / ``firstAirDate``.
+    ``mediaInfo.tmdbId`` is consistent across both shapes. This
+    differs from :func:`_summary_seerr_search` -- search is not
+    known to mix media types in a single envelope -- so the
+    projections are intentionally **not** byte-identical even
+    though the envelopes share the same outer shape.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -925,12 +928,17 @@ def _summary_seerr_trending(payload: Any) -> list[dict[str, Any]]:
             }
         else:
             media_info_obj = {"tmdbId": 0}
+        is_tv = _safe_get(item, "mediaType", default="") == "tv"
         summaries.append(
             {
-                "title": _safe_get(item, "title", default=None),
+                "title": _safe_get(
+                    item, "name" if is_tv else "title", default=None
+                ),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
-                    item, "releaseDate", default=None
+                    item,
+                    "firstAirDate" if is_tv else "releaseDate",
+                    default=None,
                 ),
                 "mediaInfo": media_info_obj,
             }
@@ -987,17 +995,14 @@ def _summary_seerr_upcoming_tv(payload: Any) -> list[dict[str, Any]]:
 
     ``GET /api/v1/discover/tv/upcoming`` returns a paginated envelope
     of the shape ``{page, totalPages, totalResults, results: [...]}``
-    -- the same envelope :func:`_summary_seerr_trending` and
-    :func:`_summary_seerr_upcoming_movies` consume -- so the
-    projection is intentionally identical: ``title``,
-    ``mediaType``, ``releaseDate``, ``mediaInfo.tmdbId``. A bare
+    -- the same outer envelope :func:`_summary_seerr_trending` and
+    :func:`_summary_seerr_upcoming_movies` consume -- but TV items
+    use ``name`` / ``firstAirDate`` rather than ``title`` /
+    ``releaseDate``, so the per-item projection here is **not**
+    byte-identical to :func:`_summary_seerr_upcoming_movies`.
+    ``mediaType`` and ``mediaInfo.tmdbId`` are unchanged. A bare
     list is unchanged behaviour (defensive against envelope-drift
-    across Seer versions). The only difference from
-    :func:`_summary_seerr_upcoming_movies` is the dispatch key --
-    same envelope, same per-item shape, so the renderer is
-    byte-identical and keeps row-for-row alignment when the
-    operator tabulates ``seerr upcoming-movies`` and ``seerr
-    upcoming-tv`` together.
+    across Seer versions).
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1016,10 +1021,10 @@ def _summary_seerr_upcoming_tv(payload: Any) -> list[dict[str, Any]]:
             media_info_obj = {"tmdbId": 0}
         summaries.append(
             {
-                "title": _safe_get(item, "title", default=None),
+                "title": _safe_get(item, "name", default=None),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
-                    item, "releaseDate", default=None
+                    item, "firstAirDate", default=None
                 ),
                 "mediaInfo": media_info_obj,
             }
@@ -1076,15 +1081,14 @@ def _summary_seerr_discover_tv(payload: Any) -> list[dict[str, Any]]:
 
     ``GET /api/v1/discover/tv`` returns a paginated envelope of the
     shape ``{page, totalPages, totalResults, results: [...]}`` --
-    the same envelope :func:`_summary_seerr_discover_movies` /
-    :func:`_summary_seerr_upcoming_tv` consume -- so the projection
-    is intentionally identical: ``title``, ``mediaType``,
-    ``releaseDate``, ``mediaInfo.tmdbId``. A bare list is unchanged
-    behaviour (defensive against envelope-drift across Seer
-    versions). The renderer is byte-identical to
-    :func:`_summary_seerr_discover_movies` so the operator's default
-    summary aligns row-for-row when ``seerr discover-movies`` and
-    ``seerr discover-tv`` are tabulated together.
+    the same outer envelope :func:`_summary_seerr_discover_movies` /
+    :func:`_summary_seerr_upcoming_tv` consume -- but TV items use
+    ``name`` / ``firstAirDate`` rather than ``title`` /
+    ``releaseDate``, so the per-item projection here is **not**
+    byte-identical to :func:`_summary_seerr_discover_movies`.
+    ``mediaType`` and ``mediaInfo.tmdbId`` are unchanged. A bare
+    list is unchanged behaviour (defensive against envelope-drift
+    across Seer versions).
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1103,10 +1107,10 @@ def _summary_seerr_discover_tv(payload: Any) -> list[dict[str, Any]]:
             media_info_obj = {"tmdbId": 0}
         summaries.append(
             {
-                "title": _safe_get(item, "title", default=None),
+                "title": _safe_get(item, "name", default=None),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
-                    item, "releaseDate", default=None
+                    item, "firstAirDate", default=None
                 ),
                 "mediaInfo": media_info_obj,
             }
