@@ -9,6 +9,28 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `seerr requests` -- the curated summary now surfaces the
+  identity fields from the per-row `media` sub-dict (`id`,
+  `mediaType`, `tmdbId`, `tvdbId`, `externalServiceSlug`,
+  `status`) instead of a fabricated `title` populated from
+  `media.title` (movie) or `media.name` (TV). The live
+  `GET /api/v1/request` payload on the operator's Seer instance
+  does not populate either of those fields -- every row
+  projected `title: null` regardless of media type. The
+  historical projection was based on the assumption that the
+  `media` envelope carried a title, but the live payload only
+  carries identity fields. The curated summary is now
+  `{media: {id, mediaType, tmdbId, tvdbId, externalServiceSlug,
+  status}, type, status, createdAt, requestedBy: {displayName}}`;
+  the `--human` table column list mirrors the new shape. The
+  requester (`requestedBy.displayName`) is intentionally NOT in
+  the `--human` column list because the 120-char width budget
+  divided across eight columns truncates the 23-char token to
+  `requestedBy.di...`; the requester remains available in the
+  default summary shape and the verbatim `--verbose` output.
+  `--verbose` is unchanged (raw request envelope still on the
+  wire). Mirrors the field set `seerr available` projects for
+  a consistent mental model across the two read endpoints.
 - `seerr search <query>` -- the curated summary now projects the
   top-level `id` field the upstream `GET /api/v1/search` payload
   actually carries, instead of fabricating a nested

@@ -500,11 +500,24 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Seerr ``requests`` -- the household request queue (REQ-10 AC1).
 
     Returns the full list of media requests; ``--human`` renders the
-    most common columns (``title``, ``type``, ``status``, ``createdAt``).
+    most common columns (``media.tmdbId``, ``media.mediaType``,
+    ``type``, ``status``, ``createdAt``, ``requestedBy.displayName``).
 
     The ``take`` query parameter caps the response at the documented
     Seer limit (``1000``) so a single round trip covers the household
     queue instead of the default first page of ten.
+
+    The historical ``title`` column was retired because
+    ``/api/v1/request`` records on the operator's Seer instance do
+    not populate ``media.title`` (movie) or ``media.name`` (TV) --
+    every row projected ``title: null`` regardless of media type.
+    The curated summary now surfaces the identity fields the
+    upstream payload does carry (``media.id``, ``media.mediaType``,
+    ``media.tmdbId``, ``media.tvdbId``, ``media.externalServiceSlug``,
+    ``media.status``) so the operator has something to chain into
+    ``seerr movie <tmdbId>`` / ``seerr tv <tvdbId>``. Mirrors the
+    ``seerr available`` shape for a consistent mental model across
+    the two read endpoints.
     """
     payload = _get(
         "/api/v1/request",
@@ -514,14 +527,30 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="requests",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_seerr_requests``: nested ``requestedBy.displayName``
-    # is resolved via dot-path traversal in ``_row_from_mapping``.
+    # ``_summary_seerr_requests``: nested ``media.*`` is resolved
+    # via dot-path traversal in ``_row_from_mapping``. ``media.id``
+    # is the leftmost token so the table is chainable into the
+    # detail commands (``seerr movie <id>`` / ``seerr tv <id>``).
+    # The historical ``title`` column was retired because the live
+    # ``/api/v1/request`` payload does not populate ``media.title``
+    # or ``media.name`` -- see the renderer docstring for the full
+    # rationale. ``requestedBy.displayName`` is intentionally NOT
+    # in the ``--human`` column list: the 120-char width budget
+    # divided across the seven identity columns leaves ~17 chars
+    # per column, which still truncates the 23-char
+    # ``requestedBy.displayName`` token to ``requestedBy.di...`` and
+    # makes the header unreadable. The requester is still available
+    # in the default summary shape under the nested ``requestedBy``
+    # mapping; ``--verbose`` keeps the verbatim envelope on the wire
+    # for operators who need it.
     columns = [
-        "title",
+        "media.id",
+        "media.mediaType",
+        "media.tmdbId",
+        "media.tvdbId",
         "type",
         "status",
         "createdAt",
-        "requestedBy.displayName",
     ]
     return _emit(payload, args, columns=columns)
 
