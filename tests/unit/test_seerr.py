@@ -747,16 +747,16 @@ class TestCmdSearchPaginatedEnvelope(unittest.TestCase):
         "totalResults": 1839,
         "results": [
             {
+                "id": 123,
                 "name": "Doctor Who",
                 "mediaType": "tv",
                 "releaseDate": "2005-03-26",
-                "mediaInfo": {"tmdbId": 123},
             },
             {
+                "id": 291351,
                 "title": "Doctor Strange",
                 "mediaType": "movie",
                 "releaseDate": "2016-10-25",
-                "mediaInfo": {"tmdbId": 291351},
             },
         ],
     }
@@ -792,10 +792,14 @@ class TestCmdSearchPaginatedEnvelope(unittest.TestCase):
         self.assertEqual(len(rendered), 2)
         self.assertEqual(rendered[0]["title"], "Doctor Who")
         self.assertEqual(rendered[1]["title"], "Doctor Strange")
-        # ``mediaInfo.tmdbId`` is preserved as the nested mapping the
-        # docstring promises, resolved against the unwrapped envelope.
-        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 123)
-        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 291351)
+        # ``id`` is the upstream join key -- top-level on each row,
+        # not a fabricated ``mediaInfo.tmdbId`` placeholder.
+        self.assertEqual(rendered[0]["id"], 123)
+        self.assertEqual(rendered[1]["id"], 291351)
+        # No fabricated ``mediaInfo`` dict in the curated summary --
+        # the upstream payload never exposed one for ``search``.
+        self.assertNotIn("mediaInfo", rendered[0])
+        self.assertNotIn("mediaInfo", rendered[1])
 
     def test_cmd_search_flat_list_default_unchanged(self) -> None:
         """The flat-list code path keeps the pre-change behaviour intact."""
@@ -804,10 +808,10 @@ class TestCmdSearchPaginatedEnvelope(unittest.TestCase):
         args = self._make_args()
         flat_payload = [
             {
+                "id": 123,
                 "name": "Doctor Who",
                 "mediaType": "tv",
                 "releaseDate": "2005-03-26",
-                "mediaInfo": {"tmdbId": 123},
             }
         ]
         with patch(
@@ -817,7 +821,7 @@ class TestCmdSearchPaginatedEnvelope(unittest.TestCase):
             output = _capture_stdout(cmd_search, args, None)
         rendered = json.loads(output)
         self.assertEqual(rendered[0]["title"], "Doctor Who")
-        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 123)
+        self.assertEqual(rendered[0]["id"], 123)
 
     def test_cmd_search_envelope_verbose_emits_verbatim_envelope(self) -> None:
         """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
@@ -5014,34 +5018,34 @@ class TestCmdSearchMixedMediaTypes(unittest.TestCase):
         "totalResults": 4,
         "results": [
             {
+                "id": 603,
                 "title": "The Matrix",
                 "mediaType": "movie",
                 "releaseDate": "1999-03-31",
-                "mediaInfo": {"tmdbId": 603},
             },
             {
+                "id": 104586,
                 "name": "Threat Matrix",
                 "mediaType": "tv",
                 "releaseDate": "2020-09-09",
-                "mediaInfo": {"tmdbId": 104586},
             },
             {
+                "id": 23988,
                 "name": "Matrix",
                 "mediaType": "tv",
                 "releaseDate": "1993-03-03",
-                "mediaInfo": {"tmdbId": 23988},
             },
             {
+                "id": 99999,
                 "name": "Matrix Dreads",
                 "mediaType": "tv",
                 "releaseDate": "2015-01-21",
-                "mediaInfo": {"tmdbId": 99999},
             },
             {
+                "id": 108586,
                 "name": "Aurora Matrix",
                 "mediaType": "tv",
                 "releaseDate": "2020-09-01",
-                "mediaInfo": {"tmdbId": 108586},
             },
         ],
     }

@@ -7,6 +7,24 @@ within the pre-1.0 contract documented in `README.md`.
 
 ## [Unreleased]
 
+### Fixed
+
+- `seerr search <query>` -- the curated summary now projects the
+  top-level `id` field the upstream `GET /api/v1/search` payload
+  actually carries, instead of fabricating a nested
+  `mediaInfo.tmdbId` placeholder. Every row in the operator's
+  Seer `search` payload exposes the TMDB/TVDB id at the top
+  level (e.g. `id: 603` for *The Matrix*); the historical
+  placeholder projected `{tmdbId: 0}` for every row regardless of
+  the real id, which made the join key unusable downstream. The
+  curated summary is now `{id, title, mediaType, releaseDate}`;
+  the `--human` table column list mirrors the new shape. TV rows
+  continue to source `title` from the top-level `name` field
+  (unchanged). `--verbose` is unchanged (raw `search` envelope
+  still on the wire). See
+  `seerr-search-id-field` in the bug review for the full
+  rationale and live-API evidence.
+
 ### Changed
 
 - `seerr available <query>` -- the client-side title-substring

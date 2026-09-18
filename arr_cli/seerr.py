@@ -564,13 +564,17 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="search",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_seerr_search``: nested ``mediaInfo.tmdbId`` is
-    # resolved via dot-path traversal in ``_row_from_mapping``.
+    # ``_summary_seerr_search``: every field is top-level on each
+    # row, so no dot-path traversal is needed (mirrors the
+    # ``cmd_available`` column-list pattern). The upstream
+    # ``/api/v1/search`` payload does not expose a nested
+    # ``mediaInfo`` envelope -- the join key lives at top-level
+    # ``id``.
     columns = [
+        "id",
         "title",
         "mediaType",
         "releaseDate",
-        "mediaInfo.tmdbId",
     ]
     return _emit(payload, args, columns=columns)
 
