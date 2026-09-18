@@ -27,6 +27,7 @@ import importlib
 import inspect
 import io
 import json
+import logging
 import os
 import sys
 import unittest
@@ -52,6 +53,7 @@ from arr_cli.facade.output import (  # noqa: E402 - sys.path tweak above
     _safe_get,
     _SUMMARY_RENDERERS,
     _truncate,
+    _unwrap_envelope,
 )
 
 
@@ -61,6 +63,32 @@ def _capture_stdout(callable_: Any, *args: Any, **kwargs: Any) -> str:
     with contextlib.redirect_stdout(buffer):
         callable_(*args, **kwargs)
     return buffer.getvalue()
+
+
+def _capture_module_warnings(
+    callable_: Any, *args: Any, **kwargs: Any
+) -> list[str]:
+    """Invoke ``callable_`` while capturing WARNING-level records on the
+    ``arr_cli.facade.output`` logger; return their rendered messages.
+
+    Negative-log-assertion helper: ``unittest.assertLogs`` requires at
+    least one matching log, so verifying that *no* warning was emitted
+    needs a manual capture-and-inspect loop.
+    """
+    logger = logging.getLogger("arr_cli.facade.output")
+    messages: list[str] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            messages.append(record.getMessage())
+
+    handler = _Collect(level=logging.WARNING)
+    logger.addHandler(handler)
+    try:
+        callable_(*args, **kwargs)
+    finally:
+        logger.removeHandler(handler)
+    return messages
 
 
 # ---------------------------------------------------------------------------
@@ -2446,6 +2474,317 @@ class TestSummaryMaintainerrPending(unittest.TestCase):
         self.assertEqual(
             _SUMMARY_RENDERERS[("maintainerr", "pending")](None),
             [],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Envelope unwrap helper
+# ---------------------------------------------------------------------------
+
+
+class TestUnwrapEnvelope(unittest.TestCase):
+    """``_unwrap_envelope`` handles bare list, Jellyfin, Radarr/Sonarr."""
+
+    def test_bare_list_returned_verbatim(self) -> None:
+        self.assertEqual(_unwrap_envelope(["a", "b"]), ["a", "b"])
+
+    def test_jellyfin_envelope_items_unwrapped(self) -> None:
+        payload = {
+            "Items": [{"Name": "Foo"}],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
+        self.assertEqual(_unwrap_envelope(payload), [{"Name": "Foo"}])
+
+    def test_radarr_sonarr_envelope_records_unwrapped(self) -> None:
+        payload = {
+            "page": 1,
+            "pageSize": 10,
+            "totalRecords": 1,
+            "records": [{"title": "Vanguard"}],
+        }
+        self.assertEqual(
+            _unwrap_envelope(payload), [{"title": "Vanguard"}]
+        )
+
+    def test_malformed_envelope_warns_and_returns_empty(self) -> None:
+        payload = {"foo": [{"title": "Lost"}], "bar": 7}
+        with self.assertLogs(
+            "arr_cli.facade.output", level="WARNING"
+        ) as log_cm:
+            result = _unwrap_envelope(payload)
+        self.assertEqual(result, [])
+        self.assertTrue(
+            any(
+                "envelope shape not recognised" in line
+                for line in log_cm.output
+            ),
+            f"expected warning in logs, got {log_cm.output!r}",
+        )
+
+    def test_none_returns_empty_without_warning(self) -> None:
+        records = _capture_module_warnings(lambda: _unwrap_envelope(None))
+        self.assertEqual(_unwrap_envelope(None), [])
+        self.assertEqual(records, [])
+
+    def test_scalar_returns_empty_without_warning(self) -> None:
+        for value in (42, "foo", True):
+            records = _capture_module_warnings(
+                lambda v=value: _unwrap_envelope(v)
+            )
+            self.assertEqual(_unwrap_envelope(value), [])
+            self.assertEqual(
+                records,
+                [],
+                f"expected no warnings for {value!r}, got {records!r}",
+            )
+
+    def test_empty_mapping_returns_empty_without_warning(self) -> None:
+        records = _capture_module_warnings(lambda: _unwrap_envelope({}))
+        self.assertEqual(_unwrap_envelope({}), [])
+        self.assertEqual(records, [])
+
+
+class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
+    """Each affected renderer unwraps its upstream envelope shape."""
+
+    def test_jellyfin_recent_envelope_unwrapped(self) -> None:
+        payload = {
+            "Items": [
+                {
+                    "Name": "Foo",
+                    "Type": "Movie",
+                    "ProductionYear": 2024,
+                    "SeriesName": None,
+                    "UserData": {"LastPlayedDate": "2024-01-01"},
+                }
+            ],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "recent")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "Name": "Foo",
+                    "Type": "Movie",
+                    "ProductionYear": 2024,
+                    "SeriesName": None,
+                    "UserData.LastPlayedDate": "2024-01-01",
+                }
+            ],
+        )
+
+    def test_jellyfin_resume_envelope_unwrapped(self) -> None:
+        payload = {
+            "Items": [
+                {
+                    "Name": "Foo",
+                    "Type": "Episode",
+                    "ProductionYear": 2020,
+                    "SeriesName": "Show",
+                    "UserData": {
+                        "PlaybackPositionTicks": 100,
+                        "PlayCount": 2,
+                    },
+                }
+            ],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "resume")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "Name": "Foo",
+                    "Type": "Episode",
+                    "ProductionYear": 2020,
+                    "SeriesName": "Show",
+                    "UserData.PlaybackPositionTicks": 100,
+                    "UserData.PlayCount": 2,
+                }
+            ],
+        )
+
+    def test_radarr_wanted_envelope_unwrapped(self) -> None:
+        payload = {
+            "page": 1,
+            "pageSize": 10,
+            "totalRecords": 1,
+            "records": [
+                {"title": "Vanguard", "year": 2024, "tmdbId": 999, "monitored": True}
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("radarr", "wanted")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "title": "Vanguard",
+                    "year": 2024,
+                    "tmdbId": 999,
+                    "monitored": True,
+                }
+            ],
+        )
+
+    def test_sonarr_wanted_envelope_unwrapped(self) -> None:
+        payload = {
+            "page": 1,
+            "pageSize": 10,
+            "totalRecords": 1,
+            "records": [
+                {
+                    "title": "Pilot",
+                    "seasonNumber": 1,
+                    "episodeNumber": 1,
+                    "airDate": "2024-01-01",
+                    "monitored": True,
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("sonarr", "wanted")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "title": "Pilot",
+                    "seasonNumber": 1,
+                    "episodeNumber": 1,
+                    "airDate": "2024-01-01",
+                    "monitored": True,
+                }
+            ],
+        )
+
+    def test_sonarr_recent_envelope_unwrapped(self) -> None:
+        payload = {
+            "page": 1,
+            "pageSize": 10,
+            "totalRecords": 1,
+            "records": [
+                {
+                    "series": {"title": "Show"},
+                    "episode": {"title": "Pilot"},
+                    "eventType": "downloadFolderImported",
+                    "date": "2024-06-01",
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "series": {"title": "Show"},
+                    "episode": {"title": "Pilot"},
+                    "eventType": "downloadFolderImported",
+                    "date": "2024-06-01",
+                }
+            ],
+        )
+
+
+class TestSummaryEnvelopeRegression(unittest.TestCase):
+    """The bare-list path stays byte-identical for the five renderers."""
+
+    def test_jellyfin_recent_bare_list_unchanged(self) -> None:
+        payload = [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": None,
+                "UserData": {"LastPlayedDate": "2024-01-01"},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "recent")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": None,
+                "UserData.LastPlayedDate": "2024-01-01",
+            },
+        )
+
+    def test_jellyfin_resume_bare_list_unchanged(self) -> None:
+        payload = [
+            {
+                "Name": "Foo",
+                "Type": "Episode",
+                "ProductionYear": 2020,
+                "SeriesName": "Show",
+                "UserData": {"PlaybackPositionTicks": 100, "PlayCount": 2},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "resume")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "Name": "Foo",
+                "Type": "Episode",
+                "ProductionYear": 2020,
+                "SeriesName": "Show",
+                "UserData.PlaybackPositionTicks": 100,
+                "UserData.PlayCount": 2,
+            },
+        )
+
+    def test_radarr_wanted_bare_list_unchanged(self) -> None:
+        payload = [
+            {"title": "Foo", "year": 2024, "tmdbId": 999, "monitored": True}
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "wanted")](payload)
+        self.assertEqual(
+            rendered[0],
+            {"title": "Foo", "year": 2024, "tmdbId": 999, "monitored": True},
+        )
+
+    def test_sonarr_wanted_bare_list_unchanged(self) -> None:
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "monitored": True,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "wanted")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "monitored": True,
+            },
+        )
+
+    def test_sonarr_recent_bare_list_unchanged(self) -> None:
+        payload = [
+            {
+                "series": {"title": "Show"},
+                "episode": {"title": "Pilot"},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "series": {"title": "Show"},
+                "episode": {"title": "Pilot"},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            },
         )
 
 
