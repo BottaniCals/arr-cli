@@ -207,6 +207,23 @@ within the pre-1.0 contract documented in `README.md`.
   and `TestCmdFavorites::test_favorites_forwards_limit` move with the
   handler fix so future drift of the removed sub-resource fails the
   unit suite immediately.
+- `seerr discover-movies` and `seerr discover-tv` no longer hardcode
+  `sortBy=popularity.desc` + `language=en-US` on the wire. The
+  unconditional forward was returning `totalResults: 0` against the
+  operator's live Seer build (a silent locale+sort join failure on
+  upstream), so both handlers now drop the defaults and only forward
+  `?sortBy=<…>` / `?language=<…>` when the operator passed the matching
+  flag. The argparse `--sort` and `--language` defaults change from
+  `"popularity.desc"` / `"en-US"` to `None`; `--help` reflects the new
+  "(omit = use upstream default)" semantics. The default wire-format
+  (`discover-movies` / `discover-tv` with no flags) and the explicit-flag
+  wire-format (only the named key rides the wire) are pinned by new
+  `TestCmdDiscoverMovies::test_seerr_discover_movies_default_omits_sort_and_language`
+  / `TestCmdDiscoverTv::test_seerr_discover_tv_default_omits_sort_and_language`
+  regressions so future re-introduction of the unconditional forward
+  fails the unit suite immediately. Trending / upcoming / search /
+  `genres` are unaffected -- they already followed the omit-when-default
+  rule.
 - `jellyfin favorites` summary now unwraps the v12
   `{Items, TotalRecordCount, StartIndex}` envelope instead of
   iterating the envelope as if it were a list. The renderer's
