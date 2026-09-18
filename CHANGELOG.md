@@ -7,6 +7,24 @@ within the pre-1.0 contract documented in `README.md`.
 
 ## [Unreleased]
 
+### Changed
+
+- `seerr available <query>` -- the client-side title-substring
+  post-filter was removed because upstream `GET /api/v1/media`
+  records on the operator's Seer instance do not carry a top-level
+  `title` field, which made the filter a guaranteed no-op (every
+  row was dropped, so `seerr available ''` and `seerr available
+  'the'` both returned `[]`). The default summary now surfaces the
+  upstream-provided identifiers instead: `id`, `mediaType`,
+  `tmdbId`, `tvdbId`, `externalServiceSlug`, `status`,
+  `mediaAddedAt`. The positional `<query>` is still accepted for
+  backwards compatibility but is ignored; a stderr note is emitted
+  when a non-empty `query` is passed so the operator is not
+  surprised by what looks like an empty result. `--verbose` is
+  unchanged (full `media` records still on the wire). Operators who
+  need a friendly title can resolve it via
+  `seerr search <query>` or look up `tmdbId` / `tvdbId` externally.
+
 ### Added
 
 - `seerr genres [MEDIA_TYPE]` -- TMDB genre list as `[{id, name}, ...]`,
