@@ -509,11 +509,13 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
     ],
     ("sonarr", "recent"): [
         {
-            "series": {"title": "Show"},
-            "episode": {"title": "Pilot"},
+            "id": 1,
+            "seriesId": 10,
+            "episodeId": 100,
+            "sourceTitle": "Show.S01E01.WEBDL-1080p.mkv",
             "eventType": "downloadFolderImported",
-            "date": "2024-06-01",
-            "sourcePath": "/tv/show",
+            "date": "2024-06-01T00:00:00Z",
+            "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
         }
     ],
     ("seerr", "requests"): [
@@ -1671,33 +1673,58 @@ class TestSummarySonarrQueue(unittest.TestCase):
 
 
 class TestSummarySonarrRecent(unittest.TestCase):
-    """``_SUMMARY_RENDERERS[("sonarr", "recent")]`` matches the spec."""
+    """``_SUMMARY_RENDERERS[("sonarr", "recent")]`` matches the spec.
 
-    def test_recent_with_nested_objects(self) -> None:
+    The curated summary projects the flat identity fields the
+    upstream ``GET /api/v3/history`` activity-log payload actually
+    carries (``id``, ``seriesId``, ``episodeId``, ``sourceTitle``,
+    ``eventType``, ``date``, ``quality``) -- ``/api/v3/history``
+    returns flat rows with no nested ``series`` / ``episode``
+    envelopes, so the historical ``{series: {title: null}}`` /
+    ``{episode: {title: null}}`` fabrication was retired.
+    """
+
+    def test_recent_with_full_row(self) -> None:
         payload = [
             {
-                "series": {"title": "Show"},
-                "episode": {"title": "Pilot"},
+                "id": 1,
+                "seriesId": 10,
+                "episodeId": 100,
+                "sourceTitle": "Pilot",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
+                "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
             }
         ]
         rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
         self.assertEqual(
             rendered[0],
             {
-                "series": {"title": "Show"},
-                "episode": {"title": "Pilot"},
+                "id": 1,
+                "seriesId": 10,
+                "episodeId": 100,
+                "sourceTitle": "Pilot",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
+                "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
             },
         )
 
-    def test_recent_missing_nested_objects(self) -> None:
+    def test_recent_missing_optional_fields_defaults_to_none(self) -> None:
         payload = [{"eventType": "x", "date": "y"}]
         rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
-        self.assertEqual(rendered[0]["series"], {"title": None})
-        self.assertEqual(rendered[0]["episode"], {"title": None})
+        self.assertEqual(
+            rendered[0],
+            {
+                "id": None,
+                "seriesId": None,
+                "episodeId": None,
+                "sourceTitle": None,
+                "eventType": "x",
+                "date": "y",
+                "quality": None,
+            },
+        )
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
@@ -2800,10 +2827,13 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
             "totalRecords": 1,
             "records": [
                 {
-                    "series": {"title": "Show"},
-                    "episode": {"title": "Pilot"},
+                    "id": 1,
+                    "seriesId": 10,
+                    "episodeId": 100,
+                    "sourceTitle": "Pilot",
                     "eventType": "downloadFolderImported",
                     "date": "2024-06-01",
+                    "quality": {"quality": {"name": "WEBDL-1080p"}},
                 }
             ],
         }
@@ -2812,10 +2842,13 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
             rendered,
             [
                 {
-                    "series": {"title": "Show"},
-                    "episode": {"title": "Pilot"},
+                    "id": 1,
+                    "seriesId": 10,
+                    "episodeId": 100,
+                    "sourceTitle": "Pilot",
                     "eventType": "downloadFolderImported",
                     "date": "2024-06-01",
+                    "quality": {"quality": {"name": "WEBDL-1080p"}},
                 }
             ],
         )
@@ -2904,22 +2937,96 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
     def test_sonarr_recent_bare_list_unchanged(self) -> None:
         payload = [
             {
-                "series": {"title": "Show"},
-                "episode": {"title": "Pilot"},
+                "id": 1,
+                "seriesId": 10,
+                "episodeId": 100,
+                "sourceTitle": "Pilot",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
             }
         ]
         rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
         self.assertEqual(
             rendered[0],
             {
-                "series": {"title": "Show"},
-                "episode": {"title": "Pilot"},
+                "id": 1,
+                "seriesId": 10,
+                "episodeId": 100,
+                "sourceTitle": "Pilot",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
             },
         )
+
+    def test_sonarr_recent_pins_actual_history_row_shape(self) -> None:
+        # ``GET /api/v3/history`` returns flat activity-log rows; the
+        # operator's live instance emits ``seriesId`` / ``episodeId`` /
+        # ``sourceTitle`` plus quality / language / customFormat
+        # metadata and never populates nested ``series`` / ``episode``
+        # objects. The curated summary must project the identity
+        # fields the upstream payload actually carries and ignore the
+        # rest -- a regression that re-introduces ``{series: {title:
+        # null}}`` fabrication would surface as every row projecting
+        # null series / episode titles on the live operator instance.
+        payload = {
+            "page": 1,
+            "pageSize": 10,
+            "sortKey": "date",
+            "sortDirection": "descending",
+            "totalRecords": 1,
+            "records": [
+                {
+                    "id": 42,
+                    "episodeId": 100,
+                    "seriesId": 10,
+                    "sourceTitle": "Show.S01E01.WEBDL-1080p.mkv",
+                    "languages": [{"id": 1, "name": "English"}],
+                    "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+                    "customFormats": [],
+                    "customFormatScore": 0,
+                    "qualityCutoffNotMet": False,
+                    "date": "2026-09-18T01:59:01Z",
+                    "downloadId": "string-id-abc",
+                    "eventType": "downloadFolderImported",
+                    "data": {},
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        # Identity fields upstream actually carries are projected
+        # verbatim; nothing fabricated.
+        self.assertEqual(
+            row,
+            {
+                "id": 42,
+                "seriesId": 10,
+                "episodeId": 100,
+                "sourceTitle": "Show.S01E01.WEBDL-1080p.mkv",
+                "eventType": "downloadFolderImported",
+                "date": "2026-09-18T01:59:01Z",
+                "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+            },
+        )
+        # No nested-object fabrication: upstream never emits ``series``
+        # or ``episode`` envelopes on history rows, so the summary
+        # must not synthesise empty ``{title: None}`` projections.
+        self.assertNotIn("series", row)
+        self.assertNotIn("episode", row)
+        # Upstream fields not in the curated projection are ignored
+        # (no leakage of the full payload into the summary).
+        for passthrough_field in (
+            "languages",
+            "customFormats",
+            "customFormatScore",
+            "qualityCutoffNotMet",
+            "downloadId",
+            "data",
+        ):
+            self.assertNotIn(passthrough_field, row)
 
 
 # ---------------------------------------------------------------------------
@@ -3227,10 +3334,13 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         ],
         ("sonarr", "recent"): [
             {
-                "series": {"title": "Show"},
-                "episode": {"title": "Pilot"},
+                "id": 1,
+                "seriesId": 10,
+                "episodeId": 100,
+                "sourceTitle": "Pilot",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01T00:00:00Z",
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
             }
         ],
         ("seerr", "requests"): [

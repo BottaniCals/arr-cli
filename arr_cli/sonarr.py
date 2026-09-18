@@ -274,14 +274,18 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="recent",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_sonarr_recent``: nested ``series.title`` /
-    # ``episode.title`` are resolved via dot-path traversal in
-    # ``_row_from_mapping``.
+    # ``_summary_sonarr_recent``. ``/api/v3/history`` returns flat
+    # activity-log rows with ``seriesId`` / ``episodeId`` /
+    # ``sourceTitle`` -- no nested ``series`` / ``episode`` objects
+    # -- so the columns are the flat top-level identity fields the
+    # upstream payload actually carries.
     columns = [
-        "series.title",
-        "episode.title",
+        "seriesId",
+        "episodeId",
+        "sourceTitle",
         "eventType",
         "date",
+        "quality",
     ]
     return _emit(payload, args, columns=columns)
 
