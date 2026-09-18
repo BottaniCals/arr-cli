@@ -3,7 +3,7 @@
 This module is the Seer entry point for the ``arr-cli`` MVP.
 Seer is the unified fork of Overseerr and Jellyseerr; the CLI
 talks to whatever Seer instance the operator points it at via
-``arr.conf``. It exposes twelve read-only commands against a live
+``arr.conf``. It exposes thirteen read-only commands against a live
 Seer instance:
 
 * ``requests``                       -- ``GET /api/v1/request``                 (REQ-10 AC1)
@@ -89,6 +89,24 @@ Seer instance:
                                         of ``discover-movies`` so future drift
                                         between the two discover commands
                                         fails the unit suite immediately.
+* ``genres [MEDIA_TYPE]``               -- ``GET /api/v1/genres/<movie|tv>``;
+                                        returns the TMDB genre list as
+                                        ``[{id, name}, ...]`` so the operator
+                                        can map a friendly genre name (e.g.
+                                        ``Sci-Fi``) to a TMDB integer id
+                                        (e.g. ``878``) before passing it to
+                                        ``discover-movies --genre`` /
+                                        ``discover-tv --genre``. Optional
+                                        positional ``MEDIA_TYPE`` (``movie``
+                                        / ``tv``; default ``movie``) mirrors
+                                        ``trending``'s positional-with-default
+                                        pattern. Path / method / response
+                                        shape documented per AGENTS.md §1
+                                        "Seer note"; the canonical TMDB
+                                        genre endpoint is stable across
+                                        Overseerr → Jellyseerr → Seer, so
+                                        the implementation matches the
+                                        upstream spec by construction.
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -167,6 +185,8 @@ __all__ = [
     "cmd_upcoming_tv",
     "cmd_discover_movies",
     "cmd_discover_tv",
+    "cmd_genres",
+    "seerr_genres",
     # Path constants exposed so tests can assert against the exact
     # strings for each endpoint.
     "USER_ME_PATH",
@@ -175,6 +195,8 @@ __all__ = [
     "UPCOMING_TV_PATH",
     "DISCOVER_MOVIES_PATH",
     "DISCOVER_TV_PATH",
+    "GENRES_MOVIE_PATH",
+    "GENRES_TV_PATH",
 ]
 
 
@@ -1137,6 +1159,52 @@ def cmd_discover_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+def cmd_genres(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+    """Seerr ``genres [MEDIA_TYPE]`` -- TMDB genre list as ``[{id, name}, ...]``.
+
+    ``GET /api/v1/genres/<movie|tv>`` returns a bare list of genre
+    documents ``[{id: int, name: str}, ...]`` (no envelope wrapping
+    -- the canonical TMDB genre shape). The renderer is a
+    near-verbatim projection via
+    :func:`arr_cli.facade.output._summary_seerr_genres`; the
+    per-row shape collapses to ``{id, name}`` so the default
+    ``--human`` table is the documented ``Id | Name`` (US-4).
+
+    No filters ride on the query string -- the endpoint is
+    parameter-free on Seer (matching the historical Overseerr /
+    Jellyseerr shape). The CLI surface therefore only exposes:
+
+    * A positional ``MEDIA_TYPE`` with ``choices=("movie", "tv")``
+      and ``default="movie"`` (matches :func:`cmd_trending`'s
+      positional-with-default pattern).
+    * The universal ``--verbose`` / ``--human`` flags from
+      :func:`arr_cli.facade.cli_common.universal_parents`.
+
+    Defensive ``media_type`` validation lives in
+    :func:`seerr_genres` so the helper is reusable from non-CLI
+    callers; this handler lets the facade :class:`ConfigError`
+    propagate unchanged (exit code 1).
+
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces as
+    a structured
+    ``service=seerr op=genres/<media_type> status=<code>`` stderr
+    line; the operator's diagnostic tools keep working unchanged.
+
+    Authentication is handled transparently by the transport
+    layer (``X-Api-Key`` header per REQ-2 AC3); this handler
+    does not inspect or echo the credential.
+    """
+    payload = seerr_genres(args.genres_type, args, cfg)
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_genres``: ``id`` and ``name`` are
+    # top-level keys on every item, so no dot-path traversal is
+    # needed. Mirrors the ``cmd_requests`` column-list pattern
+    # (no nested objects in the summary shape).
+    columns = ["id", "name"]
+    return _emit(payload, args, columns=columns)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -1166,6 +1234,7 @@ _DISPATCH = {
     "upcoming-tv": cmd_upcoming_tv,
     "discover-movies": cmd_discover_movies,
     "discover-tv": cmd_discover_tv,
+    "genres": cmd_genres,
 }
 
 
@@ -1201,15 +1270,18 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         prog=SERVICE_NAME,
         description=(
             "Read-only CLI for Seer (the unified Overseerr + "
-            "Jellyseerr fork). Twelve commands expose the "
+            "Jellyseerr fork). Thirteen commands expose the "
             "household request queue, request summary counts, "
             "multi-source search, what's already available in "
             "the library, the current authenticated user, "
             "per-show TV details, per-movie details "
             "(optionally with Rotten Tomatoes ratings), the "
             "live trending-discover feed, upcoming movie "
-            "releases / TV premieres, and the general "
-            "discover-by-genre / sort / language browse."
+            "releases / TV premieres, the general "
+            "discover-by-genre / sort / language browse, "
+            "and the TMDB genre list (for mapping a "
+            "friendly genre name to the integer id the "
+            "discover filters expect)."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -1552,6 +1624,30 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         help=(
             "page number forwarded as the ?page=<N> query "
             "parameter (omit = first page)"
+        ),
+    )
+
+    genres = subparsers.add_parser(
+        "genres",
+        help=(
+            "list TMDB genres as [{id, name}, ...] "
+            "(GET /api/v1/genres/<movie|tv>) so the operator "
+            "can look up the integer id expected by "
+            "discover-movies --genre / discover-tv --genre"
+        ),
+        parents=universal_parents(),
+        add_help=False,
+    )
+    genres.add_argument(
+        "genres_type",
+        nargs=argparse.OPTIONAL,
+        default="movie",
+        choices=("movie", "tv"),
+        metavar="MEDIA_TYPE",
+        help=(
+            "optional media-type filter "
+            "(movie or tv; default movie). "
+            "Argparse rejects anything else with exit code 2."
         ),
     )
 
