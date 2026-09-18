@@ -500,24 +500,24 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Seerr ``requests`` -- the household request queue (REQ-10 AC1).
 
     Returns the full list of media requests; ``--human`` renders the
-    most common columns (``media.tmdbId``, ``media.mediaType``,
-    ``type``, ``status``, ``createdAt``, ``requestedBy.displayName``).
+    most common columns (``id``, ``mediaType``, ``tmdbId``, ``tvdbId``,
+    ``externalServiceSlug``, ``type``, ``status``, ``createdAt``).
 
     The ``take`` query parameter caps the response at the documented
     Seer limit (``1000``) so a single round trip covers the household
     queue instead of the default first page of ten.
 
-    The historical ``title`` column was retired because
-    ``/api/v1/request`` records on the operator's Seer instance do
-    not populate ``media.title`` (movie) or ``media.name`` (TV) --
-    every row projected ``title: null`` regardless of media type.
-    The curated summary now surfaces the identity fields the
-    upstream payload does carry (``media.id``, ``media.mediaType``,
-    ``media.tmdbId``, ``media.tvdbId``, ``media.externalServiceSlug``,
-    ``media.status``) so the operator has something to chain into
-    ``seerr movie <tmdbId>`` / ``seerr tv <tvdbId>``. Mirrors the
-    ``seerr available`` shape for a consistent mental model across
-    the two read endpoints.
+    The identity fields are projected at the top level (matching
+    :func:`_summary_seerr_available`'s flat shape) so the two seerr
+    read commands share one mental model. The historical
+    ``requestedBy.displayName`` projection was dropped: the 120-char
+    width budget divided across eight columns truncates the 23-char
+    token to ``requestedBy.di...`` and makes the header unreadable,
+    and the requester is still available in the verbatim envelope via
+    ``--verbose``. The historical ``title`` column was retired
+    because the live ``/api/v1/request`` payload does not populate
+    ``media.title`` or ``media.name`` -- see the renderer docstring
+    for the full rationale.
     """
     payload = _get(
         "/api/v1/request",
@@ -526,28 +526,27 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params={"take": 1000},
         op="requests",
     )
-    # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_seerr_requests``: nested ``media.*`` is resolved
-    # via dot-path traversal in ``_row_from_mapping``. ``media.id``
+    # Tabular columns match a curated subset of the summary-shape
+    # keys emitted by ``_summary_seerr_requests``: every field is
+    # top-level on each row, so no dot-path traversal is needed
+    # (mirrors the ``cmd_available`` column-list pattern). ``id``
     # is the leftmost token so the table is chainable into the
     # detail commands (``seerr movie <id>`` / ``seerr tv <id>``).
-    # The historical ``title`` column was retired because the live
-    # ``/api/v1/request`` payload does not populate ``media.title``
-    # or ``media.name`` -- see the renderer docstring for the full
-    # rationale. ``requestedBy.displayName`` is intentionally NOT
-    # in the ``--human`` column list: the 120-char width budget
-    # divided across the seven identity columns leaves ~17 chars
-    # per column, which still truncates the 23-char
-    # ``requestedBy.displayName`` token to ``requestedBy.di...`` and
-    # makes the header unreadable. The requester is still available
-    # in the default summary shape under the nested ``requestedBy``
-    # mapping; ``--verbose`` keeps the verbatim envelope on the wire
-    # for operators who need it.
+    # The historical ``title`` column was retired because the
+    # live payload does not populate ``media.title`` or
+    # ``media.name`` -- see the renderer docstring for the full
+    # rationale. ``externalServiceSlug`` is in the summary JSON
+    # but intentionally NOT in the ``--human`` column list: with
+    # seven columns the per-column width budget is ~17 chars, but
+    # the 18-char header truncates to ``externalServiceSlu...`` at
+    # that width. Dropping it keeps the headers readable while
+    # leaving the slug available in the JSON summary shape and the
+    # verbatim envelope via ``--verbose``.
     columns = [
-        "media.id",
-        "media.mediaType",
-        "media.tmdbId",
-        "media.tvdbId",
+        "id",
+        "mediaType",
+        "tmdbId",
+        "tvdbId",
         "type",
         "status",
         "createdAt",

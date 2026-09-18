@@ -219,14 +219,17 @@ class TestVerboseFlagCmdRequests(unittest.TestCase):
             output = _capture_stdout(cmd_requests, args, None)
         rendered = json.loads(output)
         # Identity fields from the ``media`` sub-dict are surfaced
-        # under a nested ``media`` mapping; ``title`` is intentionally
-        # absent because the live ``/api/v1/request`` payload does
-        # not populate ``media.title`` or ``media.name``.
-        self.assertEqual(rendered[0]["media"]["tmdbId"], 603)
-        self.assertEqual(rendered[0]["media"]["externalServiceSlug"], "tmdb")
+        # at the **top level** (no nested ``media`` mapping);
+        # ``title`` is intentionally absent because the live
+        # ``/api/v1/request`` payload does not populate
+        # ``media.title`` or ``media.name``. Mirrors the flat shape
+        # ``_summary_seerr_available`` projects.
+        self.assertEqual(rendered[0]["tmdbId"], 603)
+        self.assertEqual(rendered[0]["externalServiceSlug"], "tmdb")
         self.assertEqual(rendered[0]["type"], "movie")
         self.assertEqual(rendered[0]["status"], "pending")
-        self.assertEqual(rendered[0]["requestedBy"]["displayName"], "alice")
+        self.assertNotIn("media", rendered[0])
+        self.assertNotIn("requestedBy", rendered[0])
         self.assertNotIn("title", rendered[0])
 
     def test_cmd_requests_verbose_emits_verbatim(self) -> None:
@@ -453,13 +456,16 @@ class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
 
         The curated summary projects the identity fields from the
         ``media`` sub-dict (``id``, ``mediaType``, ``tmdbId`` /
-        ``tvdbId``, ``externalServiceSlug``, ``status``) rather than
-        a fabricated ``title`` -- the live ``/api/v1/request``
-        payload on the operator's Seer instance does not populate
-        ``media.title`` (movie) or ``media.name`` (TV), so the
-        historical ``title`` projection was retired. Mirrors the
-        field set :func:`_summary_seerr_available` projects for a
-        consistent mental model across the two read endpoints.
+        ``tvdbId``, ``externalServiceSlug``) **at the top level**
+        rather than behind ``media.*`` keys. The historical
+        ``title`` projection is retired because the live
+        ``/api/v1/request`` payload on the operator's Seer instance
+        does not populate ``media.title`` (movie) or ``media.name``
+        (TV). Mirrors the flat shape :func:`_summary_seerr_available`
+        projects for a consistent mental model across the two read
+        endpoints. ``requestedBy`` is dropped from the curated
+        projection; the verbatim envelope is still on the wire via
+        ``--verbose``.
         """
         from arr_cli.seerr import cmd_requests
 
@@ -471,20 +477,41 @@ class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
             output = _capture_stdout(cmd_requests, args, None)
         rendered = json.loads(output)
         self.assertEqual(len(rendered), 2)
-        # Movie row: identity comes from the ``media`` sub-dict,
-        # populated from ``media.tmdbId`` (``603`` for The Matrix in
-        # the fixture).
+        # Movie row: identity fields lifted from ``media`` live at
+        # the top level (``tmdbId`` ``603`` for The Matrix in the
+        # fixture).
         self.assertEqual(rendered[0]["type"], "movie")
-        self.assertEqual(rendered[0]["media"]["tmdbId"], 603)
-        self.assertEqual(rendered[0]["media"]["mediaType"], "movie")
-        self.assertEqual(rendered[0]["media"]["externalServiceSlug"], "tmdb")
-        # TV row: identity comes from ``media.tvdbId`` since the
-        # upstream payload does not carry a top-level title or a
-        # ``media.title`` / ``media.name`` pair.
+        self.assertEqual(rendered[0]["tmdbId"], 603)
+        self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[0]["externalServiceSlug"], "tmdb")
+        # TV row: identity comes from ``media.tvdbId`` (no top-level
+        # ``title`` / ``media.title`` / ``media.name`` pair in the
+        # upstream payload).
         self.assertEqual(rendered[1]["type"], "tv")
-        self.assertEqual(rendered[1]["media"]["tvdbId"], 76107)
-        self.assertEqual(rendered[1]["media"]["mediaType"], "tv")
-        self.assertEqual(rendered[1]["media"]["externalServiceSlug"], "tvdb")
+        self.assertEqual(rendered[1]["tvdbId"], 76107)
+        self.assertEqual(rendered[1]["mediaType"], "tv")
+        self.assertEqual(rendered[1]["externalServiceSlug"], "tvdb")
+        # No nested ``media`` envelope and no ``requestedBy`` mapping
+        # -- the shape is flat top-level identity + request-level
+        # fields, matching ``seerr available``.
+        for row in rendered:
+            self.assertNotIn(
+                "media",
+                row,
+                msg=(
+                    f"seerr requests row still nests identity under "
+                    f"a 'media' key: {row!r} -- the projection must "
+                    "be flat top-level to match ``seerr available``"
+                ),
+            )
+            self.assertNotIn(
+                "requestedBy",
+                row,
+                msg=(
+                    f"seerr requests row re-surfaces a 'requestedBy' "
+                    f"key that should have been dropped: {row!r}"
+                ),
+            )
         # No fabricated top-level ``title`` key -- the historical
         # projection is gone, so neither row projects a ``title``
         # field that would always be ``null``.
@@ -498,10 +525,6 @@ class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
                     "must be retired on the operator's Seer instance"
                 ),
             )
-        # ``requestedBy`` is preserved as the nested mapping the docstring
-        # promises, resolved against the unwrapped envelope.
-        self.assertEqual(rendered[0]["requestedBy"]["displayName"], "alice")
-        self.assertEqual(rendered[1]["requestedBy"]["displayName"], "bob")
 
     def test_cmd_requests_flat_list_default_unchanged(self) -> None:
         """The flat-list code path keeps the pre-change behaviour intact.
@@ -509,8 +532,9 @@ class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
         The flat-list input shape is honoured by the same renderer
         (it iterates ``results`` only when the payload is a
         ``Mapping`` envelope, so a bare list flows through verbatim).
-        The summary projection surfaces the identity fields from
-        the ``media`` sub-dict, not a fabricated ``title``.
+        The summary projection surfaces the identity fields at the
+        top level (lifted from the ``media`` sub-dict), not behind
+        a fabricated ``title``.
         """
         from arr_cli.seerr import cmd_requests
 
@@ -537,12 +561,13 @@ class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
         ):
             output = _capture_stdout(cmd_requests, args, None)
         rendered = json.loads(output)
-        self.assertEqual(rendered[0]["media"]["tmdbId"], 999)
-        self.assertEqual(rendered[0]["media"]["externalServiceSlug"], "tmdb")
+        # Identity fields live at the top level, not under
+        # ``media.*``.
+        self.assertEqual(rendered[0]["tmdbId"], 999)
+        self.assertEqual(rendered[0]["externalServiceSlug"], "tmdb")
+        self.assertNotIn("media", rendered[0])
+        self.assertNotIn("requestedBy", rendered[0])
         self.assertNotIn("title", rendered[0])
-        self.assertEqual(
-            rendered[0]["requestedBy"]["displayName"], "alice"
-        )
 
     def test_cmd_requests_envelope_verbose_emits_verbatim_envelope(self) -> None:
         """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
@@ -5021,7 +5046,7 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
         )
 
     def test_default_summary_populates_identity_for_movie_and_tv(self) -> None:
-        """The renderer projects identity fields from the ``media`` sub-dict for both media shapes."""
+        """The renderer projects identity fields at the top level for both media shapes."""
         from arr_cli.seerr import cmd_requests
 
         args = self._make_args()
@@ -5032,27 +5057,46 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
             output = _capture_stdout(cmd_requests, args, None)
         rendered = json.loads(output)
         self.assertEqual(len(rendered), 2)
-        # Movie row surfaces ``media.tmdbId`` / ``media.mediaType`` /
-        # ``media.externalServiceSlug`` under the nested ``media``
-        # mapping. ``media.tvdbId`` is ``None`` because the upstream
-        # payload does not populate TVDB ids for movie rows.
+        # Movie row: identity fields (id, mediaType, tmdbId,
+        # externalServiceSlug) lifted from ``media`` live at the top
+        # level. ``tvdbId`` is ``None`` because the upstream payload
+        # does not populate TVDB ids for movie rows.
         self.assertEqual(rendered[0]["type"], "movie")
-        self.assertEqual(rendered[0]["media"]["id"], 121)
-        self.assertEqual(rendered[0]["media"]["mediaType"], "movie")
-        self.assertEqual(rendered[0]["media"]["tmdbId"], 603)
-        self.assertIsNone(rendered[0]["media"]["tvdbId"])
-        self.assertEqual(rendered[0]["media"]["externalServiceSlug"], "tmdb")
-        # TV row surfaces ``media.tvdbId`` instead of ``media.tmdbId``.
+        self.assertEqual(rendered[0]["id"], 121)
+        self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[0]["tmdbId"], 603)
+        self.assertIsNone(rendered[0]["tvdbId"])
+        self.assertEqual(rendered[0]["externalServiceSlug"], "tmdb")
+        # TV row surfaces ``tvdbId`` instead of ``tmdbId`` (same flat
+        # shape, just different media-type identity).
         self.assertEqual(rendered[1]["type"], "tv")
-        self.assertEqual(rendered[1]["media"]["id"], 120)
-        self.assertEqual(rendered[1]["media"]["mediaType"], "tv")
-        self.assertIsNone(rendered[1]["media"]["tmdbId"])
-        self.assertEqual(rendered[1]["media"]["tvdbId"], 76107)
-        self.assertEqual(rendered[1]["media"]["externalServiceSlug"], "tvdb")
-        # No fabricated top-level ``title`` key -- the historical
+        self.assertEqual(rendered[1]["id"], 120)
+        self.assertEqual(rendered[1]["mediaType"], "tv")
+        self.assertIsNone(rendered[1]["tmdbId"])
+        self.assertEqual(rendered[1]["tvdbId"], 76107)
+        self.assertEqual(rendered[1]["externalServiceSlug"], "tvdb")
+        # No nested ``media`` envelope / ``requestedBy`` mapping and
+        # no fabricated top-level ``title`` key -- the historical
         # projection is gone, so neither row projects a ``title``
         # field that would always be ``null``.
         for row in rendered:
+            self.assertNotIn(
+                "media",
+                row,
+                msg=(
+                    f"seerr requests row still nests identity under "
+                    f"a 'media' key: {row!r} -- the projection must "
+                    "be flat top-level to match ``seerr available``"
+                ),
+            )
+            self.assertNotIn(
+                "requestedBy",
+                row,
+                msg=(
+                    f"seerr requests row re-surfaces a 'requestedBy' "
+                    f"key that should have been dropped: {row!r}"
+                ),
+            )
             self.assertNotIn(
                 "title",
                 row,
@@ -5081,14 +5125,14 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
         self.assertEqual(json.loads(output), self.PAGINATED_ENVELOPE)
 
     def test_human_table_surfaces_identity_columns(self) -> None:
-        """``--human`` renders the identity columns from the ``media`` sub-dict for every row.
+        """``--human`` renders the identity columns at the top level for every row.
 
         The bug's AC explicitly calls out that every row must render
         a non-``<null>`` identity cell (the documented failure mode
         being fixed is ``title: null`` on every row). The fix
-        replaces the fabricated ``title`` column with the
-        ``media.{id,mediaType,tmdbId,tvdbId}`` nested columns so the
-        operator has something to chain into the detail commands.
+        replaces the nested ``media.{id,mediaType,tmdbId,tvdbId}``
+        columns with their flat top-level siblings so the operator
+        has something to chain into the detail commands.
         """
         from arr_cli.seerr import cmd_requests
 
@@ -5100,13 +5144,18 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
         ):
             output = _capture_stdout(cmd_requests, args, None)
         lines = output.splitlines()
-        # Header line names the documented identity columns.
+        # Header line names the documented flat identity columns.
+        # ``externalServiceSlug`` is in the summary JSON shape but
+        # intentionally NOT in the human column list (the 18-char
+        # header truncates at the ~17-char per-column budget when
+        # seven columns share the 120-char width); the slug is
+        # still available in the JSON summary and ``--verbose``.
         header_line = lines[0]
         for column in (
-            "media.id",
-            "media.mediaType",
-            "media.tmdbId",
-            "media.tvdbId",
+            "id",
+            "mediaType",
+            "tmdbId",
+            "tvdbId",
             "type",
             "status",
             "createdAt",
@@ -5116,6 +5165,36 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
                 msg=(
                     f"column {column!r} missing from --human header: "
                     f"{header_line!r}"
+                ),
+            )
+        # Confirm the curated column-list rationale: the slug is in
+        # the JSON summary shape but the rendered human header
+        # doesn't surface its truncated form. (We do NOT assert it
+        # is absent; the renderer truncates to ``externalServiceSlu…``
+        # at the 8-column budget, which is not what we want.)
+        self.assertNotIn(
+            "externalServiceSlu",
+            header_line,
+            msg=(
+                "--human header surfaced the truncated form of "
+                f"'externalServiceSlug': {header_line!r}"
+            ),
+        )
+        # The historical nested ``media.*`` tokens must NOT appear
+        # in the header -- the projection is flat top-level to match
+        # ``seerr available``.
+        for nested_column in (
+            "media.id",
+            "media.mediaType",
+            "media.tmdbId",
+            "media.tvdbId",
+        ):
+            self.assertNotIn(
+                nested_column,
+                header_line,
+                msg=(
+                    f"--human header still names the nested "
+                    f"{nested_column!r} column: {header_line!r}"
                 ),
             )
         # The historical ``title`` column must NOT appear in the
@@ -5130,19 +5209,19 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
             ),
         )
         # The rendered output must contain the movie's TMDB id and
-        # the TV row's TVDB id (the new identity columns).
+        # the TV row's TVDB id (the flat identity columns).
         self.assertIn("603", output)
         self.assertIn("76107", output)
         # The documented failure mode being fixed was every row
         # projecting ``title: null``; the identity columns replace
         # the fabricated ``title`` so each row has a meaningful
         # identity cell populated (movie row: TMDB id; TV row:
-        # TVDB id). Cross-type identity fields (``media.tvdbId``
-        # for movie rows, ``media.tmdbId`` for TV rows) are
-        # intentionally ``None`` because the upstream payload does
-        # not populate them, which is the correct behaviour --
-        # the AC does not require every cell to be non-null, only
-        # that the row has a meaningful identity (not ``title: null``).
+        # TVDB id). Cross-type identity fields (``tvdbId`` for movie
+        # rows, ``tmdbId`` for TV rows) are intentionally ``None``
+        # because the upstream payload does not populate them,
+        # which is the correct behaviour -- the AC does not require
+        # every cell to be non-null, only that the row has a
+        # meaningful identity (not ``title: null``).
 
     def test_http_path_pin_envelope_passes_through(self) -> None:
         """End-to-end path pin: ``seerr requests`` retrieves ``/api/v1/request`` and emits the curated shape."""
@@ -5165,11 +5244,11 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
             self.assertEqual(len(rsps.calls), 1)
         rendered = json.loads(stdout)
         self.assertEqual(len(rendered), 2)
-        # Movie row surfaces the TMDB id under the nested ``media``
-        # mapping (the new identity projection).
-        self.assertEqual(rendered[0]["media"]["tmdbId"], 603)
+        # Movie row surfaces the TMDB id at the top level (the flat
+        # identity projection, no nested ``media`` envelope).
+        self.assertEqual(rendered[0]["tmdbId"], 603)
         # TV row surfaces the TVDB id instead.
-        self.assertEqual(rendered[1]["media"]["tvdbId"], 76107)
+        self.assertEqual(rendered[1]["tvdbId"], 76107)
 
     def test_renderer_missing_media_envelope_yields_none(self) -> None:
         """A row whose ``media`` envelope is missing yields ``None`` for every identity field.
@@ -5177,7 +5256,7 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
         The defensive contract mirrors
         :func:`_summary_seerr_available`'s handling of missing
         upstream keys: a record whose ``media`` envelope is absent
-        still produces a well-formed row with every ``media.*`` key
+        still produces a well-formed row with every identity field
         set to ``None`` instead of crashing. Pins the upstream-shape
         drift so future envelope changes do not regress the renderer
         into a crash.
@@ -5198,17 +5277,24 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
             "serviceErrors": {"radarr": [], "sonarr": []},
         }
         rendered = _summary_seerr_requests(envelope)
+        # Identity fields at the top level surface ``None`` when the
+        # ``media`` envelope is absent (defensive contract; mirrors
+        # :func:`_summary_seerr_available`).
+        self.assertIsNone(rendered[0]["id"])
+        self.assertIsNone(rendered[0]["mediaType"])
+        self.assertIsNone(rendered[0]["tmdbId"])
+        self.assertIsNone(rendered[0]["tvdbId"])
+        self.assertIsNone(rendered[0]["externalServiceSlug"])
+        # Request-level fields survive intact even when the media
+        # envelope is absent.
+        self.assertEqual(rendered[0]["type"], "movie")
+        self.assertEqual(rendered[0]["status"], 5)
         self.assertEqual(
-            rendered[0]["media"],
-            {
-                "id": None,
-                "mediaType": None,
-                "tmdbId": None,
-                "tvdbId": None,
-                "externalServiceSlug": None,
-                "status": None,
-            },
+            rendered[0]["createdAt"], "2026-09-13T12:56:58.000Z"
         )
+        # No nested ``media`` / ``requestedBy`` envelope.
+        self.assertNotIn("media", rendered[0])
+        self.assertNotIn("requestedBy", rendered[0])
 
 
 # ---------------------------------------------------------------------------
