@@ -383,9 +383,22 @@ class TestGetSuccess(unittest.TestCase):
 
 
 class TestQueryParamEncoding(unittest.TestCase):
-    """Per the security NFR, every user input must be percent-encoded."""
+    """Per the security NFR, every user input must be percent-encoded.
+
+    Contract: :func:`arr_cli.facade.transport._encode_params` does
+    NOT pre-encode values. :mod:`requests` re-encodes anything passed
+    in ``params=`` when it builds the request URL via
+    :func:`urllib.parse.urlencode`, so pre-encoding here would
+    double-encode the value on the wire (``Movie,Episode`` →
+    ``Movie%2CEpisode`` → ``Movie%252CEpisode``). Jellyfin then
+    silently drops the malformed type filter
+    (ticket: transport-params-double-encoded).
+    """
 
     def test_params_are_percent_encoded(self) -> None:
+        # Value handed to ``requests`` is the raw input — no
+        # pre-encoding. ``requests`` re-encodes it once when it builds
+        # the final URL via ``PreparedRequest.prepare_url``.
         cfg = _service_config(jellyfin=_auth(ak="tok"))
         response = _fake_response(body=[])
         session = MagicMock()
@@ -398,14 +411,24 @@ class TestQueryParamEncoding(unittest.TestCase):
             get(
                 "jellyfin",
                 "/Items",
-                params={"searchTerm": "hello world?special&chars"},
+                params={"includeItemTypes": "Movie,Episode"},
                 cfg=cfg,
             )
-        # The ``params`` kwarg passed to requests is the encoded dict.
         _, kwargs = session.get.call_args
-        encoded = kwargs["params"]
-        self.assertIsNotNone(encoded)
-        self.assertEqual(encoded["searchTerm"], "hello%20world%3Fspecial%26chars")
+        forwarded = kwargs["params"]
+        self.assertIsNotNone(forwarded)
+        self.assertEqual(forwarded["includeItemTypes"], "Movie,Episode")
+        # Verify the final URL contains the single-encoded form by
+        # routing the forwarded dict through ``requests.PreparedRequest``
+        # — the same code path ``requests`` uses internally to build
+        # the URL. A regression that re-introduces pre-encoding here
+        # would surface as ``Movie%252CEpisode`` (double-encoded)
+        # rather than the expected ``Movie%2CEpisode``.
+        from requests.models import PreparedRequest
+        prepared = PreparedRequest()
+        prepared.prepare_url("http://example.test/Items", forwarded)
+        self.assertIn("includeItemTypes=Movie%2CEpisode", prepared.url)
+        self.assertNotIn("%25", prepared.url)
 
     def test_path_segment_helper_encodes(self) -> None:
         self.assertEqual(encode_path_segment(42), "42")

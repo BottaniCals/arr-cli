@@ -241,19 +241,21 @@ def _resolve_auth(cfg: ServiceConfig, service: str) -> AuthConfig:
 
 
 def _encode_params(params: Mapping[str, Any] | None) -> dict[str, str] | None:
-    """Percent-encode every key and value in ``params``.
+    """Stringify every key/value in ``params`` for transport to :mod:`requests`.
 
-    Per the security NFR, the facade never interpolates user input raw
-    into a URL — :func:`urllib.parse.quote` is applied to both keys and
-    values with ``safe=""`` so a stray ``/`` or ``?`` in a search term
-    cannot inject a new path segment or query string.
+    Per the security NFR, the facade never interpolates user input
+    raw into a URL — :mod:`requests` percent-encodes every value it
+    receives in ``params=`` (it uses :func:`urllib.parse.quote` with
+    ``safe=""`` via :func:`urllib.parse.urlencode`), so a stray
+    ``/`` or ``?`` in a search term cannot inject a new path
+    segment or query string. Pre-encoding here would double-encode
+    the value on the wire — ``Movie,Episode`` would land upstream
+    as ``Movie%252CEpisode`` and Jellyfin would silently drop the
+    type filter (ticket: transport-params-double-encoded).
     """
     if not params:
         return None
-    encoded: dict[str, str] = {}
-    for key, value in params.items():
-        encoded[str(key)] = quote(str(value), safe="")
-    return encoded
+    return {str(k): str(v) for k, v in params.items()}
 
 
 def _build_url(base_url: str, path: str) -> str:
@@ -423,9 +425,11 @@ def get(
         ``/``; user-supplied fragments (search terms, ids, dates)
         must be passed via ``params`` rather than concatenated.
     params:
-        Mapping of query parameters. Every key and value is
-        percent-encoded with ``safe=""`` before being passed to
-        :mod:`requests`.
+        Mapping of query parameters. Keys and values are forwarded
+        verbatim to :mod:`requests`, which percent-encodes each
+        value with ``quote(safe="")`` when it builds the final
+        URL. The transport layer does NOT pre-encode — doing so
+        would double-encode on the wire (see :func:`_encode_params`).
     cfg:
         The :class:`ServiceConfig` produced by :func:`load_config`.
     connect_timeout:
