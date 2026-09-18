@@ -520,6 +520,55 @@ def _safe_getattr(obj: Any, name: str, default: Any = None) -> Any:
         return default
 
 
+def _unwrap_envelope(payload: Any) -> list[Any]:
+    """Unwrap a paginated service envelope into the underlying list.
+
+    The size-to-summary renderers see three input shapes:
+
+    * a bare list (the historical contract pre-PR-#6) — returned
+      as-is;
+    * a Jellyfin envelope of the shape
+      ``{Items: [...], TotalRecordCount: N, StartIndex: 0}``;
+    * a Radarr / Sonarr envelope of the shape
+      ``{page, pageSize, totalRecords, records: [...]}``.
+
+    The helper probes ``Items`` first (Jellyfin) and falls back to
+    ``records`` (Radarr / Sonarr); a ``Mapping`` payload that
+    matches neither shape logs a warning via the module logger and
+    returns ``[]`` so the caller still receives a defensive empty
+    list rather than crashing or surfacing the raw envelope.
+
+    Row-budget policy: this helper is a pure unwrap and does **not**
+    cap the result to ``TotalRecordCount`` / ``totalRecords``. The
+    ``totalRecords`` field is informational metadata about pages
+    that were never fetched (the upstream paginated endpoints
+    return one page per request and ``arr-cli`` does not fan out
+    across pages). Row-budget truncation lives in :func:`human`'s
+    ``limit`` kwarg, which already truncates with the documented
+    pagination footer. A future refactor that adds a
+    ``totalRecords`` cap here must also add the pagination fan-out
+    to honour the cap; doing only the cap would lie about the row
+    count without fetching the rows.
+    """
+    if isinstance(payload, Mapping):
+        for key in ("Items", "records"):
+            candidate = payload.get(key)
+            if isinstance(candidate, list):
+                return candidate
+        keys = list(payload.keys())
+        if keys:
+            _logger.warning(
+                "arr_cli.facade.output: envelope shape not recognised; "
+                "expected `Items` (Jellyfin) or `records` (Radarr/Sonarr); "
+                "got keys=%r",
+                keys,
+            )
+        return []
+    if isinstance(payload, list):
+        return payload
+    return []
+
+
 # ---------------------------------------------------------------------------
 # Per-command summary renderers
 # ---------------------------------------------------------------------------
@@ -573,6 +622,7 @@ def _summary_jellyfin_now(payload: Any) -> list[dict[str, Any]]:
 
 def _summary_jellyfin_recent(payload: Any) -> list[dict[str, Any]]:
     """Render a Jellyfin ``recent`` payload as the curated summary."""
+    payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     return [
@@ -617,6 +667,7 @@ def _summary_jellyfin_favorites(payload: Any) -> list[dict[str, Any]]:
 
 def _summary_jellyfin_resume(payload: Any) -> list[dict[str, Any]]:
     """Render a Jellyfin ``resume`` payload as the curated summary."""
+    payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     return [
@@ -656,6 +707,7 @@ def _summary_jellyfin_latest(payload: Any) -> list[dict[str, Any]]:
 
 def _summary_radarr_wanted(payload: Any) -> list[dict[str, Any]]:
     """Render a Radarr ``wanted`` payload as the curated summary."""
+    payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     return [
@@ -717,6 +769,7 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
 
 def _summary_sonarr_wanted(payload: Any) -> list[dict[str, Any]]:
     """Render a Sonarr ``wanted`` payload as the curated summary."""
+    payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     return [
@@ -753,6 +806,7 @@ def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
 
 def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
     """Render a Sonarr ``recent`` payload as the curated summary."""
+    payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     summaries: list[dict[str, Any]] = []
