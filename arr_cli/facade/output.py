@@ -604,6 +604,7 @@ def _summary_jellyfin_favorites(payload: Any) -> list[dict[str, Any]]:
         return []
     return [
         {
+            "Id": _safe_get(item, "Id", default=None),
             "Name": _safe_get(item, "Name", default=None),
             "Type": _safe_get(item, "Type", default=None),
             "ProductionYear": _safe_get(item, "ProductionYear", default=0),

@@ -688,6 +688,34 @@ class TestCmdFavorites(unittest.TestCase):
             cmd_favorites(args, cfg)
         self.assertEqual(ctx.exception.exit_code, 1)
 
+    def test_favorites_verbose_emits_verbatim_envelope(self) -> None:
+        # Regression for ``jellyfin-favorites-summary-id-field``: the
+        # ``--verbose`` path must continue to emit the verbatim
+        # service envelope unchanged, with ``Id`` present, regardless
+        # of the curated-summary projection update. ``--verbose``
+        # bypasses ``summarize`` entirely, so the projection
+        # omission cannot leak into this path.
+        cfg = _service_config(user_id="jf-user-1")
+        args = _namespace(human=False, verbose=True)
+        envelope = {
+            "Items": [
+                {
+                    "Id": "523c6aa176971feab5e0fb18ebde0b8f",
+                    "Name": "Fireheart: The Legend of Tadas Blinda",
+                    "Type": "Movie",
+                    "ProductionYear": 2011,
+                    "SeriesName": None,
+                }
+            ],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
+        with _patched_get_payload(envelope):
+            output = _capture_stdout(cmd_favorites, args, cfg)
+        # Verbose pass-through: the envelope is rendered verbatim,
+        # including the upstream ``Id`` field.
+        self.assertEqual(json.loads(output), envelope)
+
 
 # ---------------------------------------------------------------------------
 # Test: --human mode

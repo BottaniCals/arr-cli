@@ -377,7 +377,7 @@ def cmd_favorites(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params=params,
         op="favorites",
     )
-    columns = ["Name", "Type", "ProductionYear", "SeriesName"]
+    columns = ["Id", "Name", "Type", "ProductionYear", "SeriesName"]
     return _emit(payload, args, columns=columns)
 
 
