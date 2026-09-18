@@ -1807,6 +1807,294 @@ class TestSummarySeerrGenres(unittest.TestCase):
         )
 
 
+class TestSummarySeerrTrending(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "trending")]`` branches per item.
+
+    ``seerr trending`` without a media-type positional can return
+    both ``movie`` and ``tv`` items in the same ``results[]``
+    array. The per-item projection must read ``name`` /
+    ``firstAirDate`` for TV items and ``title`` / ``releaseDate``
+    for movie items; ``mediaInfo.tmdbId`` is consistent across
+    both shapes. These tests are the regression net for the
+    v12-compat bug where the renderer projected the movie-shaped
+    keys and rendered TV rows as ``title=None, releaseDate=None``.
+    """
+
+    def test_tv_item_uses_tv_keys(self) -> None:
+        # TV items in the results[] array use ``name`` /
+        # ``firstAirDate``; the renderer must surface them under
+        # the curated ``title`` / ``releaseDate`` keys. Live
+        # evidence (2026-09-18): ``Monster: The Lizzie Borden
+        # Story`` / ``2026-09-17`` from ``seerr trending tv day``.
+        payload = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 1,
+            "results": [
+                {
+                    "name": "Monster: The Lizzie Borden Story",
+                    "firstAirDate": "2026-09-17",
+                    "mediaType": "tv",
+                    "mediaInfo": {"tmdbId": 100009},
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "trending")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Monster: The Lizzie Borden Story",
+                "mediaType": "tv",
+                "releaseDate": "2026-09-17",
+                "mediaInfo": {"tmdbId": 100009},
+            },
+        )
+
+    def test_movie_item_uses_movie_keys(self) -> None:
+        # Movie items still flow through ``title`` /
+        # ``releaseDate`` so the existing movie-shape behaviour
+        # is preserved when the operator runs ``seerr trending
+        # movie ...``.
+        payload = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 1,
+            "results": [
+                {
+                    "title": "Spider-Man: Brand New Day",
+                    "releaseDate": "2026-07-29",
+                    "mediaType": "movie",
+                    "mediaInfo": {"tmdbId": 969681},
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "trending")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Spider-Man: Brand New Day",
+                "mediaType": "movie",
+                "releaseDate": "2026-07-29",
+                "mediaInfo": {"tmdbId": 969681},
+            },
+        )
+
+    def test_mixed_envelope_branches_per_item(self) -> None:
+        # ``seerr trending`` without a media-type positional can
+        # return both ``movie`` and ``tv`` items in one envelope;
+        # each item must be projected against its own mediaType.
+        payload = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 2,
+            "results": [
+                {
+                    "title": "Movie A",
+                    "releaseDate": "2026-01-01",
+                    "mediaType": "movie",
+                    "mediaInfo": {"tmdbId": 1},
+                },
+                {
+                    "name": "Show A",
+                    "firstAirDate": "2026-02-02",
+                    "mediaType": "tv",
+                    "mediaInfo": {"tmdbId": 2},
+                },
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "trending")](payload)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "Movie A")
+        self.assertEqual(rendered[0]["releaseDate"], "2026-01-01")
+        self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[1]["title"], "Show A")
+        self.assertEqual(rendered[1]["releaseDate"], "2026-02-02")
+        self.assertEqual(rendered[1]["mediaType"], "tv")
+
+    def test_tv_item_missing_keys_surface_as_none(self) -> None:
+        # A TV item missing ``name`` / ``firstAirDate`` surfaces
+        # ``None`` rather than crashing the renderer.
+        payload = [
+            {
+                "mediaType": "tv",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "trending")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": None,
+                "mediaType": "tv",
+                "releaseDate": None,
+                "mediaInfo": {"tmdbId": 999},
+            },
+        )
+
+    def test_missing_media_info(self) -> None:
+        payload = [
+            {
+                "title": "Movie X",
+                "releaseDate": "2024-01-01",
+                "mediaType": "movie",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "trending")](payload)
+        self.assertEqual(rendered[0]["mediaInfo"], {"tmdbId": 0})
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "trending")](None),
+            [],
+        )
+
+
+class TestSummarySeerrUpcomingTv(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "upcoming-tv")]`` reads TV-shaped keys.
+
+    TV items in the ``/api/v1/discover/tv/upcoming`` envelope use
+    ``name`` / ``firstAirDate`` rather than the movie-shaped
+    ``title`` / ``releaseDate``. Surfacing the TV keys under the
+    curated ``title`` / ``releaseDate`` names is the regression
+    net for the v12-compat bug where TV rows rendered as
+    ``title=None, releaseDate=None``.
+    """
+
+    def test_upcoming_tv_shape(self) -> None:
+        payload = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 1,
+            "results": [
+                {
+                    "name": "The Scandal",
+                    "firstAirDate": "2026-09-18",
+                    "mediaType": "tv",
+                    "mediaInfo": {"tmdbId": 100001},
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "upcoming-tv")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "The Scandal",
+                "mediaType": "tv",
+                "releaseDate": "2026-09-18",
+                "mediaInfo": {"tmdbId": 100001},
+            },
+        )
+
+    def test_upcoming_tv_missing_keys_surface_as_none(self) -> None:
+        payload = [
+            {
+                "mediaType": "tv",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "upcoming-tv")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": None,
+                "mediaType": "tv",
+                "releaseDate": None,
+                "mediaInfo": {"tmdbId": 999},
+            },
+        )
+
+    def test_missing_media_info(self) -> None:
+        payload = [
+            {
+                "name": "Show",
+                "firstAirDate": "2024-01-01",
+                "mediaType": "tv",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "upcoming-tv")](payload)
+        self.assertEqual(rendered[0]["mediaInfo"], {"tmdbId": 0})
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "upcoming-tv")](None),
+            [],
+        )
+
+
+class TestSummarySeerrDiscoverTv(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "discover-tv")]`` reads TV-shaped keys.
+
+    TV items in the ``/api/v1/discover/tv`` envelope use ``name``
+    / ``firstAirDate`` rather than the movie-shaped ``title`` /
+    ``releaseDate``. Surfacing the TV keys under the curated
+    ``title`` / ``releaseDate`` names is the regression net for
+    the v12-compat bug where TV rows rendered as ``title=None,
+    releaseDate=None``. Live evidence (2026-09-18):
+    ``totalResults: 9397`` for
+    ``/api/v1/discover/tv?genre=10765``.
+    """
+
+    def test_discover_tv_shape(self) -> None:
+        payload = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 9397,
+            "results": [
+                {
+                    "name": "The Vampire Diaries",
+                    "firstAirDate": "2009-09-10",
+                    "mediaType": "tv",
+                    "mediaInfo": {"tmdbId": 46261},
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "discover-tv")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "The Vampire Diaries",
+                "mediaType": "tv",
+                "releaseDate": "2009-09-10",
+                "mediaInfo": {"tmdbId": 46261},
+            },
+        )
+
+    def test_discover_tv_missing_keys_surface_as_none(self) -> None:
+        payload = [
+            {
+                "mediaType": "tv",
+                "mediaInfo": {"tmdbId": 999},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "discover-tv")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": None,
+                "mediaType": "tv",
+                "releaseDate": None,
+                "mediaInfo": {"tmdbId": 999},
+            },
+        )
+
+    def test_missing_media_info(self) -> None:
+        payload = [
+            {
+                "name": "Show",
+                "firstAirDate": "2024-01-01",
+                "mediaType": "tv",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "discover-tv")](payload)
+        self.assertEqual(rendered[0]["mediaInfo"], {"tmdbId": 0})
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "discover-tv")](None),
+            [],
+        )
+
+
 class TestSummarySeerrTv(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("seerr", "tv")]`` matches the spec."""
 
@@ -2398,9 +2686,9 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         ],
         ("seerr", "upcoming-tv"): [
             {
-                "title": "Foo",
+                "name": "Foo",
                 "mediaType": "tv",
-                "releaseDate": "2024-01-01",
+                "firstAirDate": "2024-01-01",
                 "mediaInfo": {"tmdbId": 999},
             }
         ],
@@ -2450,9 +2738,9 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         ],
         ("seerr", "discover-tv"): [
             {
-                "title": "Foo",
+                "name": "Foo",
                 "mediaType": "tv",
-                "releaseDate": "2024-01-01",
+                "firstAirDate": "2024-01-01",
                 "mediaInfo": {"tmdbId": 999},
             }
         ],

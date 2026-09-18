@@ -241,6 +241,28 @@ within the pre-1.0 contract documented in `README.md`.
   envelope shape and asserts the items surface, so a regression to
   the pre-v12 flat-list assumption fails the unit suite immediately.
 
+- `seerr discover-tv`, `seerr upcoming-tv`, and the TV half of
+  `seerr trending` now surface TV-shaped fields under the curated
+  `title` / `releaseDate` keys instead of rendering every row as
+  `title=None, releaseDate=None`. The three size-to-summary renderers
+  (`_summary_seerr_discover_tv`, `_summary_seerr_upcoming_tv`,
+  `_summary_seerr_trending`) were projecting the movie-shaped
+  `title` / `releaseDate` keys against an envelope where TV items
+  use `name` / `firstAirDate`. `_summary_seerr_trending` branches per
+  item on `mediaType` because the unfiltered `seerr trending`
+  envelope can mix `movie` and `tv` items; the two TV-only renderers
+  read `name` / `firstAirDate` unconditionally. The three
+  renderers' docstrings are updated to drop the stale
+  "byte-identical to <movie sibling>" claims that were the root of
+  the copy-paste bug. New `TestSummarySeerrTrending`,
+  `TestSummarySeerrUpcomingTv`, and `TestSummarySeerrDiscoverTv`
+  classes in `tests/unit/test_output.py` feed each renderer the
+  documented TV envelope (and, for `trending`, a mixed envelope)
+  and assert `title` / `releaseDate` surface from the TV keys, so a
+  regression to the movie-shape projection fails the unit suite
+  immediately. Movie-flavored variants (`seerr discover-movies`,
+  `seerr upcoming-movies`, `seerr trending movie …`) are unaffected.
+
 ### Breaking
 
 - Default JSON output for the 15 size-to-summary candidate commands is no
