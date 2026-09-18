@@ -48,6 +48,24 @@ within the pre-1.0 contract documented in `README.md`.
   `--verbose` is unchanged (raw request envelope still on the
   wire). Mirrors the field set `seerr available` projects for
   a consistent mental model across the two read endpoints.
+- `seerr requests` -- the curated summary now projects the
+  identity fields (`id`, `mediaType`, `tmdbId`, `tvdbId`,
+  `externalServiceSlug`) at the **top level** instead of nesting
+  them behind `media.*` keys. The historical projection
+  disagreed with the sibling `seerr available` summary, which
+  returned flat identity fields at the top level; AGENTS.md §1
+  says both should "project the identity fields instead" of
+  `media.title`, so the two seerr read commands now share one
+  mental model. The curated summary is now `{id, mediaType,
+  tmdbId, tvdbId, externalServiceSlug, type, status, createdAt}`;
+  the `--human` table column list mirrors the new flat shape
+  (`id | mediaType | tmdbId | tvdbId | externalServiceSlug |
+  type | status | createdAt`). The historical
+  `requestedBy.displayName` projection was dropped (the
+  `--human` column list does not include it; the requester
+  remains available in the verbatim envelope via `--verbose`).
+  `--verbose` is unchanged (raw request envelope still on the
+  wire).
 - `seerr search <query>` -- the curated summary now projects the
   top-level `id` field the upstream `GET /api/v1/search` payload
   actually carries, instead of fabricating a nested

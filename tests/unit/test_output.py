@@ -1988,15 +1988,28 @@ class TestSummarySeerrRequests(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("seerr", "requests")]`` matches the spec.
 
     The curated summary projects the upstream-provided identity
-    fields onto a nested ``media`` sub-dict (``id``, ``mediaType``,
-    ``tmdbId``, ``tvdbId``, ``externalServiceSlug``, ``status``)
-    rather than a fabricated ``title`` -- the live
-    ``/api/v1/request`` payload on the operator's Seer instance does
-    not populate ``media.title`` (movie) or ``media.name`` (TV), so
-    the historical ``title`` projection was retired. Mirrors the
-    field set :func:`_summary_seerr_available` projects for a
-    consistent mental model across the two read endpoints. See
-    ``seerr-requests-no-title-field`` in CHANGELOG.md for the full
+    fields at the **top level** (``id``, ``mediaType``, ``tmdbId``,
+    ``tvdbId``, ``externalServiceSlug``) -- lifted from the
+    ``media`` sub-dict -- rather than nesting them behind
+    ``media.*`` keys. AGENTS.md §1 says both ``seerr requests`` and
+    ``seerr available`` should "project the identity fields
+    instead" of ``media.title``; the historical projection nested
+    the identity behind ``media.*`` while :func:`_summary_seerr_available`
+    returned flat identity fields at the top level, so the two seerr
+    read commands disagreed on what shape that projection took. The
+    fix removes the asymmetry so the operator has one mental model
+    across both commands.
+
+    The request-level fields (``type``, ``status``, ``createdAt``)
+    stay top-level alongside the lifted identity. The
+    ``requestedBy.displayName`` projection was dropped (the
+    ``--human`` column list does not include it; see
+    :func:`arr_cli.seerr.cmd_requests` for the width-budget
+    rationale). The historical ``title`` projection is still retired
+    -- neither ``media.title`` (movie) nor ``media.name`` (TV) is
+    populated on the live operator's Seer instance. See
+    ``seerr-requests-no-title-field`` and
+    ``seerr-requests-flat-shape`` in CHANGELOG.md for the full
     rationale.
     """
 
@@ -2021,18 +2034,14 @@ class TestSummarySeerrRequests(unittest.TestCase):
         self.assertEqual(
             rendered[0],
             {
-                "media": {
-                    "id": 121,
-                    "mediaType": "movie",
-                    "tmdbId": 603,
-                    "tvdbId": None,
-                    "externalServiceSlug": "tmdb",
-                    "status": 5,
-                },
+                "id": 121,
+                "mediaType": "movie",
+                "tmdbId": 603,
+                "tvdbId": None,
+                "externalServiceSlug": "tmdb",
                 "type": "movie",
                 "status": 2,
                 "createdAt": "2026-09-13T12:56:58.000Z",
-                "requestedBy": {"displayName": "alice"},
             },
         )
 
@@ -2040,10 +2049,13 @@ class TestSummarySeerrRequests(unittest.TestCase):
         """TV rows source identity from the same ``media`` sub-dict as movie rows.
 
         Pins that the curated projection is shape-uniform across
-        ``type == "tv"`` and ``type == "movie"``: there is no
-        per-media-type title branching in the renderer (the historical
-        ``media.title`` vs ``media.name`` branch was retired because
-        neither field is populated on the operator's Seer instance).
+        ``type == "tv"`` and ``type == "movie"``: identity fields
+        live at the top level on both rows (lifted from the
+        ``media`` sub-dict) rather than nested behind ``media.*``
+        keys. The historical ``media.title`` vs ``media.name`` branch
+        was retired because neither field is populated on the
+        operator's Seer instance, so a TV row no longer pretends to
+        carry a ``title`` read from ``media.name``.
         """
         payload = [
             {
@@ -2063,24 +2075,41 @@ class TestSummarySeerrRequests(unittest.TestCase):
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
         self.assertEqual(rendered[0]["type"], "tv")
-        self.assertEqual(rendered[0]["media"]["tvdbId"], 76107)
-        self.assertEqual(rendered[0]["media"]["externalServiceSlug"], "tvdb")
+        # Identity fields are top-level, not nested behind ``media.*``.
+        self.assertEqual(rendered[0]["id"], 120)
+        self.assertEqual(rendered[0]["mediaType"], "tv")
+        self.assertEqual(rendered[0]["tvdbId"], 76107)
+        self.assertEqual(rendered[0]["externalServiceSlug"], "tvdb")
         # No fabricated top-level ``title`` key -- the historical
         # projection is gone, so a TV row does not pretend to carry
         # a ``title`` read from ``media.name``.
         self.assertNotIn("title", rendered[0])
+        # No nested ``media`` envelope and no ``requestedBy`` mapping
+        # -- the shape is flat top-level identity + request-level
+        # fields, matching ``seerr available``.
+        self.assertNotIn("media", rendered[0])
+        self.assertNotIn("requestedBy", rendered[0])
 
-    def test_requests_missing_requester(self) -> None:
-        """Records without a ``requestedBy`` mapping surface ``displayName: None``.
+    def test_requests_drops_requested_by(self) -> None:
+        """The ``requestedBy`` mapping is dropped from the curated row.
 
-        The renderer walks ``requestedBy.displayName`` via
-        :func:`_safe_get`, so a record missing the requester object
-        surfaces as ``{"displayName": None}`` rather than crashing
-        -- mirrors the defensive contract of every other renderer.
+        The ``--human`` column list does not include
+        ``requestedBy.displayName`` (the 120-char width budget
+        divided across eight columns truncates the 23-char token),
+        and the upstream detail is available via ``--verbose`` for
+        operators who need it. Pins the dropped projection so a
+        future revert that re-nests ``requestedBy`` fails this test.
         """
         payload = [{"type": "movie", "status": "x", "createdAt": "y"}]
         rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
-        self.assertEqual(rendered[0]["requestedBy"], {"displayName": None})
+        self.assertNotIn(
+            "requestedBy",
+            rendered[0],
+            msg=(
+                "seerr requests row re-surfaces a 'requestedBy' key "
+                f"that should have been dropped: {rendered[0]!r}"
+            ),
+        )
 
     def test_requests_missing_media_envelope(self) -> None:
         """Records without a ``media`` sub-dict surface ``None`` for every identity field.
@@ -2088,24 +2117,23 @@ class TestSummarySeerrRequests(unittest.TestCase):
         The defensive contract mirrors
         :func:`_summary_seerr_available`'s handling of missing
         upstream keys: a record whose ``media`` envelope is absent
-        still produces a well-formed row with every ``media.*`` key
+        still produces a well-formed row with every identity field
         set to ``None`` instead of crashing or fabricating a default
         dict. Pins the upstream-shape drift so future envelope
         changes do not regress the renderer into a crash.
         """
         payload = [{"type": "movie", "status": 2, "createdAt": "y"}]
         rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
-        self.assertEqual(
-            rendered[0]["media"],
-            {
-                "id": None,
-                "mediaType": None,
-                "tmdbId": None,
-                "tvdbId": None,
-                "externalServiceSlug": None,
-                "status": None,
-            },
-        )
+        self.assertIsNone(rendered[0]["id"])
+        self.assertIsNone(rendered[0]["mediaType"])
+        self.assertIsNone(rendered[0]["tmdbId"])
+        self.assertIsNone(rendered[0]["tvdbId"])
+        self.assertIsNone(rendered[0]["externalServiceSlug"])
+        # Request-level fields survive intact even when the media
+        # envelope is absent.
+        self.assertEqual(rendered[0]["type"], "movie")
+        self.assertEqual(rendered[0]["status"], 2)
+        self.assertEqual(rendered[0]["createdAt"], "y")
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(

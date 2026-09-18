@@ -903,20 +903,37 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
     unchanged behaviour.
 
     The per-item projection surfaces the identity fields the upstream
-    payload actually carries on the operator's Seer instance -- the
-    ``media`` sub-dict exposes ``id``, ``mediaType``, ``tmdbId``,
-    ``tvdbId``, ``externalServiceSlug`` and ``status`` (same shape as
-    the ``/api/v1/media`` rows consumed by
-    :func:`_summary_seerr_available`). The historical ``title``
-    projection was retired because neither ``media.title`` (movie)
-    nor ``media.name`` (TV) is populated on the live operator's
-    Seer instance -- every row projected ``title: null``. Operators
-    who need a friendly title can resolve it via
-    ``seerr movie <tmdbId>`` / ``seerr tv <tvdbId>`` or
-    ``seerr search <query>``; the curated summary here stays as the
-    canonical "what is on the household request queue" answer and
-    gives the operator enough identity to chain into the detail
-    commands.
+    payload actually carries on the operator's Seer instance at the
+    **top level** -- ``id``, ``mediaType``, ``tmdbId``, ``tvdbId``,
+    ``externalServiceSlug`` (lifted from the ``media`` sub-dict).
+    AGENTS.md §1 says both ``seerr requests`` and ``seerr available``
+    should "project the identity fields instead" of ``media.title``;
+    the historical projection nested the identity behind ``media.*``
+    keys while :func:`_summary_seerr_available` returned flat identity
+    fields at the top level, so the two seerr read commands disagreed
+    on what shape that projection took. The fix removes the
+    asymmetry so the operator has one mental model across both
+    commands (same identity field set, same flat column names).
+
+    The request-level fields (``type``, ``status``, ``createdAt``)
+    stay top-level alongside the lifted identity. ``status`` is the
+    request status (not the underlying media status) -- the bit the
+    operator cares about when scanning the household request queue.
+    The ``requestedBy.displayName`` projection was dropped: the
+    ``--human`` column list does not include it (the 120-char width
+    budget divided across eight columns truncates the 23-char token
+    to ``requestedBy.di...``), and the upstream detail is available
+    via ``--verbose`` for operators who need it.
+
+    The historical ``title`` projection is still retired -- neither
+    ``media.title`` (movie) nor ``media.name`` (TV) is populated on
+    the live operator's Seer instance, so every row would have
+    projected ``title: null``. Operators who need a friendly title
+    can resolve it via ``seerr movie <tmdbId>`` / ``seerr tv
+    <tvdbId>`` or ``seerr search <query>``; the curated summary
+    here stays as the canonical "what is on the household request
+    queue" answer and gives the operator enough identity to chain
+    into the detail commands.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -926,51 +943,36 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        requester = item.get("requestedBy")
-        if isinstance(requester, Mapping):
-            requester_obj: dict[str, Any] = {
-                "displayName": _safe_get(
-                    requester, "displayName", default=None
-                ),
-            }
-        else:
-            requester_obj = {"displayName": None}
         # Pull the identity fields from the ``media`` sub-dict when
-        # it is well-formed; fall back to ``None`` on every field
-        # otherwise (mirrors the defensive contract of every other
-        # renderer and lets the summary stay well-formed even when
-        # upstream drops the ``media`` envelope entirely). Same
-        # field set as :func:`_summary_seerr_available` so the
-        # operator has one mental model across ``seerr requests`` and
-        # ``seerr available``.
+        # it is well-formed; fall back to ``None`` on every identity
+        # field otherwise (mirrors the defensive contract of every
+        # other renderer and lets the summary stay well-formed even
+        # when upstream drops the ``media`` envelope entirely).
+        # Same field set as :func:`_summary_seerr_available` -- the
+        # only difference is that ``status`` here is the request
+        # status (from the outer record) rather than the media
+        # status (which only ``seerr available`` surfaces).
         media = item.get("media")
         if isinstance(media, Mapping):
-            media_obj: dict[str, Any] = {
-                "id": _safe_get(media, "id", default=None),
-                "mediaType": _safe_get(media, "mediaType", default=None),
-                "tmdbId": _safe_get(media, "tmdbId", default=None),
-                "tvdbId": _safe_get(media, "tvdbId", default=None),
-                "externalServiceSlug": _safe_get(
-                    media, "externalServiceSlug", default=None
-                ),
-                "status": _safe_get(media, "status", default=None),
-            }
+            id_ = _safe_get(media, "id", default=None)
+            media_type = _safe_get(media, "mediaType", default=None)
+            tmdb_id = _safe_get(media, "tmdbId", default=None)
+            tvdb_id = _safe_get(media, "tvdbId", default=None)
+            slug = _safe_get(
+                media, "externalServiceSlug", default=None
+            )
         else:
-            media_obj = {
-                "id": None,
-                "mediaType": None,
-                "tmdbId": None,
-                "tvdbId": None,
-                "externalServiceSlug": None,
-                "status": None,
-            }
+            id_ = media_type = tmdb_id = tvdb_id = slug = None
         summaries.append(
             {
-                "media": media_obj,
+                "id": id_,
+                "mediaType": media_type,
+                "tmdbId": tmdb_id,
+                "tvdbId": tvdb_id,
+                "externalServiceSlug": slug,
                 "type": _safe_get(item, "type", default=None),
                 "status": _safe_get(item, "status", default=None),
                 "createdAt": _safe_get(item, "createdAt", default=None),
-                "requestedBy": requester_obj,
             }
         )
     return summaries
