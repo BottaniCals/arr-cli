@@ -201,11 +201,11 @@ class TestVerboseFlagCmdRequests(unittest.TestCase):
         )
         payload = [
             {
-                "title": "Foo",
                 "type": "movie",
                 "status": "pending",
                 "createdAt": "2024-01-01",
                 "requestedBy": {"displayName": "alice"},
+                "media": {"title": "Foo"},
             }
         ]
         with patch("arr_cli.seerr.transport.get", return_value=payload):
@@ -387,19 +387,19 @@ class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
         "results": [
             {
                 "id": 121,
-                "title": "Foo",
                 "type": "movie",
                 "status": 5,
                 "createdAt": "2026-09-13T12:56:58.000Z",
                 "requestedBy": {"displayName": "alice"},
+                "media": {"title": "Foo"},
             },
             {
                 "id": 120,
-                "title": "Bar",
-                "type": "movie",
+                "type": "tv",
                 "status": 2,
                 "createdAt": "2026-09-13T12:55:03.000Z",
                 "requestedBy": {"displayName": "bob"},
+                "media": {"name": "Bar"},
             },
         ],
         "serviceErrors": {"radarr": [], "sonarr": []},
@@ -447,11 +447,11 @@ class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
         args = self._make_args()
         flat_payload = [
             {
-                "title": "Foo",
                 "type": "movie",
                 "status": "pending",
                 "createdAt": "2024-01-01",
                 "requestedBy": {"displayName": "alice"},
+                "media": {"title": "Foo"},
             }
         ]
         with patch(
@@ -530,7 +530,6 @@ class TestCmdRequestsTakesParam(unittest.TestCase):
             "results": [
                 {
                     "id": 1,
-                    "title": "Foo",
                     "type": "movie",
                     "status": 5,
                     "createdAt": "2024-01-01T00:00:00.000Z",
@@ -595,7 +594,7 @@ class TestCmdSearch(unittest.TestCase):
                 "https://seerr.example/api/v1/search",
                 json=[
                     {
-                        "title": "Doctor Who",
+                        "name": "Doctor Who",
                         "mediaType": "tv",
                         "releaseDate": "2005-03-26",
                         "mediaInfo": {"tmdbId": 123},
@@ -748,7 +747,7 @@ class TestCmdSearchPaginatedEnvelope(unittest.TestCase):
         "totalResults": 1839,
         "results": [
             {
-                "title": "Doctor Who",
+                "name": "Doctor Who",
                 "mediaType": "tv",
                 "releaseDate": "2005-03-26",
                 "mediaInfo": {"tmdbId": 123},
@@ -805,7 +804,7 @@ class TestCmdSearchPaginatedEnvelope(unittest.TestCase):
         args = self._make_args()
         flat_payload = [
             {
-                "title": "Doctor Who",
+                "name": "Doctor Who",
                 "mediaType": "tv",
                 "releaseDate": "2005-03-26",
                 "mediaInfo": {"tmdbId": 123},
@@ -1538,12 +1537,18 @@ class TestCmdMovie(unittest.TestCase):
 
     DETAIL_PAYLOAD: dict[str, Any] = {
         "id": 603,
-        "name": "The Matrix",
+        "title": "The Matrix",
         "originalTitle": "The Matrix",
         "releaseDate": "1999-03-31",
         "runtime": 136,
         "genres": [{"id": 28, "name": "Action"}],
         "tagline": "Welcome to the Real World.",
+        # Canonical Seer movie-detail shape has ``name`` as ``None``
+        # at the top level -- the title lives at ``title``. Pinning
+        # the upstream truth so a future regression that re-derives
+        # ``name`` from the renderer breaks the suite immediately
+        # rather than silently shipping ``title: null`` again.
+        "name": None,
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
@@ -1587,7 +1592,7 @@ class TestCmdMovie(unittest.TestCase):
         # the extra round trip.
         self.assertEqual(len(mock_get.call_args_list), 1)
         rendered = json.loads(output)
-        self.assertEqual(rendered["name"], "The Matrix")
+        self.assertEqual(rendered["title"], "The Matrix")
         self.assertEqual(rendered["originalTitle"], "The Matrix")
         self.assertEqual(rendered["releaseDate"], "1999-03-31")
         # Raw runtime minutes (136) is reformatted as ``"<X>h <Y>m"``
@@ -1638,7 +1643,7 @@ class TestCmdMovie(unittest.TestCase):
         self.assertEqual(len(mock_get.call_args_list), 2)
         rendered = json.loads(output)
         # Top-level fields still come from the detail payload ...
-        self.assertEqual(rendered["name"], "The Matrix")
+        self.assertEqual(rendered["title"], "The Matrix")
         # ... and the RT scores arrive nested under ``ratings``.
         self.assertIsNotNone(rendered["ratings"])
         self.assertEqual(rendered["ratings"]["criticsScore"], 83)
@@ -1787,12 +1792,17 @@ class TestCmdMovieHttpPath(unittest.TestCase):
 
     DETAIL_PAYLOAD: dict[str, Any] = {
         "id": 603,
-        "name": "The Matrix",
+        "title": "The Matrix",
         "originalTitle": "The Matrix",
         "releaseDate": "1999-03-31",
         "runtime": 136,
         "genres": [{"id": 28, "name": "Action"}],
         "tagline": "Welcome to the Real World.",
+        # Canonical Seer movie-detail shape has ``name`` as ``None``
+        # at the top level; the title lives at ``title``. Pins the
+        # upstream truth so a future regression that re-derives the
+        # projected column from ``name`` fails the suite immediately.
+        "name": None,
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
@@ -4723,6 +4733,608 @@ class TestCmdGenres(unittest.TestCase):
                 None,
             )
         self.assertEqual(exc_ctx.exception.exit_code, 1)
+
+
+# ---------------------------------------------------------------------------
+# Test: ``cmd_requests`` projects title from ``media`` envelope per media type
+# ---------------------------------------------------------------------------
+
+
+class TestCmdRequestsMediaEnvelope(unittest.TestCase):
+    """Regression tests for the per-row ``media`` envelope unwrap.
+
+    Seer's ``/api/v1/request`` endpoint wraps each row's media
+    metadata inside a ``media`` envelope keyed by ``title`` (movie)
+    or ``name`` (TV). The renderer's job is to unwrap that envelope
+    before projecting to the curated ``title`` column so the
+    default summary is populated for both media shapes -- mirroring
+    the AC: "seerr requests default rows have title populated from
+    media.title (movie) or media.name (TV)".
+
+    These tests pin the unwrap contract end-to-end: the renderer
+    exercises both shapes in a single ``results[]`` array and the
+    ``--human`` tabular view surfaces the populated title for every
+    row. ``--verbose`` is unchanged (verbatim envelope passthrough).
+    """
+
+    PAGINATED_ENVELOPE: dict[str, Any] = {
+        "pageInfo": {
+            "pages": 1,
+            "pageSize": 10,
+            "results": 2,
+            "page": 1,
+        },
+        "results": [
+            {
+                "id": 121,
+                "type": "movie",
+                "status": 5,
+                "createdAt": "2026-09-13T12:56:58.000Z",
+                "requestedBy": {"displayName": "alice"},
+                "media": {"title": "The Matrix"},
+            },
+            {
+                "id": 120,
+                "type": "tv",
+                "status": 2,
+                "createdAt": "2026-09-13T12:55:03.000Z",
+                "requestedBy": {"displayName": "bob"},
+                "media": {"name": "Aurora Matrix"},
+            },
+        ],
+        "serviceErrors": {"radarr": [], "sonarr": []},
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def _make_args(self) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``requests`` subparser defaults."""
+        return argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=False,
+            verbose=False,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="requests",
+        )
+
+    def test_default_summary_populates_title_for_movie_and_tv(self) -> None:
+        """The renderer sources movie title from ``media.title`` and TV title from ``media.name``."""
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(len(rendered), 2)
+        # Movie row surfaces ``media.title`` under the projected ``title`` column.
+        self.assertEqual(rendered[0]["title"], "The Matrix")
+        self.assertEqual(rendered[0]["type"], "movie")
+        # TV row surfaces ``media.name`` under the same projected column.
+        self.assertEqual(rendered[1]["title"], "Aurora Matrix")
+        self.assertEqual(rendered[1]["type"], "tv")
+
+    def test_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args()
+        args.verbose = True
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        # ``--verbose`` keeps the envelope shape intact; downstream
+        # consumers still see ``pageInfo`` / ``results`` /
+        # ``media.{title,name}`` as the service emitted them.
+        self.assertEqual(json.loads(output), self.PAGINATED_ENVELOPE)
+
+    def test_human_table_surfaces_populated_title(self) -> None:
+        """``--human`` renders the populated title column for both media shapes."""
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args()
+        args.human = True
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        lines = output.splitlines()
+        # Header line names the documented columns.
+        header_line = lines[0]
+        for column in (
+            "title",
+            "type",
+            "status",
+            "createdAt",
+            "requestedBy.displayName",
+        ):
+            self.assertIn(
+                column, header_line,
+                msg=(
+                    f"column {column!r} missing from --human header: "
+                    f"{header_line!r}"
+                ),
+            )
+        # The rendered output must contain both titles; the bug's
+        # AC explicitly calls out that the TV half of every
+        # envelope should render its title populated, not ``<null>``.
+        self.assertIn("The Matrix", output)
+        self.assertIn("Aurora Matrix", output)
+        # And neither row should render as ``<null>`` for the title
+        # cell (the documented failure mode being fixed).
+        self.assertNotIn("<null>", output)
+
+    def test_http_path_pin_envelope_passes_through(self) -> None:
+        """End-to-end path pin: ``seerr requests`` retrieves ``/api/v1/request`` and emits the curated shape."""
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/request",
+                json=self.PAGINATED_ENVELOPE,
+                status=200,
+            )
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "requests"]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+        rendered = json.loads(stdout)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["title"], "The Matrix")
+        self.assertEqual(rendered[1]["title"], "Aurora Matrix")
+
+    def test_renderer_missing_media_envelope_yields_none(self) -> None:
+        """A row whose ``media`` envelope is missing yields ``title=None`` rather than crashing."""
+        from arr_cli.facade.output import _summary_seerr_requests
+
+        envelope = {
+            "pageInfo": {"pages": 1, "pageSize": 10, "results": 2, "page": 1},
+            "results": [
+                {
+                    "id": 1,
+                    "type": "movie",
+                    "status": 5,
+                    "createdAt": "2026-09-13T12:56:58.000Z",
+                    "requestedBy": {"displayName": "alice"},
+                },
+            ],
+            "serviceErrors": {"radarr": [], "sonarr": []},
+        }
+        rendered = _summary_seerr_requests(envelope)
+        self.assertEqual(rendered[0]["title"], None)
+
+
+# ---------------------------------------------------------------------------
+# Test: ``cmd_search`` mirrors ``_summary_seerr_trending`` mediaType branching
+# ---------------------------------------------------------------------------
+
+
+class TestCmdSearchMixedMediaTypes(unittest.TestCase):
+    """Regression tests pinning the per-media-type title projection for ``cmd_search``.
+
+    Seer's ``/api/v1/search`` returns a paginated envelope whose
+    ``results[]`` mixes movie rows (top-level ``title``) and TV
+    rows (top-level ``name`` only). The renderer mirrors
+    :func:`_summary_seerr_trending`'s ``is_tv = mediaType == "tv"``
+    branching so the single projected ``title`` column is
+    populated regardless of media type -- this is the bug's AC:
+    "seerr search 'matrix' TV rows show their name ("Threat
+    Matrix", "Matrix", "Matrix Dreads", "Aurora Matrix") in the
+    default summary under the single title column, not null".
+    """
+
+    PAGINATED_ENVELOPE: dict[str, Any] = {
+        "page": 1,
+        "totalPages": 1,
+        "totalResults": 4,
+        "results": [
+            {
+                "title": "The Matrix",
+                "mediaType": "movie",
+                "releaseDate": "1999-03-31",
+                "mediaInfo": {"tmdbId": 603},
+            },
+            {
+                "name": "Threat Matrix",
+                "mediaType": "tv",
+                "releaseDate": "2020-09-09",
+                "mediaInfo": {"tmdbId": 104586},
+            },
+            {
+                "name": "Matrix",
+                "mediaType": "tv",
+                "releaseDate": "1993-03-03",
+                "mediaInfo": {"tmdbId": 23988},
+            },
+            {
+                "name": "Matrix Dreads",
+                "mediaType": "tv",
+                "releaseDate": "2015-01-21",
+                "mediaInfo": {"tmdbId": 99999},
+            },
+            {
+                "name": "Aurora Matrix",
+                "mediaType": "tv",
+                "releaseDate": "2020-09-01",
+                "mediaInfo": {"tmdbId": 108586},
+            },
+        ],
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def _make_args(self) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``search`` subparser defaults."""
+        return argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=False,
+            verbose=False,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="search",
+            query="matrix",
+        )
+
+    def test_default_summary_populates_title_for_each_row(self) -> None:
+        """TV rows surface their ``name`` under the projected ``title`` column; movie rows surface ``title``."""
+        from arr_cli.seerr import cmd_search
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_search, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(len(rendered), 5)
+        # Movie row surfaces top-level ``title``.
+        self.assertEqual(rendered[0]["title"], "The Matrix")
+        # TV rows surface top-level ``name`` under the projected
+        # ``title`` column -- the exact AC values from the bug
+        # review.
+        self.assertEqual(rendered[1]["title"], "Threat Matrix")
+        self.assertEqual(rendered[2]["title"], "Matrix")
+        self.assertEqual(rendered[3]["title"], "Matrix Dreads")
+        self.assertEqual(rendered[4]["title"], "Aurora Matrix")
+        # ``mediaType`` is preserved so downstream consumers can
+        # still distinguish the rows.
+        self.assertEqual(rendered[0]["mediaType"], "movie")
+        for row in rendered[1:]:
+            self.assertEqual(row["mediaType"], "tv")
+
+    def test_verbose_emits_verbatim_envelope(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
+        from arr_cli.seerr import cmd_search
+
+        args = self._make_args()
+        args.verbose = True
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_search, args, None)
+        self.assertEqual(json.loads(output), self.PAGINATED_ENVELOPE)
+
+    def test_human_table_surfaces_populated_title(self) -> None:
+        """``--human`` renders the populated title column for every row."""
+        from arr_cli.seerr import cmd_search
+
+        args = self._make_args()
+        args.human = True
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.PAGINATED_ENVELOPE,
+        ):
+            output = _capture_stdout(cmd_search, args, None)
+        # All five titles must appear in the rendered table; the
+        # bug's failure mode would render the four TV rows as
+        # ``<null>`` and the operator would see four empty cells.
+        for title in (
+            "The Matrix",
+            "Threat Matrix",
+            "Matrix Dreads",
+            "Aurora Matrix",
+        ):
+            self.assertIn(
+                title, output,
+                msg=(
+                    f"title {title!r} missing from --human output: "
+                    f"{output!r}"
+                ),
+            )
+        # And no ``<null>`` cells for the title column.
+        self.assertNotIn(
+            "<null>", output,
+            msg=(
+                "title column rendered as <null> for at least one "
+                f"row; output:\n{output!r}"
+            ),
+        )
+
+    def test_http_path_pin_mixed_media_payload(self) -> None:
+        """End-to-end path pin: ``seerr search matrix`` emits populated titles for movie + TV rows."""
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/search",
+                json=self.PAGINATED_ENVELOPE,
+                status=200,
+            )
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "search", "matrix",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+        rendered = json.loads(stdout)
+        self.assertEqual(len(rendered), 5)
+        self.assertEqual(rendered[0]["title"], "The Matrix")
+        self.assertEqual(rendered[1]["title"], "Threat Matrix")
+        self.assertEqual(rendered[2]["title"], "Matrix")
+        self.assertEqual(rendered[3]["title"], "Matrix Dreads")
+        self.assertEqual(rendered[4]["title"], "Aurora Matrix")
+
+    def test_renderer_non_tv_row_uses_title_key(self) -> None:
+        """A non-TV row sources its title from top-level ``title`` (defensive mediaType default)."""
+        from arr_cli.facade.output import _summary_seerr_search
+
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 1,
+            "results": [
+                {
+                    "title": "Inception",
+                    "mediaType": "movie",
+                    "releaseDate": "2010-07-15",
+                    "mediaInfo": {"tmdbId": 27205},
+                },
+            ],
+        }
+        rendered = _summary_seerr_search(envelope)
+        self.assertEqual(rendered[0]["title"], "Inception")
+
+    def test_renderer_unknown_media_type_falls_back_to_title(self) -> None:
+        """A row with an unknown ``mediaType`` falls back to top-level ``title`` (defensive default)."""
+        from arr_cli.facade.output import _summary_seerr_search
+
+        envelope = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 1,
+            "results": [
+                {
+                    "title": "Some Person",
+                    "mediaType": "person",
+                    "mediaInfo": {"tmdbId": 1},
+                },
+            ],
+        }
+        rendered = _summary_seerr_search(envelope)
+        self.assertEqual(rendered[0]["title"], "Some Person")
+
+
+# ---------------------------------------------------------------------------
+# Test: ``cmd_movie`` reads ``payload.title`` (canonical Seer detail shape)
+# ---------------------------------------------------------------------------
+
+
+class TestCmdMovieRealShape(unittest.TestCase):
+    """Regression tests pinning the canonical Seer movie detail shape.
+
+    Seer's movie detail endpoint uses top-level ``title`` (with
+    ``name=None``) on the canonical Seer shape; the renderer
+    previously read ``payload.name`` and shipped ``name: null`` for
+    every detail fetch. These tests pin the upstream shape --
+    ``title`` at the top level -- and assert the default summary
+    emits ``title: "The Matrix"``. The ``cmd_movie`` ``columns``
+    literal also has to lead with ``"title"`` so the ``--human``
+    tabular view resolves the populated value.
+
+    ``--verbose`` is unchanged (verbatim detail payload passthrough).
+    """
+
+    DETAIL_PAYLOAD: dict[str, Any] = {
+        "id": 603,
+        "title": "The Matrix",
+        "name": None,
+        "originalTitle": "The Matrix",
+        "releaseDate": "1999-03-31",
+        "runtime": 136,
+        "genres": [{"id": 28, "name": "Action"}],
+        "tagline": "Welcome to the Real World.",
+    }
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``movie`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "movie",
+            "id": "603",
+            "ratings": False,
+            "language": None,
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def test_default_summary_emits_title(self) -> None:
+        """Default ``cmd_movie`` summary emits ``title: "The Matrix"`` from ``payload.title``."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ) as mock_get:
+            output = _capture_stdout(cmd_movie, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        rendered = json.loads(output)
+        # Bug fix AC: the projected ``title`` is populated from
+        # ``payload.title``, NOT from the ``name=None`` field.
+        self.assertEqual(rendered["title"], "The Matrix")
+        self.assertEqual(rendered["originalTitle"], "The Matrix")
+        self.assertEqual(rendered["releaseDate"], "1999-03-31")
+        self.assertEqual(rendered["runtime"], "2h 16m")
+        self.assertEqual(rendered["genres"], "Action")
+        self.assertEqual(rendered["tagline"], "Welcome to the Real World.")
+        self.assertIsNone(rendered["ratings"])
+
+    def test_default_summary_does_not_emit_name_key(self) -> None:
+        """Default summary emits the curated ``title`` key (NOT the upstream ``name=None`` field)."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args()
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ):
+            output = _capture_stdout(cmd_movie, args, None)
+        rendered = json.loads(output)
+        # The curated summary shape has ``title`` at the top
+        # level; it does NOT carry the upstream ``name=None``
+        # field, which was the bug's failure mode.
+        self.assertNotIn(
+            "name", rendered,
+            msg=(
+                "curated summary must not carry the upstream "
+                f"``name=None`` field; got {rendered!r}"
+            ),
+        )
+
+    def test_verbose_emits_verbatim_payload(self) -> None:
+        """``--verbose`` bypasses the renderer and emits the verbatim payload (including ``name=None``)."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args(verbose=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ):
+            output = _capture_stdout(cmd_movie, args, None)
+        # ``--verbose`` keeps the upstream payload intact; the
+        # canonical Seer shape carries ``name=None`` at the top
+        # level even though the curated summary does not.
+        self.assertEqual(json.loads(output), self.DETAIL_PAYLOAD)
+
+    def test_human_table_resolves_title_column(self) -> None:
+        """``--human`` tabular view resolves the populated ``title`` column (NOT ``name``)."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args(human=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.DETAIL_PAYLOAD,
+        ):
+            output = _capture_stdout(cmd_movie, args, None)
+        # The rendered single-object payload surfaces ``title``
+        # populated -- ``name=None`` would render as ``<null>``
+        # otherwise. The ``cmd_movie`` ``columns`` literal leads
+        # with ``"title"`` (Change 4) so the populated value is
+        # the one that surfaces.
+        self.assertIn(
+            "title:", output,
+            msg=(
+                "human-mode rendering must surface the populated "
+                f"``title`` field; got:\n{output!r}"
+            ),
+        )
+        self.assertIn(
+            "The Matrix", output,
+            msg=(
+                "human-mode rendering must include the title "
+                f"value 'The Matrix'; got:\n{output!r}"
+            ),
+        )
+
+    def test_http_path_pin_real_shape(self) -> None:
+        """End-to-end path pin: ``seerr movie 603`` emits ``title: "The Matrix"`` from the canonical shape."""
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/movie/603",
+                json=self.DETAIL_PAYLOAD,
+                status=200,
+            )
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "movie", "603"]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+        rendered = json.loads(stdout)
+        # Bug fix AC: default summary emits ``title: "The Matrix"``.
+        self.assertEqual(rendered["title"], "The Matrix")
+        self.assertNotIn("name", rendered)
 
 
 if __name__ == "__main__":

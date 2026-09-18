@@ -1675,11 +1675,11 @@ class TestSummarySeerrRequests(unittest.TestCase):
     def test_requests_shape(self) -> None:
         payload = [
             {
-                "title": "Foo",
                 "type": "movie",
                 "status": "pending",
                 "createdAt": "2024-01-01",
                 "requestedBy": {"displayName": "alice"},
+                "media": {"title": "Foo"},
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
@@ -2250,7 +2250,7 @@ class TestSummarySeerrMovie(unittest.TestCase):
 
     def test_movie_shape(self) -> None:
         payload = {
-            "name": "The Matrix",
+            "title": "The Matrix",
             "originalTitle": "The Matrix",
             "releaseDate": "1999-03-31",
             "runtime": 136,
@@ -2267,7 +2267,7 @@ class TestSummarySeerrMovie(unittest.TestCase):
         self.assertEqual(
             rendered,
             {
-                "name": "The Matrix",
+                "title": "The Matrix",
                 "originalTitle": "The Matrix",
                 "releaseDate": "1999-03-31",
                 "runtime": "2h 16m",
@@ -2279,7 +2279,7 @@ class TestSummarySeerrMovie(unittest.TestCase):
 
     def test_movie_missing_genres_renders_none(self) -> None:
         payload = {
-            "name": "The Matrix",
+            "title": "The Matrix",
             "originalTitle": "The Matrix",
             "releaseDate": "1999-03-31",
             "runtime": 136,
@@ -2294,7 +2294,7 @@ class TestSummarySeerrMovie(unittest.TestCase):
 
     def test_movie_missing_runtime_renders_none(self) -> None:
         payload = {
-            "name": "The Matrix",
+            "title": "The Matrix",
             "originalTitle": "The Matrix",
             "releaseDate": "1999-03-31",
             "genres": [{"name": "Action"}],
@@ -2312,7 +2312,7 @@ class TestSummarySeerrMovie(unittest.TestCase):
         # ``runtime=0`` field doesn't masquerade as "the movie
         # is zero minutes long".
         payload = {
-            "name": "The Matrix",
+            "title": "The Matrix",
             "runtime": 0,
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
@@ -2320,7 +2320,7 @@ class TestSummarySeerrMovie(unittest.TestCase):
 
     def test_movie_ratings_merged_under_ratings_key(self) -> None:
         payload = {
-            "name": "The Matrix",
+            "title": "The Matrix",
             "originalTitle": "The Matrix",
             "releaseDate": "1999-03-31",
             "runtime": 136,
@@ -2352,7 +2352,7 @@ class TestSummarySeerrMovie(unittest.TestCase):
         # renders the same curated shape as the single-mapping
         # CLI-layer payload.
         payload = [{
-            "name": "The Matrix",
+            "title": "The Matrix",
             "originalTitle": "The Matrix",
             "releaseDate": "1999-03-31",
             "runtime": 136,
@@ -2360,7 +2360,7 @@ class TestSummarySeerrMovie(unittest.TestCase):
             "tagline": "Welcome to the Real World.",
         }]
         rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
-        self.assertEqual(rendered["name"], "The Matrix")
+        self.assertEqual(rendered["title"], "The Matrix")
         self.assertEqual(rendered["runtime"], "2h 16m")
         self.assertIsNone(rendered["ratings"])
 

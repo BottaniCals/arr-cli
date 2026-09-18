@@ -808,9 +808,23 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
             }
         else:
             requester_obj = {"displayName": None}
+        # Unwrap the ``media`` envelope: Seer's per-request shape
+        # carries the title at ``media.title`` (movie) or
+        # ``media.name`` (TV). When the ``media`` envelope is
+        # missing or not a Mapping, the projection yields ``None``
+        # rather than crashing -- mirrors the defensive contract of
+        # every other renderer.
+        media = item.get("media")
+        is_tv = _safe_get(item, "type", default="") == "tv"
+        if isinstance(media, Mapping):
+            title = _safe_get(
+                media, "name" if is_tv else "title", default=None
+            )
+        else:
+            title = None
         summaries.append(
             {
-                "title": _safe_get(item, "title", default=None),
+                "title": title,
                 "type": _safe_get(item, "type", default=None),
                 "status": _safe_get(item, "status", default=None),
                 "createdAt": _safe_get(item, "createdAt", default=None),
@@ -843,9 +857,18 @@ def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
             }
         else:
             media_info_obj = {"tmdbId": 0}
+        # Mirror the ``_summary_seerr_trending`` pattern: branch on
+        # ``mediaType`` so TV rows source their title from top-level
+        # ``name`` (TV rows expose ``name`` only, no top-level
+        # ``title``) while movie rows source it from ``title``. A
+        # brief comment is intentional so future drift between
+        # search and trending projections fails code review.
+        is_tv = _safe_get(item, "mediaType", default="") == "tv"
         summaries.append(
             {
-                "title": _safe_get(item, "title", default=None),
+                "title": _safe_get(
+                    item, "name" if is_tv else "title", default=None
+                ),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
                     item, "releaseDate", default=None
@@ -1352,7 +1375,7 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         ratings_obj = None
 
     return {
-        "name": _safe_get(payload, "name", default=None),
+        "title": _safe_get(payload, "title", default=None),
         "originalTitle": _safe_get(
             payload, "originalTitle", default=None
         ),
