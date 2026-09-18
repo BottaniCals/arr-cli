@@ -518,11 +518,18 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
     ],
     ("seerr", "requests"): [
         {
-            "title": "Foo",
             "type": "movie",
-            "status": "pending",
+            "status": 2,
             "createdAt": "2024-01-01",
             "requestedBy": {"displayName": "alice"},
+            "media": {
+                "id": 121,
+                "mediaType": "movie",
+                "tmdbId": 999,
+                "tvdbId": None,
+                "externalServiceSlug": "tmdb",
+                "status": 5,
+            },
             "externalId": "tmdb:999",
         }
     ],
@@ -1700,34 +1707,127 @@ class TestSummarySonarrRecent(unittest.TestCase):
 
 
 class TestSummarySeerrRequests(unittest.TestCase):
-    """``_SUMMARY_RENDERERS[("seerr", "requests")]`` matches the spec."""
+    """``_SUMMARY_RENDERERS[("seerr", "requests")]`` matches the spec.
+
+    The curated summary projects the upstream-provided identity
+    fields onto a nested ``media`` sub-dict (``id``, ``mediaType``,
+    ``tmdbId``, ``tvdbId``, ``externalServiceSlug``, ``status``)
+    rather than a fabricated ``title`` -- the live
+    ``/api/v1/request`` payload on the operator's Seer instance does
+    not populate ``media.title`` (movie) or ``media.name`` (TV), so
+    the historical ``title`` projection was retired. Mirrors the
+    field set :func:`_summary_seerr_available` projects for a
+    consistent mental model across the two read endpoints. See
+    ``seerr-requests-no-title-field`` in CHANGELOG.md for the full
+    rationale.
+    """
 
     def test_requests_shape(self) -> None:
         payload = [
             {
                 "type": "movie",
-                "status": "pending",
-                "createdAt": "2024-01-01",
+                "status": 2,
+                "createdAt": "2026-09-13T12:56:58.000Z",
                 "requestedBy": {"displayName": "alice"},
-                "media": {"title": "Foo"},
+                "media": {
+                    "id": 121,
+                    "mediaType": "movie",
+                    "tmdbId": 603,
+                    "tvdbId": None,
+                    "externalServiceSlug": "tmdb",
+                    "status": 5,
+                },
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
         self.assertEqual(
             rendered[0],
             {
-                "title": "Foo",
+                "media": {
+                    "id": 121,
+                    "mediaType": "movie",
+                    "tmdbId": 603,
+                    "tvdbId": None,
+                    "externalServiceSlug": "tmdb",
+                    "status": 5,
+                },
                 "type": "movie",
-                "status": "pending",
-                "createdAt": "2024-01-01",
+                "status": 2,
+                "createdAt": "2026-09-13T12:56:58.000Z",
                 "requestedBy": {"displayName": "alice"},
             },
         )
 
+    def test_requests_tv_row_projects_media_identity(self) -> None:
+        """TV rows source identity from the same ``media`` sub-dict as movie rows.
+
+        Pins that the curated projection is shape-uniform across
+        ``type == "tv"`` and ``type == "movie"``: there is no
+        per-media-type title branching in the renderer (the historical
+        ``media.title`` vs ``media.name`` branch was retired because
+        neither field is populated on the operator's Seer instance).
+        """
+        payload = [
+            {
+                "type": "tv",
+                "status": 2,
+                "createdAt": "2026-09-13T12:55:03.000Z",
+                "requestedBy": {"displayName": "bob"},
+                "media": {
+                    "id": 120,
+                    "mediaType": "tv",
+                    "tmdbId": None,
+                    "tvdbId": 76107,
+                    "externalServiceSlug": "tvdb",
+                    "status": 5,
+                },
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
+        self.assertEqual(rendered[0]["type"], "tv")
+        self.assertEqual(rendered[0]["media"]["tvdbId"], 76107)
+        self.assertEqual(rendered[0]["media"]["externalServiceSlug"], "tvdb")
+        # No fabricated top-level ``title`` key -- the historical
+        # projection is gone, so a TV row does not pretend to carry
+        # a ``title`` read from ``media.name``.
+        self.assertNotIn("title", rendered[0])
+
     def test_requests_missing_requester(self) -> None:
-        payload = [{"title": "Foo", "type": "movie", "status": "x", "createdAt": "y"}]
+        """Records without a ``requestedBy`` mapping surface ``displayName: None``.
+
+        The renderer walks ``requestedBy.displayName`` via
+        :func:`_safe_get`, so a record missing the requester object
+        surfaces as ``{"displayName": None}`` rather than crashing
+        -- mirrors the defensive contract of every other renderer.
+        """
+        payload = [{"type": "movie", "status": "x", "createdAt": "y"}]
         rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
         self.assertEqual(rendered[0]["requestedBy"], {"displayName": None})
+
+    def test_requests_missing_media_envelope(self) -> None:
+        """Records without a ``media`` sub-dict surface ``None`` for every identity field.
+
+        The defensive contract mirrors
+        :func:`_summary_seerr_available`'s handling of missing
+        upstream keys: a record whose ``media`` envelope is absent
+        still produces a well-formed row with every ``media.*`` key
+        set to ``None`` instead of crashing or fabricating a default
+        dict. Pins the upstream-shape drift so future envelope
+        changes do not regress the renderer into a crash.
+        """
+        payload = [{"type": "movie", "status": 2, "createdAt": "y"}]
+        rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
+        self.assertEqual(
+            rendered[0]["media"],
+            {
+                "id": None,
+                "mediaType": None,
+                "tmdbId": None,
+                "tvdbId": None,
+                "externalServiceSlug": None,
+                "status": None,
+            },
+        )
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
@@ -3135,11 +3235,18 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         ],
         ("seerr", "requests"): [
             {
-                "title": "Foo",
                 "type": "movie",
-                "status": "pending",
+                "status": 2,
                 "createdAt": "2024-01-01T00:00:00Z",
                 "requestedBy": {"displayName": "alice"},
+                "media": {
+                    "id": 121,
+                    "mediaType": "movie",
+                    "tmdbId": 999,
+                    "tvdbId": 76107,
+                    "externalServiceSlug": "tmdb",
+                    "status": 5,
+                },
             }
         ],
         ("seerr", "search"): [

@@ -844,6 +844,22 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
     serviceErrors: {...}}``; iterate ``results`` so the default summary
     is non-empty when the envelope is well-formed. A bare list is
     unchanged behaviour.
+
+    The per-item projection surfaces the identity fields the upstream
+    payload actually carries on the operator's Seer instance -- the
+    ``media`` sub-dict exposes ``id``, ``mediaType``, ``tmdbId``,
+    ``tvdbId``, ``externalServiceSlug`` and ``status`` (same shape as
+    the ``/api/v1/media`` rows consumed by
+    :func:`_summary_seerr_available`). The historical ``title``
+    projection was retired because neither ``media.title`` (movie)
+    nor ``media.name`` (TV) is populated on the live operator's
+    Seer instance -- every row projected ``title: null``. Operators
+    who need a friendly title can resolve it via
+    ``seerr movie <tmdbId>`` / ``seerr tv <tvdbId>`` or
+    ``seerr search <query>``; the curated summary here stays as the
+    canonical "what is on the household request queue" answer and
+    gives the operator enough identity to chain into the detail
+    commands.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -862,23 +878,38 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
             }
         else:
             requester_obj = {"displayName": None}
-        # Unwrap the ``media`` envelope: Seer's per-request shape
-        # carries the title at ``media.title`` (movie) or
-        # ``media.name`` (TV). When the ``media`` envelope is
-        # missing or not a Mapping, the projection yields ``None``
-        # rather than crashing -- mirrors the defensive contract of
-        # every other renderer.
+        # Pull the identity fields from the ``media`` sub-dict when
+        # it is well-formed; fall back to ``None`` on every field
+        # otherwise (mirrors the defensive contract of every other
+        # renderer and lets the summary stay well-formed even when
+        # upstream drops the ``media`` envelope entirely). Same
+        # field set as :func:`_summary_seerr_available` so the
+        # operator has one mental model across ``seerr requests`` and
+        # ``seerr available``.
         media = item.get("media")
-        is_tv = _safe_get(item, "type", default="") == "tv"
         if isinstance(media, Mapping):
-            title = _safe_get(
-                media, "name" if is_tv else "title", default=None
-            )
+            media_obj: dict[str, Any] = {
+                "id": _safe_get(media, "id", default=None),
+                "mediaType": _safe_get(media, "mediaType", default=None),
+                "tmdbId": _safe_get(media, "tmdbId", default=None),
+                "tvdbId": _safe_get(media, "tvdbId", default=None),
+                "externalServiceSlug": _safe_get(
+                    media, "externalServiceSlug", default=None
+                ),
+                "status": _safe_get(media, "status", default=None),
+            }
         else:
-            title = None
+            media_obj = {
+                "id": None,
+                "mediaType": None,
+                "tmdbId": None,
+                "tvdbId": None,
+                "externalServiceSlug": None,
+                "status": None,
+            }
         summaries.append(
             {
-                "title": title,
+                "media": media_obj,
                 "type": _safe_get(item, "type", default=None),
                 "status": _safe_get(item, "status", default=None),
                 "createdAt": _safe_get(item, "createdAt", default=None),

@@ -48,6 +48,25 @@ failing `seerr` commands investigated in 2026-09 were all caused by
 exactly this drift). Cross-check the live spec before committing to a
 path shape.
 
+**Seer endpoint drift on `request` / `media` records.** Both
+`GET /api/v1/request` and `GET /api/v1/media` return records where
+the nested `media` envelope (request) or top-level record (media)
+carries **identity** fields (`id`, `mediaType`, `tmdbId`, `tvdbId`,
+`externalServiceSlug`, `status`, ...) but does **not** carry a
+human-readable `title` / `name`. The historical summary renderers
+read `media.title` (movie) / `media.name` (TV) or a top-level
+`title`, which always projected `null` on the operator's live
+Seer instance. The fixed renderers
+(`_summary_seerr_requests`, `_summary_seerr_available`) project the
+identity fields instead, giving the operator a meaningful row
+that can be chained into `seerr movie <id>` / `seerr tv <id>` or
+cross-referenced via `tmdbId` / `tvdbId`. Do **not** add a
+`title` projection back to these renderers without first
+confirming against the live OpenAPI spec that the upstream payload
+populates the field -- a regression that projects `null` for every
+row was the symptom that surfaced this drift twice (2026-09-18:
+`seerr-available-no-title-filter`, `seerr-requests-no-title-field`).
+
 The shared HTTP, config, auth, and output code lives in `arr_cli.facade/`.
 Per-service CLIs in `arr_cli/{jellyfin,radarr,sonarr,maintainerr,seerr}.py`
 are thin command tables on top of the facade.
