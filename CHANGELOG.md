@@ -122,6 +122,21 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `jellyfin item <id>` now sends the required `UserId` query
+  parameter on Jellyfin v12+. Without it the server returns
+  HTTP 400 ``Error processing request.`` and the CLI surfaced
+  the failure as exit 4 with no actionable hint. ``cmd_item``
+  reads ``UserId`` from ``cfg.jellyfin.user_id`` via
+  ``_require_user_id`` (mirrors ``cmd_nextup``), so a missing
+  config value now surfaces as ``ConfigError(exit 1)`` with the
+  documented "user_id missing" message instead of the upstream
+  400. The 404 path is unchanged: ``HttpError(exit 4)`` still
+  names the id on stderr. The ``TestCmdItem`` suite gains
+  ``test_item_forwards_user_id_param`` (asserts
+  ``params={"UserId": "jf-user-1"}``) plus
+  ``test_item_missing_user_id_raises_config_error`` and
+  ``test_item_missing_service_section_raises_config_error``
+  to lock the new contract.
 - `jellyfin favorites` now emits `Id` in both the default curated
   summary and the `--human` tabular view, restoring
   pipe-chainability into `jellyfin item <id>`. The

@@ -591,7 +591,11 @@ class TestCmdSearch(unittest.TestCase):
 
 
 class TestCmdItem(unittest.TestCase):
-    """REQ-6 AC7: ``GET /Items/{id}``; 404 → HttpError(exit_code=4)."""
+    """REQ-6 AC7: ``GET /Items/{id}``; 404 → HttpError(exit_code=4).
+
+    On Jellyfin v12+ ``/Items/{id}`` requires the ``UserId`` query
+    parameter; the handler reads it from ``cfg.jellyfin.user_id`` via
+    :func:`_require_user_id` (mirrors :func:`cmd_nextup`)."""
 
     def test_item_hits_items_path(self) -> None:
         cfg = _service_config()
@@ -600,6 +604,19 @@ class TestCmdItem(unittest.TestCase):
             cmd_item(args, cfg)
         positional = mock_get.call_args.args
         self.assertEqual(positional[1], "/Items/42")
+
+    def test_item_forwards_user_id_param(self) -> None:
+        # Jellyfin v12+ requires ``UserId`` on ``/Items/{id}``; without
+        # it the server returns HTTP 400 ``Error processing request.``
+        # The handler reads ``UserId`` from config (mirrors cmd_nextup)
+        # so a missing config value surfaces as ``ConfigError(exit 1)``
+        # rather than the upstream 400.
+        cfg = _service_config(user_id="jf-user-1")
+        args = _namespace(item_id="42")
+        with _patched_get_payload({"Id": 42, "Name": "Test"}) as mock_get:
+            cmd_item(args, cfg)
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(kwargs["params"], {"UserId": "jf-user-1"})
 
     def test_item_404_propagates_as_http_error(self) -> None:
         # The transport layer maps 404 → HttpError; the handler MUST
@@ -629,6 +646,31 @@ class TestCmdItem(unittest.TestCase):
             cmd_item(args, cfg)
         positional = mock_get.call_args.args
         self.assertEqual(positional[1], "/Items/a%2Fb%20c")
+
+    def test_item_missing_user_id_raises_config_error(self) -> None:
+        # Missing ``cfg.jellyfin.user_id`` is a config problem, not a
+        # server problem; the handler surfaces ``ConfigError(exit 1)``
+        # before dispatching to the service so the operator sees a
+        # stable exit code instead of the upstream 400 (the symptom
+        # that hid the real cause).
+        cfg = _service_config(user_id=None)
+        args = _namespace(item_id="42")
+        with self.assertRaises(ConfigError) as ctx:
+            cmd_item(args, cfg)
+        self.assertEqual(ctx.exception.exit_code, 1)
+        self.assertIn("user_id", ctx.exception.message)
+
+    def test_item_missing_service_section_raises_config_error(self) -> None:
+        # When the Jellyfin section is missing entirely the handler
+        # raises ``ConfigError(exit 1)`` via ``_require_user_id`` so
+        # the operator sees the config-shape problem rather than a
+        # transport-layer auth failure.
+        cfg = _service_config(include_jellyfin=False)
+        args = _namespace(item_id="42")
+        with self.assertRaises(ConfigError) as ctx:
+            cmd_item(args, cfg)
+        self.assertEqual(ctx.exception.exit_code, 1)
+        self.assertIn("section missing", ctx.exception.message)
 
 
 # ---------------------------------------------------------------------------
