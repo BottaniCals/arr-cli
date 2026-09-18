@@ -9,6 +9,23 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `sonarr recent` -- the curated summary now projects the flat
+  identity fields the upstream `GET /api/v3/history` payload
+  actually carries (`id`, `seriesId`, `episodeId`, `sourceTitle`,
+  `eventType`, `date`, `quality`) instead of fabricating empty
+  `{series: {title: null}, episode: {title: null}}` projections
+  for keys the activity-log rows never populate. The
+  `/api/v3/history` endpoint emits flat rows with `seriesId` /
+  `episodeId` plus a `sourceTitle` for the released episode name,
+  but no nested `series` / `episode` envelopes; every record on
+  the operator's live Sonarr instance previously projected
+  `series.title: null` and `episode.title: null`. The `--human`
+  table column list now mirrors the new flat shape (no
+  dot-path traversal needed). `--verbose` is unchanged (raw
+  history rows still on the wire). Operators who need a friendly
+  series / episode title can resolve the ids via
+  `sonarr series <id>` or look up the release by `sourceTitle`.
+  Pin test in `TestSonarrRecent.test_sonarr_recent_pins_actual_history_row_shape`.
 - `seerr requests` -- the curated summary now surfaces the
   identity fields from the per-row `media` sub-dict (`id`,
   `mediaType`, `tmdbId`, `tvdbId`, `externalServiceSlug`,

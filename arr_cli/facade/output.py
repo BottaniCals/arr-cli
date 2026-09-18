@@ -805,7 +805,21 @@ def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
-    """Render a Sonarr ``recent`` payload as the curated summary."""
+    """Render a Sonarr ``recent`` payload as the curated summary.
+
+    ``GET /api/v3/history`` returns flat activity-log rows -- each
+    row carries ``seriesId`` and ``episodeId`` plus a ``sourceTitle``
+    for the released episode name, but no nested ``series`` /
+    ``episode`` objects. The historical renderer projected
+    ``{series: {title: null}, episode: {title: null}}`` for every row
+    (every record on the operator's live instance projected
+    ``series.title: null`` and ``episode.title: null``); the
+    defensive else-branch was firing because the upstream payload
+    never populates those keys. Project the identity fields the
+    payload actually carries so the summary is meaningful and the
+    operator can chain ``seriesId`` / ``episodeId`` into
+    ``sonarr series <id>`` or cross-reference ``sourceTitle``.
+    """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
@@ -813,24 +827,15 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        series = item.get("series")
-        series_obj: dict[str, Any] = (
-            {"title": _safe_get(series, "title", default=None)}
-            if isinstance(series, Mapping)
-            else {"title": None}
-        )
-        episode = item.get("episode")
-        episode_obj: dict[str, Any] = (
-            {"title": _safe_get(episode, "title", default=None)}
-            if isinstance(episode, Mapping)
-            else {"title": None}
-        )
         summaries.append(
             {
-                "series": series_obj,
-                "episode": episode_obj,
+                "id": _safe_get(item, "id", default=None),
+                "seriesId": _safe_get(item, "seriesId", default=None),
+                "episodeId": _safe_get(item, "episodeId", default=None),
+                "sourceTitle": _safe_get(item, "sourceTitle", default=None),
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
+                "quality": _safe_get(item, "quality", default=None),
             }
         )
     return summaries
