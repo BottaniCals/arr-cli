@@ -869,8 +869,10 @@ class TestCmdAvailable(unittest.TestCase):
     ``/api/v1/media`` accepts a ``filter`` parameter for the
     "in library" subset and a ``take`` cap to bound the response.
     These tests pin the corrected path + params, the
-    paginated-envelope unwrap, the client-side title-substring
-    filter, the ``--verbose`` verbatim passthrough, and add a
+    paginated-envelope unwrap, the post-filter removal (records
+    lack top-level ``title`` on the operator's Seer instance, so
+    the historical client-side substring filter was a guaranteed
+    no-op), the ``--verbose`` verbatim passthrough, and add a
     defensive guard against future copy-paste regressions back to
     ``/api/v1/media/available``.
     """
@@ -884,22 +886,31 @@ class TestCmdAvailable(unittest.TestCase):
         },
         "results": [
             {
-                "title": "Doctor Who",
+                "id": 1,
                 "mediaType": "tv",
-                "releaseDate": "2005-03-26",
-                "mediaInfo": {"status": 5},
+                "tmdbId": 121,
+                "tvdbId": 76107,
+                "externalServiceSlug": "tvdb",
+                "status": 5,
+                "mediaAddedAt": "2024-01-01T00:00:00.000Z",
             },
             {
-                "title": "Doctor Strange",
+                "id": 2,
                 "mediaType": "movie",
-                "releaseDate": "2016-10-25",
-                "mediaInfo": {"status": 5},
+                "tmdbId": 291351,
+                "tvdbId": None,
+                "externalServiceSlug": "tmdb",
+                "status": 5,
+                "mediaAddedAt": "2024-02-01T00:00:00.000Z",
             },
             {
-                "title": "Unrelated",
+                "id": 3,
                 "mediaType": "movie",
-                "releaseDate": "2020-01-01",
-                "mediaInfo": {"status": 5},
+                "tmdbId": 999999,
+                "tvdbId": None,
+                "externalServiceSlug": "tmdb",
+                "status": 2,
+                "mediaAddedAt": "2024-03-01T00:00:00.000Z",
             },
         ],
         "serviceErrors": {"radarr": [], "sonarr": []},
@@ -998,10 +1009,17 @@ class TestCmdAvailable(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(len(rsps.calls), 1)
 
-    def test_cmd_available_title_substring_filter_applied_client_side(
-        self,
-    ) -> None:
-        """Non-empty ``query`` is matched client-side as a title-substring."""
+    def test_cmd_available_title_substring_filter_removed(self) -> None:
+        """Non-empty ``query`` is accepted but ignored (no client-side filtering).
+
+        Pin for ``seerr-available-no-title-filter``: upstream
+        ``/api/v1/media`` records lack a top-level ``title`` field
+        on the operator's Seer instance, so the historical substring
+        filter was a guaranteed no-op. The positional ``query`` is
+        kept for backwards compatibility but is now ignored, with a
+        stderr note so the empty-result-of-no-op is not surprising.
+        All rows are passed through unchanged regardless of query.
+        """
         from arr_cli.seerr import cmd_available
 
         args = self._make_args(query="doctor")
@@ -1009,14 +1027,43 @@ class TestCmdAvailable(unittest.TestCase):
             "arr_cli.seerr.transport.get",
             return_value=self.AVAILABLE_ENVELOPE,
         ):
-            output = _capture_stdout(cmd_available, args, None)
-        rendered = json.loads(output)
-        # Only the two ``Doctor*`` titles match; ``Unrelated`` is dropped.
-        self.assertEqual(len(rendered), 2)
-        rendered_titles = [row["title"] for row in rendered]
-        self.assertEqual(
-            rendered_titles, ["Doctor Who", "Doctor Strange"]
+            stdout, stderr = _capture_stderr_stdout(
+                cmd_available, args, None
+            )
+        rendered = json.loads(stdout)
+        # All 3 rows pass through; the substring filter is gone.
+        self.assertEqual(len(rendered), 3)
+        rendered_ids = [row["id"] for row in rendered]
+        self.assertEqual(rendered_ids, [1, 2, 3])
+        # Stderr note explains why the query was ignored so the
+        # operator isn't surprised by what looks like an empty
+        # result (the rows are there, the filter just couldn't
+        # match anything without a title field).
+        self.assertIn(
+            "substring filter 'doctor' ignored", stderr,
+            msg=(
+                "expected stderr note about the removed substring "
+                f"filter; got stderr={stderr!r}"
+            ),
         )
+
+    def test_cmd_available_no_stderr_note_for_empty_query(self) -> None:
+        """Empty ``query`` emits no stderr note (only the no-op path warns)."""
+        from arr_cli.seerr import cmd_available
+
+        args = self._make_args(query="")
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value=self.AVAILABLE_ENVELOPE,
+        ):
+            stdout, stderr = _capture_stderr_stdout(
+                cmd_available, args, None
+            )
+        rendered = json.loads(stdout)
+        self.assertEqual(len(rendered), 3)
+        # Empty query is the common case; no need to clutter stderr
+        # when the operator didn't ask for a filter.
+        self.assertNotIn("substring filter", stderr)
 
     def test_cmd_available_envelope_unwrap(self) -> None:
         """The renderer iterates ``results`` of a paginated envelope, not the envelope itself."""
@@ -1032,11 +1079,24 @@ class TestCmdAvailable(unittest.TestCase):
         # The unwrap pulls the 3 items out of ``results`` rather than
         # rendering the envelope as a single summary row.
         self.assertEqual(len(rendered), 3)
-        self.assertEqual(rendered[0]["title"], "Doctor Who")
-        self.assertEqual(rendered[1]["title"], "Doctor Strange")
-        self.assertEqual(rendered[2]["title"], "Unrelated")
-        # Nested ``mediaInfo.status`` is preserved.
-        self.assertEqual(rendered[0]["mediaInfo"]["status"], 5)
+        # The curated summary now surfaces the upstream-provided
+        # identifiers (id, tmdbId, tvdbId, externalServiceSlug,
+        # status, mediaAddedAt) -- no ``title`` / ``releaseDate`` /
+        # ``mediaInfo`` envelope, because the upstream records do
+        # not carry them on the operator's Seer instance.
+        self.assertEqual(rendered[0]["id"], 1)
+        self.assertEqual(rendered[0]["mediaType"], "tv")
+        self.assertEqual(rendered[0]["tmdbId"], 121)
+        self.assertEqual(rendered[0]["tvdbId"], 76107)
+        self.assertEqual(rendered[0]["externalServiceSlug"], "tvdb")
+        self.assertEqual(rendered[0]["status"], 5)
+        self.assertEqual(
+            rendered[0]["mediaAddedAt"], "2024-01-01T00:00:00.000Z"
+        )
+        # TV rows with no tvdbId surface as ``None`` rather than
+        # crashing (mirrors the defensive contract of every other
+        # renderer).
+        self.assertIsNone(rendered[1]["tvdbId"])
 
     def test_cmd_available_envelope_dict_with_no_results_returns_empty(
         self,

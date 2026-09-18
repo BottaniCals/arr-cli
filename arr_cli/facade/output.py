@@ -886,8 +886,21 @@ def _summary_seerr_available(payload: Any) -> list[dict[str, Any]]:
     ``{pageInfo: {pages, pageSize, results, page}, results: [...],
     serviceErrors: {...}}``; iterate ``results`` so the default
     summary is non-empty when the envelope is well-formed. A bare
-    list is unchanged behaviour (used after the handler's
-    client-side title-substring filter narrows the response).
+    list is unchanged behaviour.
+
+    The per-item projection surfaces the top-level identifiers the
+    upstream payload actually carries (no nested ``mediaInfo``
+    envelope to unwrap -- the operator-visible record is the
+    top-level media row, with its ``tmdbId`` / ``tvdbId`` /
+    ``externalServiceSlug`` / ``status`` / ``mediaAddedAt`` fields
+    living at the top level). The historical
+    ``{title, mediaType, releaseDate, mediaInfo.status}`` projection
+    was retired because upstream records no longer carry a top-level
+    ``title`` field, which made the old client-side substring filter
+    a guaranteed no-op (every row was dropped). Operators who need a
+    friendly title can resolve it via ``seerr search <query>`` or
+    look up ``tmdbId`` / ``tvdbId`` externally; the curated summary
+    here stays as the canonical "what is in my library" answer.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -897,21 +910,19 @@ def _summary_seerr_available(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        media_info = item.get("mediaInfo")
-        if isinstance(media_info, Mapping):
-            media_info_obj: dict[str, Any] = {
-                "status": _safe_get(media_info, "status", default=0),
-            }
-        else:
-            media_info_obj = {"status": 0}
         summaries.append(
             {
-                "title": _safe_get(item, "title", default=None),
+                "id": _safe_get(item, "id", default=None),
                 "mediaType": _safe_get(item, "mediaType", default=None),
-                "releaseDate": _safe_get(
-                    item, "releaseDate", default=None
+                "tmdbId": _safe_get(item, "tmdbId", default=None),
+                "tvdbId": _safe_get(item, "tvdbId", default=None),
+                "externalServiceSlug": _safe_get(
+                    item, "externalServiceSlug", default=None
                 ),
-                "mediaInfo": media_info_obj,
+                "status": _safe_get(item, "status", default=None),
+                "mediaAddedAt": _safe_get(
+                    item, "mediaAddedAt", default=None
+                ),
             }
         )
     return summaries

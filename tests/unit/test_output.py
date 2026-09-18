@@ -509,11 +509,13 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
     ],
     ("seerr", "available"): [
         {
-            "title": "Foo",
+            "id": 1,
             "mediaType": "movie",
-            "releaseDate": "2024-01-01",
-            "mediaInfo": {"status": 5},
-            "overview": "Lorem ipsum",
+            "tmdbId": 999,
+            "tvdbId": 76107,
+            "externalServiceSlug": "tmdb",
+            "status": 5,
+            "mediaAddedAt": "2024-01-01T00:00:00Z",
         }
     ],
     ("maintainerr", "pending"): [
@@ -1744,34 +1746,70 @@ class TestSummarySeerrSearch(unittest.TestCase):
 
 
 class TestSummarySeerrAvailable(unittest.TestCase):
-    """``_SUMMARY_RENDERERS[("seerr", "available")]`` matches the spec."""
+    """``_SUMMARY_RENDERERS[("seerr", "available")]`` matches the spec.
+
+    The curated summary projects the upstream-provided identifiers
+    onto the row (``id``, ``mediaType``, ``tmdbId``, ``tvdbId``,
+    ``externalServiceSlug``, ``status``, ``mediaAddedAt``); there is
+    no nested ``mediaInfo`` envelope on the operator's Seer
+    instance because records lack a top-level ``title`` field. See
+    ``seerr-available-no-title-filter`` in CHANGELOG.md for the
+    full rationale.
+    """
 
     def test_available_shape(self) -> None:
         payload = [
             {
-                "title": "Foo",
+                "id": 1,
                 "mediaType": "movie",
-                "releaseDate": "2024-01-01",
-                "mediaInfo": {"status": 5},
+                "tmdbId": 999,
+                "tvdbId": 76107,
+                "externalServiceSlug": "tmdb",
+                "status": 5,
+                "mediaAddedAt": "2024-01-01T00:00:00Z",
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "available")](payload)
         self.assertEqual(
             rendered[0],
             {
-                "title": "Foo",
+                "id": 1,
                 "mediaType": "movie",
-                "releaseDate": "2024-01-01",
-                "mediaInfo": {"status": 5},
+                "tmdbId": 999,
+                "tvdbId": 76107,
+                "externalServiceSlug": "tmdb",
+                "status": 5,
+                "mediaAddedAt": "2024-01-01T00:00:00Z",
             },
         )
 
-    def test_available_missing_media_info(self) -> None:
+    def test_available_missing_optional_fields(self) -> None:
+        """Records missing some upstream keys surface ``None`` for those fields.
+
+        The renderer walks every key via :func:`_safe_get`, so a
+        record missing e.g. ``tvdbId`` does not crash -- it
+        surfaces as ``None`` instead. Pins the defensive contract
+        so future upstream drift (a new optional field appearing
+        on every record) does not regress the renderer.
+        """
         payload = [
-            {"title": "Foo", "mediaType": "movie", "releaseDate": "y"}
+            {
+                "id": 1,
+                "mediaType": "movie",
+                "tmdbId": 999,
+            }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "available")](payload)
-        self.assertEqual(rendered[0]["mediaInfo"], {"status": 0})
+        self.assertEqual(rendered[0]["id"], 1)
+        self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[0]["tmdbId"], 999)
+        # Fields missing from the upstream record default to ``None``
+        # rather than crashing -- mirrors every other renderer's
+        # defensive contract.
+        self.assertIsNone(rendered[0]["tvdbId"])
+        self.assertIsNone(rendered[0]["externalServiceSlug"])
+        self.assertIsNone(rendered[0]["status"])
+        self.assertIsNone(rendered[0]["mediaAddedAt"])
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
@@ -2741,10 +2779,13 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         ],
         ("seerr", "available"): [
             {
-                "title": "Foo",
+                "id": 1,
                 "mediaType": "movie",
-                "releaseDate": "2024-01-01",
-                "mediaInfo": {"status": 5},
+                "tmdbId": 999,
+                "tvdbId": 76107,
+                "externalServiceSlug": "tmdb",
+                "status": 5,
+                "mediaAddedAt": "2024-01-01T00:00:00Z",
             }
         ],
         ("seerr", "trending"): [

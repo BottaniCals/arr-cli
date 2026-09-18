@@ -160,6 +160,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from typing import Any, Mapping, Sequence
 
 from arr_cli.facade import output, transport
@@ -588,11 +589,15 @@ def cmd_available(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     mirrors :func:`cmd_requests` so a single response covers the
     household library rather than the default first page of ten.
 
-    Title-substring matching is applied client-side after the
-    fetch: Seer's ``/api/v1/media`` does not document a
-    title-search query parameter, so any non-empty ``query`` is
-    matched case-insensitively against each item's ``title``
-    field. Items missing a ``title`` are dropped.
+    The historical client-side title-substring post-filter was
+    removed: upstream records on the operator's Seer instance do
+    not carry a top-level ``title`` field, so any substring match
+    would reject every row. A non-empty ``query`` is now accepted
+    for backwards compatibility but is ignored; the operator gets
+    a stderr note so the empty result of the no-op is not
+    surprising. Operators who need a friendly title can resolve
+    it via ``seerr search <query>`` or look up ``tmdbId`` /
+    ``tvdbId`` externally.
     """
     query = getattr(args, "query", "") or ""
     payload = _get(
@@ -602,35 +607,37 @@ def cmd_available(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params={"take": 1000, "filter": "available"},
         op="available",
     )
-    # Client-side title-substring post-filter: extract the items
-    # out of the paginated envelope (when present), then keep only
-    # the rows whose ``title`` contains the query as a
-    # case-insensitive substring. Empty query passes the payload
-    # through unchanged so the renderer can unwrap the envelope
-    # itself.
+    # Substring filter retired: upstream /api/v1/media records lack
+    # a top-level ``title`` field, so the old filter was a
+    # guaranteed no-op (every row dropped). Accept the positional
+    # for backwards compatibility but warn on stderr so the
+    # operator is not surprised by what looks like an empty result.
     if query:
-        if isinstance(payload, dict):
-            items = payload.get("results")
-        else:
-            items = payload
-        if isinstance(items, list):
-            needle = query.casefold()
-            filtered = [
-                item
-                for item in items
-                if isinstance(item, dict)
-                and isinstance(item.get("title"), str)
-                and needle in item["title"].casefold()
-            ]
-            payload = filtered
+        # Operator-facing diagnostic per AGENTS.md \u00a71 (\"diagnostics
+        # on stderr\"); ``_logger.warning`` is reserved for the
+        # unexpected-shape warnings in ``cmd_tv`` / ``cmd_movie``,
+        # which are developer-facing. The no-op-substring note is
+        # something the operator needs to see, so it goes through
+        # ``print(file=sys.stderr)`` like every other CLI diagnostic.
+        print(
+            f"seerr available: substring filter {query!r} ignored -- "
+            "upstream /api/v1/media records do not carry a 'title' "
+            "field; pass-through shows all rows. Use 'seerr search "
+            "<query>' to match against titles.",
+            file=sys.stderr,
+        )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_seerr_available``: nested ``mediaInfo.status`` is
-    # resolved via dot-path traversal in ``_row_from_mapping``.
+    # ``_summary_seerr_available``: every field is top-level on
+    # each row, so no dot-path traversal is needed (mirrors the
+    # ``cmd_genres`` column-list pattern).
     columns = [
-        "title",
+        "id",
         "mediaType",
-        "releaseDate",
-        "mediaInfo.status",
+        "tmdbId",
+        "tvdbId",
+        "externalServiceSlug",
+        "status",
+        "mediaAddedAt",
     ]
     return _emit(payload, args, columns=columns)
 
