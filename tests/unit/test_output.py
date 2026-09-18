@@ -2119,10 +2119,21 @@ class TestSummarySeerrTrending(unittest.TestCase):
     both ``movie`` and ``tv`` items in the same ``results[]``
     array. The per-item projection must read ``name`` /
     ``firstAirDate`` for TV items and ``title`` / ``releaseDate``
-    for movie items; ``mediaInfo.tmdbId`` is consistent across
-    both shapes. These tests are the regression net for the
+    for movie items; the top-level ``id`` field is consistent
+    across both shapes (the actual TMDB/TVDB id the upstream row
+    carries). These tests are the regression net for the
     v12-compat bug where the renderer projected the movie-shaped
     keys and rendered TV rows as ``title=None, releaseDate=None``.
+
+    The historical ``mediaInfo.tmdbId`` projection is dropped --
+    the upstream payload does not expose a nested ``mediaInfo``
+    envelope on the operator's Seer instance, so the defensive
+    ``else`` branch fabricated ``{"tmdbId": 0}`` for every row
+    whose upstream payload lacked the envelope. The top-level
+    ``id`` is the actual join key and is what the operator chains
+    into ``seerr movie <id>`` / ``seerr tv <id>``. Mirrors the
+    projection chosen for :func:`_summary_seerr_search` (PR #41)
+    and :func:`_summary_seerr_available` (PR #39).
     """
 
     def test_tv_item_uses_tv_keys(self) -> None:
@@ -2137,10 +2148,10 @@ class TestSummarySeerrTrending(unittest.TestCase):
             "totalResults": 1,
             "results": [
                 {
+                    "id": 100009,
                     "name": "Monster: The Lizzie Borden Story",
                     "firstAirDate": "2026-09-17",
                     "mediaType": "tv",
-                    "mediaInfo": {"tmdbId": 100009},
                 }
             ],
         }
@@ -2148,10 +2159,10 @@ class TestSummarySeerrTrending(unittest.TestCase):
         self.assertEqual(
             rendered[0],
             {
+                "id": 100009,
                 "title": "Monster: The Lizzie Borden Story",
                 "mediaType": "tv",
                 "releaseDate": "2026-09-17",
-                "mediaInfo": {"tmdbId": 100009},
             },
         )
 
@@ -2166,10 +2177,10 @@ class TestSummarySeerrTrending(unittest.TestCase):
             "totalResults": 1,
             "results": [
                 {
+                    "id": 969681,
                     "title": "Spider-Man: Brand New Day",
                     "releaseDate": "2026-07-29",
                     "mediaType": "movie",
-                    "mediaInfo": {"tmdbId": 969681},
                 }
             ],
         }
@@ -2177,10 +2188,10 @@ class TestSummarySeerrTrending(unittest.TestCase):
         self.assertEqual(
             rendered[0],
             {
+                "id": 969681,
                 "title": "Spider-Man: Brand New Day",
                 "mediaType": "movie",
                 "releaseDate": "2026-07-29",
-                "mediaInfo": {"tmdbId": 969681},
             },
         )
 
@@ -2194,49 +2205,60 @@ class TestSummarySeerrTrending(unittest.TestCase):
             "totalResults": 2,
             "results": [
                 {
+                    "id": 1,
                     "title": "Movie A",
                     "releaseDate": "2026-01-01",
                     "mediaType": "movie",
-                    "mediaInfo": {"tmdbId": 1},
                 },
                 {
+                    "id": 2,
                     "name": "Show A",
                     "firstAirDate": "2026-02-02",
                     "mediaType": "tv",
-                    "mediaInfo": {"tmdbId": 2},
                 },
             ],
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "trending")](payload)
         self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["id"], 1)
         self.assertEqual(rendered[0]["title"], "Movie A")
         self.assertEqual(rendered[0]["releaseDate"], "2026-01-01")
         self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[1]["id"], 2)
         self.assertEqual(rendered[1]["title"], "Show A")
         self.assertEqual(rendered[1]["releaseDate"], "2026-02-02")
         self.assertEqual(rendered[1]["mediaType"], "tv")
 
     def test_tv_item_missing_keys_surface_as_none(self) -> None:
         # A TV item missing ``name`` / ``firstAirDate`` surfaces
-        # ``None`` rather than crashing the renderer.
+        # ``None`` rather than crashing the renderer. The
+        # historical fabricated ``mediaInfo`` key is gone -- a row
+        # with no upstream id does not pretend to have a
+        # ``tmdbId: 0`` dict.
         payload = [
             {
+                "id": 999,
                 "mediaType": "tv",
-                "mediaInfo": {"tmdbId": 999},
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "trending")](payload)
         self.assertEqual(
             rendered[0],
             {
+                "id": 999,
                 "title": None,
                 "mediaType": "tv",
                 "releaseDate": None,
-                "mediaInfo": {"tmdbId": 999},
             },
         )
+        self.assertNotIn("mediaInfo", rendered[0])
 
-    def test_missing_media_info(self) -> None:
+    def test_missing_id_keeps_none(self) -> None:
+        # ``id`` is read with ``_safe_get``; missing rows surface
+        # as ``None`` rather than crashing the renderer. The
+        # historical fabricated ``mediaInfo: {tmdbId: 0}``
+        # placeholder is gone -- a row with no upstream id does
+        # not pretend to have one.
         payload = [
             {
                 "title": "Movie X",
@@ -2245,11 +2267,96 @@ class TestSummarySeerrTrending(unittest.TestCase):
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "trending")](payload)
-        self.assertEqual(rendered[0]["mediaInfo"], {"tmdbId": 0})
+        self.assertIsNone(rendered[0]["id"])
+        self.assertNotIn("mediaInfo", rendered[0])
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
             _SUMMARY_RENDERERS[("seerr", "trending")](None),
+            [],
+        )
+
+
+class TestSummarySeerrUpcomingMovies(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "upcoming-movies")]`` matches the spec.
+
+    Movie items in the ``/api/v1/discover/movies/upcoming``
+    envelope use ``title`` / ``releaseDate`` (the canonical movie
+    shape). The curated summary is byte-identical to
+    :func:`_summary_seerr_trending`'s movie-shape projection so
+    the operator can tabulate ``seerr trending`` and ``seerr
+    upcoming-movies`` together row-for-row.
+
+    The per-item projection surfaces the top-level ``id`` field
+    the upstream payload actually carries. The rows in the
+    operator's Seer ``/api/v1/discover/movies/upcoming`` response
+    do not expose a nested ``mediaInfo`` envelope -- the TMDB id
+    lives at the top level as ``id``. The historical fabricated
+    ``{"tmdbId": 0}`` placeholder was misleading because every
+    row was projected as ``tmdbId: 0`` even for hits with
+    well-known ids. Mirrors the projection chosen for
+    :func:`_summary_seerr_search` (PR #41).
+    """
+
+    def test_upcoming_movies_shape(self) -> None:
+        payload = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 1,
+            "results": [
+                {
+                    "id": 696506,
+                    "title": "Mickey 17",
+                    "releaseDate": "2025-03-07",
+                    "mediaType": "movie",
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "upcoming-movies")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "id": 696506,
+                "title": "Mickey 17",
+                "mediaType": "movie",
+                "releaseDate": "2025-03-07",
+            },
+        )
+
+    def test_upcoming_movies_missing_keys_surface_as_none(self) -> None:
+        payload = [
+            {
+                "id": 999,
+                "mediaType": "movie",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "upcoming-movies")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "id": 999,
+                "title": None,
+                "mediaType": "movie",
+                "releaseDate": None,
+            },
+        )
+        self.assertNotIn("mediaInfo", rendered[0])
+
+    def test_missing_id_keeps_none(self) -> None:
+        payload = [
+            {
+                "title": "Movie",
+                "releaseDate": "2024-01-01",
+                "mediaType": "movie",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "upcoming-movies")](payload)
+        self.assertIsNone(rendered[0]["id"])
+        self.assertNotIn("mediaInfo", rendered[0])
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "upcoming-movies")](None),
             [],
         )
 
@@ -2263,6 +2370,16 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
     curated ``title`` / ``releaseDate`` names is the regression
     net for the v12-compat bug where TV rows rendered as
     ``title=None, releaseDate=None``.
+
+    The per-item projection surfaces the top-level ``id`` field
+    the upstream payload actually carries. The rows in the
+    operator's Seer ``/api/v1/discover/tv/upcoming`` response do
+    not expose a nested ``mediaInfo`` envelope -- the TVDB id
+    lives at the top level as ``id``. The historical fabricated
+    ``{"tmdbId": 0}`` placeholder was misleading because every row
+    was projected as ``tmdbId: 0`` even for hits with well-known
+    ids. Mirrors the projection chosen for
+    :func:`_summary_seerr_search` (PR #41).
     """
 
     def test_upcoming_tv_shape(self) -> None:
@@ -2272,10 +2389,10 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
             "totalResults": 1,
             "results": [
                 {
+                    "id": 100001,
                     "name": "The Scandal",
                     "firstAirDate": "2026-09-18",
                     "mediaType": "tv",
-                    "mediaInfo": {"tmdbId": 100001},
                 }
             ],
         }
@@ -2283,32 +2400,38 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
         self.assertEqual(
             rendered[0],
             {
+                "id": 100001,
                 "title": "The Scandal",
                 "mediaType": "tv",
                 "releaseDate": "2026-09-18",
-                "mediaInfo": {"tmdbId": 100001},
             },
         )
 
     def test_upcoming_tv_missing_keys_surface_as_none(self) -> None:
         payload = [
             {
+                "id": 999,
                 "mediaType": "tv",
-                "mediaInfo": {"tmdbId": 999},
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "upcoming-tv")](payload)
         self.assertEqual(
             rendered[0],
             {
+                "id": 999,
                 "title": None,
                 "mediaType": "tv",
                 "releaseDate": None,
-                "mediaInfo": {"tmdbId": 999},
             },
         )
+        self.assertNotIn("mediaInfo", rendered[0])
 
-    def test_missing_media_info(self) -> None:
+    def test_missing_id_keeps_none(self) -> None:
+        # ``id`` is read with ``_safe_get``; missing rows surface
+        # as ``None`` rather than crashing the renderer. The
+        # historical fabricated ``mediaInfo: {tmdbId: 0}``
+        # placeholder is gone -- a row with no upstream id does
+        # not pretend to have one.
         payload = [
             {
                 "name": "Show",
@@ -2317,7 +2440,8 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "upcoming-tv")](payload)
-        self.assertEqual(rendered[0]["mediaInfo"], {"tmdbId": 0})
+        self.assertIsNone(rendered[0]["id"])
+        self.assertNotIn("mediaInfo", rendered[0])
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
@@ -2337,6 +2461,16 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
     releaseDate=None``. Live evidence (2026-09-18):
     ``totalResults: 9397`` for
     ``/api/v1/discover/tv?genre=10765``.
+
+    The per-item projection surfaces the top-level ``id`` field
+    the upstream payload actually carries. The rows in the
+    operator's Seer ``/api/v1/discover/tv`` response do not expose
+    a nested ``mediaInfo`` envelope -- the TVDB id lives at the
+    top level as ``id``. The historical fabricated ``{"tmdbId":
+    0}`` placeholder was misleading because every row was
+    projected as ``tmdbId: 0`` even for hits with well-known ids.
+    Mirrors the projection chosen for
+    :func:`_summary_seerr_search` (PR #41).
     """
 
     def test_discover_tv_shape(self) -> None:
@@ -2346,10 +2480,10 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
             "totalResults": 9397,
             "results": [
                 {
+                    "id": 46261,
                     "name": "The Vampire Diaries",
                     "firstAirDate": "2009-09-10",
                     "mediaType": "tv",
-                    "mediaInfo": {"tmdbId": 46261},
                 }
             ],
         }
@@ -2357,32 +2491,38 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
         self.assertEqual(
             rendered[0],
             {
+                "id": 46261,
                 "title": "The Vampire Diaries",
                 "mediaType": "tv",
                 "releaseDate": "2009-09-10",
-                "mediaInfo": {"tmdbId": 46261},
             },
         )
 
     def test_discover_tv_missing_keys_surface_as_none(self) -> None:
         payload = [
             {
+                "id": 999,
                 "mediaType": "tv",
-                "mediaInfo": {"tmdbId": 999},
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "discover-tv")](payload)
         self.assertEqual(
             rendered[0],
             {
+                "id": 999,
                 "title": None,
                 "mediaType": "tv",
                 "releaseDate": None,
-                "mediaInfo": {"tmdbId": 999},
             },
         )
+        self.assertNotIn("mediaInfo", rendered[0])
 
-    def test_missing_media_info(self) -> None:
+    def test_missing_id_keeps_none(self) -> None:
+        # ``id`` is read with ``_safe_get``; missing rows surface
+        # as ``None`` rather than crashing the renderer. The
+        # historical fabricated ``mediaInfo: {tmdbId: 0}``
+        # placeholder is gone -- a row with no upstream id does
+        # not pretend to have one.
         payload = [
             {
                 "name": "Show",
@@ -2391,11 +2531,96 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "discover-tv")](payload)
-        self.assertEqual(rendered[0]["mediaInfo"], {"tmdbId": 0})
+        self.assertIsNone(rendered[0]["id"])
+        self.assertNotIn("mediaInfo", rendered[0])
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
             _SUMMARY_RENDERERS[("seerr", "discover-tv")](None),
+            [],
+        )
+
+
+class TestSummarySeerrDiscoverMovies(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "discover-movies")]`` matches the spec.
+
+    Movie items in the ``/api/v1/discover/movies`` envelope use
+    ``title`` / ``releaseDate`` (the canonical movie shape). The
+    curated summary is byte-identical to
+    :func:`_summary_seerr_upcoming_movies` so the operator can
+    tabulate ``seerr upcoming-movies`` and ``seerr
+    discover-movies`` together row-for-row.
+
+    The per-item projection surfaces the top-level ``id`` field
+    the upstream payload actually carries. The rows in the
+    operator's Seer ``/api/v1/discover/movies`` response do not
+    expose a nested ``mediaInfo`` envelope -- the TMDB id lives
+    at the top level as ``id``. The historical fabricated
+    ``{"tmdbId": 0}`` placeholder was misleading because every
+    row was projected as ``tmdbId: 0`` even for hits with
+    well-known ids. Mirrors the projection chosen for
+    :func:`_summary_seerr_search` (PR #41).
+    """
+
+    def test_discover_movies_shape(self) -> None:
+        payload = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 1,
+            "results": [
+                {
+                    "id": 822119,
+                    "title": "Captain America: Brave New World",
+                    "releaseDate": "2025-02-14",
+                    "mediaType": "movie",
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "discover-movies")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "id": 822119,
+                "title": "Captain America: Brave New World",
+                "mediaType": "movie",
+                "releaseDate": "2025-02-14",
+            },
+        )
+
+    def test_discover_movies_missing_keys_surface_as_none(self) -> None:
+        payload = [
+            {
+                "id": 999,
+                "mediaType": "movie",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "discover-movies")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "id": 999,
+                "title": None,
+                "mediaType": "movie",
+                "releaseDate": None,
+            },
+        )
+        self.assertNotIn("mediaInfo", rendered[0])
+
+    def test_missing_id_keeps_none(self) -> None:
+        payload = [
+            {
+                "title": "Movie",
+                "releaseDate": "2024-01-01",
+                "mediaType": "movie",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "discover-movies")](payload)
+        self.assertIsNone(rendered[0]["id"])
+        self.assertNotIn("mediaInfo", rendered[0])
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "discover-movies")](None),
             [],
         )
 

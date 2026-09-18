@@ -2446,15 +2446,17 @@ class TestCmdTrending(unittest.TestCase):
         ):
             output = _capture_stdout(cmd_trending, args, None)
         # The header line names the columns the renderer projects:
-        # ``title``, ``mediaType``, ``releaseDate``,
-        # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
-        # nested key).
+        # ``id``, ``title``, ``mediaType``, ``releaseDate`` -- the
+        # top-level ``id`` field the upstream row actually carries.
+        # No nested ``mediaInfo.tmdbId`` is projected; the
+        # historical fabricated ``{"tmdbId": 0}`` placeholder is
+        # gone.
         header_line = output.splitlines()[0]
         for column in (
+            "id",
             "title",
             "mediaType",
             "releaseDate",
-            "mediaInfo.tmdbId",
         ):
             self.assertIn(
                 column, header_line,
@@ -2463,6 +2465,12 @@ class TestCmdTrending(unittest.TestCase):
                     f"{header_line!r}"
                 ),
             )
+        # The historical ``mediaInfo.tmdbId`` projection is gone --
+        # the upstream payload does not expose a nested
+        # ``mediaInfo`` envelope on the operator's Seer instance,
+        # so no column named ``mediaInfo.tmdbId`` appears in the
+        # curated table.
+        self.assertNotIn("mediaInfo.tmdbId", header_line)
         # One rendered data row per ``results`` entry.
         data_lines = [
             line for line in output.splitlines()[2:]
@@ -2494,9 +2502,14 @@ class TestCmdTrending(unittest.TestCase):
         self.assertEqual(len(rendered), 2)
         self.assertEqual(rendered[0]["title"], "Dune: Part Two")
         self.assertEqual(rendered[1]["title"], "Sh\u014dgun")
-        # Nested ``mediaInfo.tmdbId`` is preserved.
-        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 693134)
-        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 127309)
+        # The top-level ``id`` field is projected; the historical
+        # ``mediaInfo.tmdbId`` projection is gone (the upstream
+        # payload does not expose a nested ``mediaInfo`` envelope
+        # on the operator's Seer instance).
+        self.assertEqual(rendered[0]["id"], 101)
+        self.assertEqual(rendered[1]["id"], 102)
+        self.assertNotIn("mediaInfo", rendered[0])
+        self.assertNotIn("mediaInfo", rendered[1])
 
     def test_summary_seerr_trending_bare_list_unchanged(self) -> None:
         """Renderer iterates a bare list payload (defensive envelope-drift guard)."""
@@ -2505,7 +2518,13 @@ class TestCmdTrending(unittest.TestCase):
         rendered = _summary_seerr_trending(self.BARE_LIST)
         self.assertEqual(len(rendered), 1)
         self.assertEqual(rendered[0]["title"], "Dune: Part Two")
-        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 693134)
+        # ``BARE_LIST`` is a minimal fixture (no top-level ``id``);
+        # the renderer surfaces ``None`` for the missing field
+        # rather than fabricating a ``mediaInfo: {tmdbId: 0}``
+        # placeholder. Mirrors :meth:`test_search_missing_id_keeps_none`
+        # in :class:`TestSummarySeerrSearch`.
+        self.assertIsNone(rendered[0]["id"])
+        self.assertNotIn("mediaInfo", rendered[0])
 
     def test_summary_seerr_trending_envelope_without_results_returns_empty(
         self,
@@ -2896,15 +2915,17 @@ class TestCmdUpcomingMovies(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(len(rsps.calls), 1)
             # Header line names the columns the renderer projects:
-            # ``title``, ``mediaType``, ``releaseDate``,
-            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
-            # nested key).
+            # ``id``, ``title``, ``mediaType``, ``releaseDate`` --
+            # the top-level ``id`` field the upstream row actually
+            # carries. No nested ``mediaInfo.tmdbId`` is projected;
+            # the historical fabricated ``{"tmdbId": 0}`` placeholder
+            # is gone.
             header_line = stdout.splitlines()[0]
             for column in (
+                "id",
                 "title",
                 "mediaType",
                 "releaseDate",
-                "mediaInfo.tmdbId",
             ):
                 self.assertIn(
                     column, header_line,
@@ -2913,6 +2934,7 @@ class TestCmdUpcomingMovies(unittest.TestCase):
                         f"{header_line!r}"
                     ),
                 )
+            self.assertNotIn("mediaInfo.tmdbId", header_line)
 
     def test_seerr_upcoming_movies_verbose_emits_verbatim_envelope(self) -> None:
         """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
@@ -2998,9 +3020,14 @@ class TestCmdUpcomingMovies(unittest.TestCase):
         self.assertEqual(len(rendered), 2)
         self.assertEqual(rendered[0]["title"], "Mickey 17")
         self.assertEqual(rendered[1]["title"], "Captain America: Brave New World")
-        # Nested ``mediaInfo.tmdbId`` is preserved.
-        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 696506)
-        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 822119)
+        # The top-level ``id`` field is projected; the historical
+        # ``mediaInfo.tmdbId`` projection is gone (the upstream
+        # payload does not expose a nested ``mediaInfo`` envelope
+        # on the operator's Seer instance).
+        self.assertEqual(rendered[0]["id"], 201)
+        self.assertEqual(rendered[1]["id"], 202)
+        self.assertNotIn("mediaInfo", rendered[0])
+        self.assertNotIn("mediaInfo", rendered[1])
 
     def test_summary_seerr_upcoming_movies_bare_list_unchanged(self) -> None:
         """Renderer iterates a bare list payload (defensive envelope-drift guard)."""
@@ -3009,7 +3036,8 @@ class TestCmdUpcomingMovies(unittest.TestCase):
         rendered = _summary_seerr_upcoming_movies(self.ENVELOPE["results"])
         self.assertEqual(len(rendered), 2)
         self.assertEqual(rendered[0]["title"], "Mickey 17")
-        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 696506)
+        self.assertEqual(rendered[0]["id"], 201)
+        self.assertNotIn("mediaInfo", rendered[0])
 
     def test_summary_seerr_upcoming_movies_envelope_without_results_returns_empty(
         self,
@@ -3330,15 +3358,17 @@ class TestCmdUpcomingTv(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(len(rsps.calls), 1)
             # Header line names the columns the renderer projects:
-            # ``title``, ``mediaType``, ``releaseDate``,
-            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
-            # nested key).
+            # ``id``, ``title``, ``mediaType``, ``releaseDate`` --
+            # the top-level ``id`` field the upstream row actually
+            # carries. No nested ``mediaInfo.tmdbId`` is projected;
+            # the historical fabricated ``{"tmdbId": 0}`` placeholder
+            # is gone.
             header_line = stdout.splitlines()[0]
             for column in (
+                "id",
                 "title",
                 "mediaType",
                 "releaseDate",
-                "mediaInfo.tmdbId",
             ):
                 self.assertIn(
                     column, header_line,
@@ -3347,6 +3377,7 @@ class TestCmdUpcomingTv(unittest.TestCase):
                         f"{header_line!r}"
                     ),
                 )
+            self.assertNotIn("mediaInfo.tmdbId", header_line)
 
     def test_seerr_upcoming_tv_verbose_emits_verbatim_envelope(self) -> None:
         """``--verbose`` bypasses the renderer and emits the envelope verbatim."""
@@ -3432,9 +3463,14 @@ class TestCmdUpcomingTv(unittest.TestCase):
         self.assertEqual(len(rendered), 2)
         self.assertEqual(rendered[0]["title"], "Severance")
         self.assertEqual(rendered[1]["title"], "The Pitt")
-        # Nested ``mediaInfo.tmdbId`` is preserved.
-        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 95396)
-        self.assertEqual(rendered[1]["mediaInfo"]["tmdbId"], 249135)
+        # The top-level ``id`` field is projected; the historical
+        # ``mediaInfo.tmdbId`` projection is gone (the upstream
+        # payload does not expose a nested ``mediaInfo`` envelope
+        # on the operator's Seer instance).
+        self.assertEqual(rendered[0]["id"], 301)
+        self.assertEqual(rendered[1]["id"], 302)
+        self.assertNotIn("mediaInfo", rendered[0])
+        self.assertNotIn("mediaInfo", rendered[1])
 
     def test_summary_seerr_upcoming_tv_bare_list_unchanged(self) -> None:
         """Renderer iterates a bare list payload (defensive envelope-drift guard)."""
@@ -3443,7 +3479,8 @@ class TestCmdUpcomingTv(unittest.TestCase):
         rendered = _summary_seerr_upcoming_tv(self.ENVELOPE["results"])
         self.assertEqual(len(rendered), 2)
         self.assertEqual(rendered[0]["title"], "Severance")
-        self.assertEqual(rendered[0]["mediaInfo"]["tmdbId"], 95396)
+        self.assertEqual(rendered[0]["id"], 301)
+        self.assertNotIn("mediaInfo", rendered[0])
 
     def test_summary_seerr_upcoming_tv_envelope_without_results_returns_empty(
         self,
@@ -3991,15 +4028,17 @@ class TestCmdDiscoverMovies(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(len(rsps.calls), 1)
             # Header line names the columns the renderer projects:
-            # ``title``, ``mediaType``, ``releaseDate``,
-            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
-            # nested key).
+            # ``id``, ``title``, ``mediaType``, ``releaseDate`` --
+            # the top-level ``id`` field the upstream row actually
+            # carries. No nested ``mediaInfo.tmdbId`` is projected;
+            # the historical fabricated ``{"tmdbId": 0}`` placeholder
+            # is gone.
             header_line = stdout.splitlines()[0]
             for column in (
+                "id",
                 "title",
                 "mediaType",
                 "releaseDate",
-                "mediaInfo.tmdbId",
             ):
                 self.assertIn(
                     column, header_line,
@@ -4008,6 +4047,7 @@ class TestCmdDiscoverMovies(unittest.TestCase):
                         f"{header_line!r}"
                     ),
                 )
+            self.assertNotIn("mediaInfo.tmdbId", header_line)
 
 
 class TestCmdDiscoverTv(unittest.TestCase):
@@ -4426,15 +4466,17 @@ class TestCmdDiscoverTv(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(len(rsps.calls), 1)
             # Header line names the columns the renderer projects:
-            # ``title``, ``mediaType``, ``releaseDate``,
-            # ``mediaInfo.tmdbId`` (dot-path traversal resolves the
-            # nested key).
+            # ``id``, ``title``, ``mediaType``, ``releaseDate`` --
+            # the top-level ``id`` field the upstream row actually
+            # carries. No nested ``mediaInfo.tmdbId`` is projected;
+            # the historical fabricated ``{"tmdbId": 0}`` placeholder
+            # is gone.
             header_line = stdout.splitlines()[0]
             for column in (
+                "id",
                 "title",
                 "mediaType",
                 "releaseDate",
-                "mediaInfo.tmdbId",
             ):
                 self.assertIn(
                     column, header_line,
@@ -4443,6 +4485,7 @@ class TestCmdDiscoverTv(unittest.TestCase):
                         f"{header_line!r}"
                     ),
                 )
+            self.assertNotIn("mediaInfo.tmdbId", header_line)
 
 
 class TestCmdGenres(unittest.TestCase):
