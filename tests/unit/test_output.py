@@ -1579,6 +1579,159 @@ class TestSummaryJellyfinResume(unittest.TestCase):
             [],
         )
 
+    def test_series_and_season_rows_are_filtered_out(self) -> None:
+        # Regression: on some Jellyfin versions the /Items/Resume
+        # endpoint includes parent ``Type=Series`` and ``Type=Season``
+        # roll-up entries on top of the directly resumable
+        # Movies / Episodes. The renderer re-applies the type
+        # filter so only Movie and Episode rows survive -- the
+        # original symptom was ``12 rows where API returns 3``
+        # because the roll-ups were inflating the count.
+        payload = {
+            "Items": [
+                {
+                    "Name": "The Woman Who Fell to Earth",
+                    "Type": "Episode",
+                    "ProductionYear": 2018,
+                    "SeriesName": "Doctor Who (2005)",
+                    "UserData": {"PlaybackPositionTicks": 1234, "PlayCount": 1},
+                },
+                {
+                    "Name": "Vijay 69",
+                    "Type": "Movie",
+                    "ProductionYear": 2024,
+                    "SeriesName": None,
+                    "UserData": {"PlaybackPositionTicks": 5678, "PlayCount": 0},
+                },
+                {
+                    "Name": "Sea of Despair",
+                    "Type": "Episode",
+                    "ProductionYear": 2018,
+                    "SeriesName": "Doctor Who (2005)",
+                    "UserData": {"PlaybackPositionTicks": 9012, "PlayCount": 2},
+                },
+                {
+                    "Name": "Season 2",
+                    "Type": "Season",
+                    "ProductionYear": 0,
+                    "SeriesName": "Doctor Who (2005)",
+                    "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0},
+                },
+                {
+                    "Name": "Season 3",
+                    "Type": "Season",
+                    "ProductionYear": 0,
+                    "SeriesName": "Doctor Who (2005)",
+                    "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0},
+                },
+                {
+                    "Name": "Doctor Who (2005)",
+                    "Type": "Series",
+                    "ProductionYear": 2005,
+                    "SeriesName": None,
+                    "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0},
+                },
+                {
+                    "Name": "Primal",
+                    "Type": "Series",
+                    "ProductionYear": 2019,
+                    "SeriesName": None,
+                    "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0},
+                },
+            ],
+            "TotalRecordCount": 3,
+            "StartIndex": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "resume")](payload)
+        names = [row["Name"] for row in rendered]
+        types = [row["Type"] for row in rendered]
+        self.assertEqual(len(rendered), 3)
+        self.assertEqual(
+            names,
+            [
+                "The Woman Who Fell to Earth",
+                "Vijay 69",
+                "Sea of Despair",
+            ],
+        )
+        self.assertEqual(types, ["Episode", "Movie", "Episode"])
+        # No Series / Season / Folder / BoxSet rows survived.
+        self.assertNotIn("Series", types)
+        self.assertNotIn("Season", types)
+        self.assertNotIn("Folder", types)
+        self.assertNotIn("BoxSet", types)
+        # Every surviving row has populated UserData (the resumable
+        # contract).
+        for row in rendered:
+            self.assertGreater(row["UserData.PlaybackPositionTicks"], 0)
+
+    def test_non_allowed_types_dropped_in_bare_list(self) -> None:
+        # Same filter logic when the renderer is called with a bare
+        # list (no envelope) -- the defensive filter must apply on
+        # every code path, not only after ``_unwrap_envelope``.
+        payload = [
+            {
+                "Name": "Movie row",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": None,
+                "UserData": {"PlaybackPositionTicks": 100, "PlayCount": 1},
+            },
+            {
+                "Name": "Episode row",
+                "Type": "Episode",
+                "ProductionYear": 2024,
+                "SeriesName": "Cosmos",
+                "UserData": {"PlaybackPositionTicks": 200, "PlayCount": 1},
+            },
+            {
+                "Name": "Series row",
+                "Type": "Series",
+                "ProductionYear": 2020,
+                "SeriesName": None,
+                "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0},
+            },
+            {
+                "Name": "Season row",
+                "Type": "Season",
+                "ProductionYear": 2020,
+                "SeriesName": "Cosmos",
+                "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0},
+            },
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "resume")](payload)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(
+            [row["Type"] for row in rendered],
+            ["Movie", "Episode"],
+        )
+
+    def test_items_without_type_are_dropped(self) -> None:
+        # Items that arrive without a ``Type`` field are dropped
+        # defensively -- they cannot be validated against the
+        # Movie/Episode contract and a stray row would re-introduce
+        # the original symptom (12 rows where the API has 3).
+        payload = [
+            {
+                "Name": "Real Episode",
+                "Type": "Episode",
+                "ProductionYear": 2024,
+                "SeriesName": "Cosmos",
+                "UserData": {"PlaybackPositionTicks": 200, "PlayCount": 1},
+            },
+            {
+                "Name": "Typeless mystery row",
+                "ProductionYear": 2024,
+                "SeriesName": None,
+                "UserData": {"PlaybackPositionTicks": 0, "PlayCount": 0},
+            },
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "resume")](payload)
+        self.assertEqual(len(rendered), 1)
+        names = [row["Name"] for row in rendered]
+        self.assertEqual(names, ["Real Episode"])
+        self.assertNotIn("Typeless mystery row", names)
+
 
 class TestSummaryJellyfinLatest(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("jellyfin", "latest")]`` matches the spec."""
