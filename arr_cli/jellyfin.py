@@ -308,8 +308,13 @@ def cmd_latest(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="latest",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_jellyfin_latest`` (flat top-level keys).
-    columns = ["Name", "Type", "ProductionYear", "SeriesName", "DateCreated"]
+    # ``_summary_jellyfin_latest``: the slim DTO returned by
+    # ``/Users/{user_id}/Items/Latest`` does not populate
+    # ``DateCreated`` on the operator's instance, so the curated
+    # summary intentionally drops it. ``DateCreated`` remains
+    # available via ``jellyfin item <id>`` (chainable from
+    # ``--verbose``).
+    columns = ["Name", "Type", "ProductionYear", "SeriesName"]
     return _emit(payload, args, columns=columns)
 
 

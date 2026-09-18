@@ -741,7 +741,22 @@ def _summary_jellyfin_resume(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_jellyfin_latest(payload: Any) -> list[dict[str, Any]]:
-    """Render a Jellyfin ``latest`` payload as the curated summary."""
+    """Render a Jellyfin ``latest`` payload as the curated summary.
+
+    ``GET /Users/{user_id}/Items/Latest`` returns a slimmer DTO than
+    ``GET /Items/{id}`` -- on the operator's Jellyfin v12 instance
+    the response does not populate ``DateCreated`` on any row, so
+    projecting the field would surface a "spurious null" for every
+    row (the symptom that motivated this fix). The endpoint is
+    scoped to "what changed in my library recently", so the four
+    fields that survive (``Name``, ``Type``, ``ProductionYear``,
+    ``SeriesName``) are sufficient to identify the item and chain
+    it into ``jellyfin item <id>`` when the operator needs the
+    full record. Operators who need ``DateCreated`` can fetch the
+    full item via ``jellyfin item <id>`` (chainable from
+    ``--verbose`` or the new ``Id`` column on `favorites`); the
+    slim DTO the summary renders from does not carry it.
+    """
     if not isinstance(payload, list):
         return []
     return [
@@ -750,7 +765,6 @@ def _summary_jellyfin_latest(payload: Any) -> list[dict[str, Any]]:
             "Type": _safe_get(item, "Type", default=None),
             "ProductionYear": _safe_get(item, "ProductionYear", default=0),
             "SeriesName": _safe_get(item, "SeriesName", default=None),
-            "DateCreated": _safe_get(item, "DateCreated", default=None),
         }
         for item in payload
         if isinstance(item, Mapping)
