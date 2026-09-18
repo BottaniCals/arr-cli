@@ -3496,8 +3496,8 @@ class TestCmdDiscoverMovies(unittest.TestCase):
             "limit": 20,
             "command": "discover-movies",
             "genre": None,
-            "sort": "popularity.desc",
-            "language": "en-US",
+            "sort": None,
+            "language": None,
             "page": None,
         }
         base.update(overrides)
@@ -3523,16 +3523,24 @@ class TestCmdDiscoverMovies(unittest.TestCase):
         )
 
     def test_seerr_discover_movies_default_hits_endpoint(self) -> None:
-        """``seerr discover-movies`` with no flags hits the endpoint with documented default params.
+        """``seerr discover-movies`` with no flags hits the endpoint with NO query params on the wire.
 
-        Pins the documented "keep it simple" CLI surface: the
-        command forwards ``sortBy`` and ``language`` unconditionally
-        (with their documented defaults ``popularity.desc`` /
-        ``en-US``); ``genre`` and ``page`` are NOT forwarded when the
-        operator does not set them. The ``query_param_matcher``
-        asserts no ``genre`` / ``page`` / ``limit`` keys ride the
-        default request.
+        Pins the omit-when-default wire-format: the CLI only
+        forwards a query parameter when the operator typed the
+        matching flag. With no flags, no ``sortBy`` /
+        ``language`` / ``genre`` / ``page`` / ``limit`` keys ride
+        the request -- upstream applies its own defaults. Using
+        ``query_param_matcher({})`` with the strict default
+        ``strict_match=True`` asserts the URL has zero query
+        parameters (anything extra would leave the mock
+        unmatched).
+
+        Regression guard for the 2026-09-18 bug where the CLI
+        hardcoded ``sortBy=popularity.desc`` + ``language=en-US``
+        and the upstream combo silently returned 0 results.
         """
+        from urllib.parse import urlparse, parse_qs
+
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -3540,9 +3548,7 @@ class TestCmdDiscoverMovies(unittest.TestCase):
                 json=self.ENVELOPE,
                 status=200,
                 match=[
-                    responses.matchers.query_param_matcher(
-                        {"sortBy": "popularity.desc", "language": "en-US"}
-                    )
+                    responses.matchers.query_param_matcher({})
                 ],
             )
             import arr_cli.seerr as seerr
@@ -3555,17 +3561,53 @@ class TestCmdDiscoverMovies(unittest.TestCase):
             stdout = stdout_buf.getvalue()
             self.assertEqual(exit_code, 0)
             # The single registered mock fired, so the path was
-            # ``/api/v1/discover/movies`` with exactly
-            # ``sortBy=popularity.desc`` and ``language=en-US`` on
-            # the wire. Any other path or query value would have left
-            # the mock unmatched and surfaced a connection error.
+            # ``/api/v1/discover/movies`` with zero query
+            # parameters. Any non-empty query string would have
+            # left the mock unmatched and surfaced a connection
+            # error.
             self.assertEqual(len(rsps.calls), 1)
+            self.assertEqual(
+                parse_qs(urlparse(rsps.calls[0].request.url).query),
+                {},
+            )
             # The response body's per-item ``title`` field is rendered
             # onto stdout via the default TSV summary.
             self.assertIn("The Batman", stdout)
 
+    def test_seerr_discover_movies_default_omits_sort_and_language(
+        self,
+    ) -> None:
+        """Explicit regression: default discover-movies has no ``sortBy`` and no ``language`` on the wire.
+
+        Pins the 2026-09-18 bug fix at the wire-format level:
+        the prior command hardcoded both keys unconditionally
+        (returning 0 results), so this test fails loudly if
+        either key ever reappears on the default request.
+        """
+        from urllib.parse import urlparse, parse_qs
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/movies",
+                json=self.ENVELOPE,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            seerr.main(
+                ["--config", str(self.cfg_path), "discover-movies"]
+            )
+            self.assertEqual(len(rsps.calls), 1)
+            query = parse_qs(urlparse(rsps.calls[0].request.url).query)
+            self.assertNotIn("sortBy", query)
+            self.assertNotIn("language", query)
+            self.assertNotIn("genre", query)
+            self.assertNotIn("page", query)
+            self.assertNotIn("limit", query)
+
     def test_seerr_discover_movies_with_genre(self) -> None:
-        """``seerr discover-movies --genre 28`` forwards ``genre=28``."""
+        """``seerr discover-movies --genre 28`` forwards ONLY ``genre=28`` (no sort/language/page)."""
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -3573,13 +3615,7 @@ class TestCmdDiscoverMovies(unittest.TestCase):
                 json=self.ENVELOPE,
                 status=200,
                 match=[
-                    responses.matchers.query_param_matcher(
-                        {
-                            "sortBy": "popularity.desc",
-                            "language": "en-US",
-                            "genre": "28",
-                        }
-                    )
+                    responses.matchers.query_param_matcher({"genre": "28"})
                 ],
             )
             import arr_cli.seerr as seerr
@@ -3595,7 +3631,7 @@ class TestCmdDiscoverMovies(unittest.TestCase):
             self.assertEqual(len(rsps.calls), 1)
 
     def test_seerr_discover_movies_with_sort(self) -> None:
-        """``seerr discover-movies --sort vote_average.desc`` forwards ``sortBy=vote_average.desc``."""
+        """``seerr discover-movies --sort vote_average.desc`` forwards ONLY ``sortBy=vote_average.desc``."""
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -3604,10 +3640,7 @@ class TestCmdDiscoverMovies(unittest.TestCase):
                 status=200,
                 match=[
                     responses.matchers.query_param_matcher(
-                        {
-                            "sortBy": "vote_average.desc",
-                            "language": "en-US",
-                        }
+                        {"sortBy": "vote_average.desc"}
                     )
                 ],
             )
@@ -3624,7 +3657,7 @@ class TestCmdDiscoverMovies(unittest.TestCase):
             self.assertEqual(len(rsps.calls), 1)
 
     def test_seerr_discover_movies_with_language(self) -> None:
-        """``seerr discover-movies --language fr-FR`` forwards ``language=fr-FR``."""
+        """``seerr discover-movies --language fr-FR`` forwards ONLY ``language=fr-FR``."""
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -3633,10 +3666,7 @@ class TestCmdDiscoverMovies(unittest.TestCase):
                 status=200,
                 match=[
                     responses.matchers.query_param_matcher(
-                        {
-                            "sortBy": "popularity.desc",
-                            "language": "fr-FR",
-                        }
+                        {"language": "fr-FR"}
                     )
                 ],
             )
@@ -3776,7 +3806,13 @@ class TestCmdDiscoverMovies(unittest.TestCase):
         )
 
     def test_seerr_discover_movies_human_renders_tsv(self) -> None:
-        """``--human`` renders the curated summary as a tabular TSV with the documented column headers."""
+        """``--human`` renders the curated summary as a tabular TSV with the documented column headers.
+
+        The mock asserts no query params ride the wire for the
+        bare ``--human`` invocation -- guards against a regression
+        of the 2026-09-18 bug where the CLI hardcoded
+        ``sortBy=popularity.desc`` + ``language=en-US``.
+        """
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -3784,9 +3820,7 @@ class TestCmdDiscoverMovies(unittest.TestCase):
                 json=self.ENVELOPE,
                 status=200,
                 match=[
-                    responses.matchers.query_param_matcher(
-                        {"sortBy": "popularity.desc", "language": "en-US"}
-                    )
+                    responses.matchers.query_param_matcher({})
                 ],
             )
             import arr_cli.seerr as seerr
@@ -3836,10 +3870,10 @@ class TestCmdDiscoverTv(unittest.TestCase):
 
     Defaults:
 
-    * ``sortBy`` is forwarded unconditionally with documented default
-      ``popularity.desc``.
-    * ``language`` is forwarded unconditionally with documented
-      default ``en-US``.
+    * ``sortBy`` is forwarded only when ``--sort`` is set; no default
+      rides the wire (omit-when-default rule).
+    * ``language`` is forwarded only when ``--language`` is set; no
+      default rides the wire.
     * ``genre`` is forwarded only when ``--genre`` is set.
     * ``page`` is forwarded only when ``--page`` is set.
     * The upstream ``limit`` query parameter is intentionally NOT
@@ -3898,8 +3932,8 @@ class TestCmdDiscoverTv(unittest.TestCase):
             "limit": 20,
             "command": "discover-tv",
             "genre": None,
-            "sort": "popularity.desc",
-            "language": "en-US",
+            "sort": None,
+            "language": None,
             "page": None,
         }
         base.update(overrides)
@@ -3925,16 +3959,24 @@ class TestCmdDiscoverTv(unittest.TestCase):
         )
 
     def test_seerr_discover_tv_default_hits_endpoint(self) -> None:
-        """``seerr discover-tv`` with no flags hits the endpoint with documented default params.
+        """``seerr discover-tv`` with no flags hits the endpoint with NO query params on the wire.
 
-        Pins the documented "keep it simple" CLI surface: the
-        command forwards ``sortBy`` and ``language`` unconditionally
-        (with their documented defaults ``popularity.desc`` /
-        ``en-US``); ``genre`` and ``page`` are NOT forwarded when the
-        operator does not set them. The ``query_param_matcher``
-        asserts no ``genre`` / ``page`` / ``limit`` keys ride the
-        default request.
+        Pins the omit-when-default wire-format: the CLI only
+        forwards a query parameter when the operator typed the
+        matching flag. With no flags, no ``sortBy`` /
+        ``language`` / ``genre`` / ``page`` / ``limit`` keys ride
+        the request -- upstream applies its own defaults. Using
+        ``query_param_matcher({})`` with the strict default
+        ``strict_match=True`` asserts the URL has zero query
+        parameters (anything extra would leave the mock
+        unmatched).
+
+        Regression guard for the 2026-09-18 bug where the CLI
+        hardcoded ``sortBy=popularity.desc`` + ``language=en-US``
+        and the upstream combo silently returned 0 results.
         """
+        from urllib.parse import urlparse, parse_qs
+
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -3942,9 +3984,7 @@ class TestCmdDiscoverTv(unittest.TestCase):
                 json=self.ENVELOPE,
                 status=200,
                 match=[
-                    responses.matchers.query_param_matcher(
-                        {"sortBy": "popularity.desc", "language": "en-US"}
-                    )
+                    responses.matchers.query_param_matcher({})
                 ],
             )
             import arr_cli.seerr as seerr
@@ -3957,17 +3997,52 @@ class TestCmdDiscoverTv(unittest.TestCase):
             stdout = stdout_buf.getvalue()
             self.assertEqual(exit_code, 0)
             # The single registered mock fired, so the path was
-            # ``/api/v1/discover/tv`` with exactly
-            # ``sortBy=popularity.desc`` and ``language=en-US`` on
-            # the wire. Any other path or query value would have left
-            # the mock unmatched and surfaced a connection error.
+            # ``/api/v1/discover/tv`` with zero query parameters.
+            # Any non-empty query string would have left the mock
+            # unmatched and surfaced a connection error.
             self.assertEqual(len(rsps.calls), 1)
+            self.assertEqual(
+                parse_qs(urlparse(rsps.calls[0].request.url).query),
+                {},
+            )
             # The response body's per-item ``title`` field is rendered
             # onto stdout via the default TSV summary.
             self.assertIn("Shogun", stdout)
 
+    def test_seerr_discover_tv_default_omits_sort_and_language(
+        self,
+    ) -> None:
+        """Explicit regression: default discover-tv has no ``sortBy`` and no ``language`` on the wire.
+
+        Pins the 2026-09-18 bug fix at the wire-format level:
+        the prior command hardcoded both keys unconditionally
+        (returning 0 results), so this test fails loudly if
+        either key ever reappears on the default request.
+        """
+        from urllib.parse import urlparse, parse_qs
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/discover/tv",
+                json=self.ENVELOPE,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            seerr.main(
+                ["--config", str(self.cfg_path), "discover-tv"]
+            )
+            self.assertEqual(len(rsps.calls), 1)
+            query = parse_qs(urlparse(rsps.calls[0].request.url).query)
+            self.assertNotIn("sortBy", query)
+            self.assertNotIn("language", query)
+            self.assertNotIn("genre", query)
+            self.assertNotIn("page", query)
+            self.assertNotIn("limit", query)
+
     def test_seerr_discover_tv_with_genre(self) -> None:
-        """``seerr discover-tv --genre 28`` forwards ``genre=28``."""
+        """``seerr discover-tv --genre 28`` forwards ONLY ``genre=28`` (no sort/language/page)."""
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -3975,13 +4050,7 @@ class TestCmdDiscoverTv(unittest.TestCase):
                 json=self.ENVELOPE,
                 status=200,
                 match=[
-                    responses.matchers.query_param_matcher(
-                        {
-                            "sortBy": "popularity.desc",
-                            "language": "en-US",
-                            "genre": "28",
-                        }
-                    )
+                    responses.matchers.query_param_matcher({"genre": "28"})
                 ],
             )
             import arr_cli.seerr as seerr
@@ -3997,7 +4066,7 @@ class TestCmdDiscoverTv(unittest.TestCase):
             self.assertEqual(len(rsps.calls), 1)
 
     def test_seerr_discover_tv_with_sort(self) -> None:
-        """``seerr discover-tv --sort vote_average.desc`` forwards ``sortBy=vote_average.desc``."""
+        """``seerr discover-tv --sort vote_average.desc`` forwards ONLY ``sortBy=vote_average.desc``."""
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -4006,10 +4075,7 @@ class TestCmdDiscoverTv(unittest.TestCase):
                 status=200,
                 match=[
                     responses.matchers.query_param_matcher(
-                        {
-                            "sortBy": "vote_average.desc",
-                            "language": "en-US",
-                        }
+                        {"sortBy": "vote_average.desc"}
                     )
                 ],
             )
@@ -4026,7 +4092,7 @@ class TestCmdDiscoverTv(unittest.TestCase):
             self.assertEqual(len(rsps.calls), 1)
 
     def test_seerr_discover_tv_with_language(self) -> None:
-        """``seerr discover-tv --language fr-FR`` forwards ``language=fr-FR``."""
+        """``seerr discover-tv --language fr-FR`` forwards ONLY ``language=fr-FR``."""
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -4035,10 +4101,7 @@ class TestCmdDiscoverTv(unittest.TestCase):
                 status=200,
                 match=[
                     responses.matchers.query_param_matcher(
-                        {
-                            "sortBy": "popularity.desc",
-                            "language": "fr-FR",
-                        }
+                        {"language": "fr-FR"}
                     )
                 ],
             )
@@ -4178,7 +4241,13 @@ class TestCmdDiscoverTv(unittest.TestCase):
         )
 
     def test_seerr_discover_tv_human_renders_tsv(self) -> None:
-        """``--human`` renders the curated summary as a tabular TSV with the documented column headers."""
+        """``--human`` renders the curated summary as a tabular TSV with the documented column headers.
+
+        The mock asserts no query params ride the wire for the
+        bare ``--human`` invocation -- guards against a regression
+        of the 2026-09-18 bug where the CLI hardcoded
+        ``sortBy=popularity.desc`` + ``language=en-US``.
+        """
         with responses.RequestsMock() as rsps:
             rsps.add(
                 responses.GET,
@@ -4186,9 +4255,7 @@ class TestCmdDiscoverTv(unittest.TestCase):
                 json=self.ENVELOPE,
                 status=200,
                 match=[
-                    responses.matchers.query_param_matcher(
-                        {"sortBy": "popularity.desc", "language": "en-US"}
-                    )
+                    responses.matchers.query_param_matcher({})
                 ],
             )
             import arr_cli.seerr as seerr

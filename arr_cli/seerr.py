@@ -1023,12 +1023,15 @@ def cmd_discover_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     * ``genre`` (TMDB genre id) -- only forwarded when ``--genre`` is
       set; ``int`` type so an unparseable value exits ``1`` at parse
       time before any HTTP request is issued.
-    * ``sortBy`` -- always forwarded; defaults to ``popularity.desc``
-      (the upstream default the operator wants, so no
-      ``omit-when-default`` rule for this flag).
-    * ``language`` (``ISO 639-1``) -- only forwarded when the
-      operator overrides the default ``en-US``; otherwise the default
-      rides the wire.
+    * ``sortBy`` -- only forwarded when ``--sort`` is set; no
+      default rides the wire (the documented
+      ``popularity.desc`` + ``en-US`` combo silently returned 0
+      results on the operator's build, so the CLI now lets
+      upstream apply its own default unless overridden
+      explicitly).
+    * ``language`` (``ISO 639-1``) -- only forwarded when
+      ``--language`` is set; no default rides the wire (same
+      rationale as ``sortBy``).
     * ``page`` -- only forwarded when ``--page`` is set; no empty
       ``?page=`` rides the wire.
 
@@ -1047,22 +1050,20 @@ def cmd_discover_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     or echo the credential.
     """
     params: dict[str, Any] = {}
-    # ``sortBy`` defaults to ``popularity.desc`` because that is the
-    # documented default value the operator wants; we forward it
-    # unconditionally rather than gating on an
-    # ``omit-when-default`` rule (US-3 AC6: the documented default
-    # IS the value the operator wants).
-    params["sortBy"] = getattr(args, "sort", None) or "popularity.desc"
+    # ``--sort`` is forwarded only when the operator typed it.
+    # Hardcoding ``popularity.desc`` + ``en-US`` used to ship
+    # empty results upstream on the operator's build, so the CLI
+    # now lets the discover endpoint apply its own defaults
+    # unless overridden explicitly.
+    sort = getattr(args, "sort", None)
+    if sort is not None:
+        params["sortBy"] = sort
     genre = getattr(args, "genre", None)
     if genre is not None:
         params["genre"] = genre
-    # ``--language`` defaults to ``en-US`` (the documented default);
-    # forward unconditionally for the same reason ``sortBy`` is
-    # unconditional. Operators who want a different locale pass
-    # ``--language`` explicitly.
-    params["language"] = (
-        getattr(args, "language", None) or "en-US"
-    )
+    language = getattr(args, "language", None)
+    if language is not None:
+        params["language"] = language
     page = getattr(args, "page", None)
     if page is not None:
         params["page"] = page
@@ -1070,7 +1071,7 @@ def cmd_discover_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         DISCOVER_MOVIES_PATH,
         args,
         cfg,
-        params=params,
+        params=params or None,
         op="discover-movies",
     )
     # Tabular columns match the summary-shape keys emitted by
@@ -1105,9 +1106,11 @@ def cmd_discover_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     * ``genre`` (TMDB genre id) -- only forwarded when ``--genre`` is
       set; ``int`` type so an unparseable value exits ``1`` at parse
       time before any HTTP request is issued.
-    * ``sortBy`` -- always forwarded; defaults to ``popularity.desc``.
-    * ``language`` (``ISO 639-1``) -- always forwarded; defaults to
-      ``en-US``.
+    * ``sortBy`` -- only forwarded when ``--sort`` is set; no
+      default rides the wire (let upstream apply its own
+      default).
+    * ``language`` (``ISO 639-1``) -- only forwarded when
+      ``--language`` is set; no default rides the wire.
     * ``page`` -- only forwarded when ``--page`` is set.
 
     The upstream ``limit`` query parameter is intentionally NOT
@@ -1128,13 +1131,15 @@ def cmd_discover_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     immediately.
     """
     params: dict[str, Any] = {}
-    params["sortBy"] = getattr(args, "sort", None) or "popularity.desc"
+    sort = getattr(args, "sort", None)
+    if sort is not None:
+        params["sortBy"] = sort
     genre = getattr(args, "genre", None)
     if genre is not None:
         params["genre"] = genre
-    params["language"] = (
-        getattr(args, "language", None) or "en-US"
-    )
+    language = getattr(args, "language", None)
+    if language is not None:
+        params["language"] = language
     page = getattr(args, "page", None)
     if page is not None:
         params["page"] = page
@@ -1142,7 +1147,7 @@ def cmd_discover_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         DISCOVER_TV_PATH,
         args,
         cfg,
-        params=params,
+        params=params or None,
         op="discover-tv",
     )
     # Tabular columns match the summary-shape keys emitted by
@@ -1550,20 +1555,21 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     discover_movies.add_argument(
         "--sort",
-        default="popularity.desc",
+        default=None,
         metavar="SORT_BY",
         help=(
             "sort key forwarded as the ?sortBy=<SORT_BY> query "
-            "parameter (default popularity.desc)"
+            "parameter (omit = use upstream default)"
         ),
     )
     discover_movies.add_argument(
         "--language",
-        default="en-US",
+        default=None,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "
-            "?language=<LANG> query parameter (default en-US)"
+            "?language=<LANG> query parameter "
+            "(omit = use upstream default)"
         ),
     )
     discover_movies.add_argument(
@@ -1600,20 +1606,21 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     discover_tv.add_argument(
         "--sort",
-        default="popularity.desc",
+        default=None,
         metavar="SORT_BY",
         help=(
             "sort key forwarded as the ?sortBy=<SORT_BY> query "
-            "parameter (default popularity.desc)"
+            "parameter (omit = use upstream default)"
         ),
     )
     discover_tv.add_argument(
         "--language",
-        default="en-US",
+        default=None,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "
-            "?language=<LANG> query parameter (default en-US)"
+            "?language=<LANG> query parameter "
+            "(omit = use upstream default)"
         ),
     )
     discover_tv.add_argument(
