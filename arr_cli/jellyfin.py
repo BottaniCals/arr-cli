@@ -336,17 +336,23 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_item(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Jellyfin ``item <id>`` — fetch a single item by id (REQ-6 AC7).
 
-    The transport layer maps a 404 response to
-    :class:`HttpError(exit_code=4)` so the caller doesn't need to
-    inspect the status code; :func:`main_wrapper` then emits the
-    structured stderr line naming the id.
+    ``UserId`` is read from ``cfg.jellyfin.user_id`` via
+    :func:`_require_user_id` and is required on Jellyfin v12+;
+    without it the server returns HTTP 400 ``Error processing
+    request.`` Mirrors :func:`cmd_nextup`. The transport layer
+    maps a 404 response to :class:`HttpError(exit_code=4)` so
+    the caller doesn't need to inspect the status code;
+    :func:`main_wrapper` then emits the structured stderr line
+    naming the id.
     """
+    user_id = _require_user_id(cfg)
     raw_id = getattr(args, "item_id", "")
     item_id = transport.encode_path_segment(raw_id)
     payload = _get(
         f"/Items/{item_id}",
         args,
         cfg,
+        params={"UserId": user_id},
         op=f"item id={raw_id}",
     )
     columns = ["Name", "Type", "ProductionYear", "Overview", "UserData"]
