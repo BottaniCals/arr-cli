@@ -9,6 +9,37 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `jellyfin latest` -- the curated summary no longer projects
+  `DateCreated`. The `GET /Users/{user_id}/Items/Latest` endpoint
+  returns a slimmer DTO than `GET /Items/{id}`, and on the
+  operator's Jellyfin v12 instance the slim DTO does not populate
+  `DateCreated` on any row -- every row previously projected
+  `DateCreated: null` (a "spurious null" on a field the operator
+  reasonably expected populated). The summary now projects
+  `{Name, Type, ProductionYear, SeriesName}`; the `--human`
+  column list mirrors the trimmed shape. `DateCreated` remains
+  available via `jellyfin item <id>` (chainable from `--verbose`
+  or the curated summary's `Id` column on `favorites`).
+  `--verbose` is unchanged (raw Latest rows still on the wire,
+  `DateCreated` included or omitted by upstream). Pin tests in
+  `TestSummaryJellyfinLatest.test_latest_drops_date_created` and
+  `test_latest_shape`.
+- `jellyfin favorites` -- pinned the type-based `SeriesName`
+  contract that was implicit before this fix: the curated summary
+  passes the upstream `SeriesName` through unchanged, so
+  `SeriesName: null` is legitimate only for `Type=Movie`
+  (Movies have no parent series in Jellyfin's model) and for
+  `Type=Series` / `Type=BoxSet` (top-level entities with no
+  parent series of their own), while `Type=Season` and
+  `Type=Episode` populate the parent series name from the
+  upstream payload. No code change to the renderer -- the
+  contract was already correct -- but the previous tests only
+  exercised the Movie branch, leaving the Season / Episode /
+  Series branches implicit. Pin tests in
+  `TestSummaryJellyfinFavorites.test_favorites_series_name_null_for_movie`,
+  `..._populated_for_season`, `..._populated_for_episode`, and
+  `..._null_for_series_top_level`.
+
 - `sonarr recent` -- the curated summary now projects the flat
   identity fields the upstream `GET /api/v3/history` payload
   actually carries (`id`, `seriesId`, `episodeId`, `sourceTitle`,

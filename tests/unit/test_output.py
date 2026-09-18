@@ -1546,6 +1546,110 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
             "Fireheart: The Legend of Tadas Blinda",
         )
 
+    def test_favorites_series_name_null_for_movie(self) -> None:
+        # Pin for ``jellyfin-latest-favorites-summary-fields``: a
+        # ``SeriesName: null`` on a Movie row is legitimate (Movies
+        # have no parent series in Jellyfin's model), so the curated
+        # summary passes the upstream null through. The acceptance
+        # criterion is "SeriesName is null only when the source Item
+        # is a Movie" -- this test pins the Movie branch.
+        payload = [
+            {
+                "Id": "abc12345",
+                "Name": "Fireheart",
+                "Type": "Movie",
+                "ProductionYear": 2011,
+                "SeriesName": None,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "favorites")](payload)
+        self.assertIsNone(
+            rendered[0]["SeriesName"],
+            msg=(
+                "Movie row projected a non-null SeriesName; Movies "
+                "do not have a parent series in Jellyfin's model"
+            ),
+        )
+
+    def test_favorites_series_name_populated_for_season(self) -> None:
+        # Pin for ``jellyfin-latest-favorites-summary-fields``: when
+        # the upstream populates ``SeriesName`` on a non-Movie row
+        # (Season carries the parent series name; Episode does too),
+        # the curated summary passes it through unchanged. A
+        # regression that dropped the field for non-Movie types
+        # would project ``SeriesName: null`` and break the
+        # operator's chain into ``jellyfin item <id>``.
+        payload = [
+            {
+                "Id": "season-001",
+                "Name": "Season 1",
+                "Type": "Season",
+                "ProductionYear": 2020,
+                "SeriesName": "My Show",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "favorites")](payload)
+        self.assertEqual(
+            rendered[0]["SeriesName"],
+            "My Show",
+            msg=(
+                "Season row lost its SeriesName in the curated "
+                "summary -- the renderer should pass the upstream "
+                "value through for non-Movie types"
+            ),
+        )
+
+    def test_favorites_series_name_populated_for_episode(self) -> None:
+        # Pin for ``jellyfin-latest-favorites-summary-fields``: when
+        # the upstream populates ``SeriesName`` on an Episode row
+        # (parent series name), the curated summary passes it
+        # through unchanged. Same contract as the Season case.
+        payload = [
+            {
+                "Id": "episode-001",
+                "Name": "Pilot",
+                "Type": "Episode",
+                "ProductionYear": 2020,
+                "SeriesName": "My Show",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "favorites")](payload)
+        self.assertEqual(
+            rendered[0]["SeriesName"],
+            "My Show",
+            msg=(
+                "Episode row lost its SeriesName in the curated "
+                "summary -- the renderer should pass the upstream "
+                "value through for non-Movie types"
+            ),
+        )
+
+    def test_favorites_series_name_null_for_series_top_level(self) -> None:
+        # Pin for ``jellyfin-latest-favorites-summary-fields``: a
+        # top-level ``Type=Series`` row legitimately has
+        # ``SeriesName: null`` (the Series IS the top-level entity
+        # -- it has no parent series of its own). The renderer
+        # passes the upstream null through; this is not a "spurious
+        # null" but the correct projection of a Series-as-top-level
+        # favorite.
+        payload = [
+            {
+                "Id": "series-001",
+                "Name": "My Show",
+                "Type": "Series",
+                "ProductionYear": 2020,
+                "SeriesName": None,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "favorites")](payload)
+        self.assertIsNone(
+            rendered[0]["SeriesName"],
+            msg=(
+                "top-level Series row projected a non-null "
+                "SeriesName; Series items have no parent series"
+            ),
+        )
+
 
 class TestSummaryJellyfinResume(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("jellyfin", "resume")]`` matches the spec."""
@@ -1743,7 +1847,6 @@ class TestSummaryJellyfinLatest(unittest.TestCase):
                 "Type": "Movie",
                 "ProductionYear": 2025,
                 "SeriesName": None,
-                "DateCreated": "2025-06-01T00:00:00Z",
             }
         ]
         rendered = _SUMMARY_RENDERERS[("jellyfin", "latest")](payload)
@@ -1754,8 +1857,35 @@ class TestSummaryJellyfinLatest(unittest.TestCase):
                 "Type": "Movie",
                 "ProductionYear": 2025,
                 "SeriesName": None,
-                "DateCreated": "2025-06-01T00:00:00Z",
             },
+        )
+
+    def test_latest_drops_date_created(self) -> None:
+        # Regression for ``jellyfin-latest-favorites-summary-fields``:
+        # the ``/Users/{user_id}/Items/Latest`` endpoint returns a
+        # slimmer DTO that does not populate ``DateCreated`` on the
+        # operator's instance, so the curated summary intentionally
+        # omits the field (otherwise every row projected
+        # ``DateCreated: null`` -- a spurious null on a column the
+        # operator reasonably expects populated).
+        payload = [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2025,
+                "SeriesName": None,
+                "DateCreated": None,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "latest")](payload)
+        self.assertNotIn(
+            "DateCreated",
+            rendered[0],
+            msg=(
+                "jellyfin latest summary still projects DateCreated; "
+                "/Items/Latest does not populate it on the slim DTO "
+                "(see bug jellyfin-latest-favorites-summary-fields)"
+            ),
         )
 
     def test_non_list_returns_empty_list(self) -> None:
