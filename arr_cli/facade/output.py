@@ -691,10 +691,36 @@ def _summary_jellyfin_favorites(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_jellyfin_resume(payload: Any) -> list[dict[str, Any]]:
-    """Render a Jellyfin ``resume`` payload as the curated summary."""
+    """Render a Jellyfin ``resume`` payload as the curated summary.
+
+    The ``jellyfin resume`` command requests
+    ``GET /Users/{user_id}/Items/Resume``
+    (see :func:`arr_cli.jellyfin.cmd_resume`). The resumable
+    contract is the user-facing "continue watching" list -- direct
+    Movie and Episode items where ``UserData.PlaybackPositionTicks``
+    is set. On some Jellyfin versions the endpoint also includes
+    parent ``Type=Series`` and ``Type=Season`` roll-up entries that
+    aggregate resumable state for a container rather than carry
+    their own ``UserData.PlaybackPositionTicks``; those roll-ups
+    are not themselves resumable and previously leaked into the
+    curated summary as spurious rows (the operator reported
+    ``12 rows where API returns 3``).
+
+    To honour the contract defensively, the renderer re-applies the
+    type filter locally: only items whose ``Type`` is one of
+    ``{"Movie", "Episode"}`` are projected. Items with a missing or
+    unexpected ``Type`` are dropped, so a future Jellyfin API drift
+    that introduces another item type (or returns the wrong type
+    for an existing kind) cannot inflate the ``resume`` summary.
+    The filter is intentionally narrow -- the operator-facing
+    semantic of "resume" is a Movie or Episode that has a partial
+    playback position, and anything else (Series, Season, Folder,
+    BoxSet, ...) is not a valid row for that command.
+    """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
+    allowed_types = {"Movie", "Episode"}
     return [
         {
             "Name": _safe_get(item, "Name", default=None),
@@ -710,6 +736,7 @@ def _summary_jellyfin_resume(payload: Any) -> list[dict[str, Any]]:
         }
         for item in payload
         if isinstance(item, Mapping)
+        and _safe_get(item, "Type", default=None) in allowed_types
     ]
 
 
