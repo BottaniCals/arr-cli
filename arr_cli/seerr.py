@@ -870,8 +870,8 @@ def cmd_trending(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     ``{page, totalPages, totalResults, results: [...]}`` -- the same
     shape :func:`cmd_search` consumes -- so the renderer is a
     near-verbatim copy of :func:`_summary_seerr_search`. Each item
-    carries at minimum ``title``, ``mediaType``, ``releaseDate`` and
-    ``mediaInfo.tmdbId`` (same projection as the ``search`` command).
+    carries at minimum ``id``, ``title``, ``mediaType`` and
+    ``releaseDate`` (same projection as the ``search`` command).
 
     Three optional filters ride on the query string:
 
@@ -913,15 +913,15 @@ def cmd_trending(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="trending",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_seerr_trending``: nested ``mediaInfo.tmdbId`` is
-    # resolved via dot-path traversal in ``_row_from_mapping``.
-    # Sibling literal of the ``cmd_search`` ``columns`` so the two
-    # commands share the same per-row projection.
+    # ``_summary_seerr_trending``: ``id`` is the top-level TMDB/TVDB
+    # id the upstream row actually carries. Sibling literal of the
+    # ``cmd_search`` ``columns`` so the two commands share the same
+    # per-row projection.
     columns = [
+        "id",
         "title",
         "mediaType",
         "releaseDate",
-        "mediaInfo.tmdbId",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -933,8 +933,8 @@ def cmd_upcoming_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     envelope ``{page, totalPages, totalResults, results: [...]}`` --
     the same shape :func:`cmd_trending` consumes -- so the renderer
     is a near-verbatim copy of :func:`_summary_seerr_trending`. Each
-    item carries at minimum ``title``, ``mediaType``, ``releaseDate``
-    and ``mediaInfo.tmdbId`` (same projection as the ``trending``
+    item carries at minimum ``id``, ``title``, ``mediaType`` and
+    ``releaseDate`` (same projection as the ``trending``
     command).
 
     Two optional filters ride on the query string:
@@ -974,15 +974,15 @@ def cmd_upcoming_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="upcoming-movies",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_seerr_upcoming_movies``: nested ``mediaInfo.tmdbId``
-    # is resolved via dot-path traversal in ``_row_from_mapping``.
-    # Byte-identical literal to ``cmd_trending`` because the per-row
-    # projection is the same (same envelope, same item shape).
+    # ``_summary_seerr_upcoming_movies``: ``id`` is the top-level
+    # TMDB id the upstream row actually carries. Byte-identical
+    # literal to ``cmd_trending`` because the per-row projection is
+    # the same (same envelope, same item shape).
     columns = [
+        "id",
         "title",
         "mediaType",
         "releaseDate",
-        "mediaInfo.tmdbId",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -1034,15 +1034,15 @@ def cmd_upcoming_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="upcoming-tv",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_seerr_upcoming_tv``: nested ``mediaInfo.tmdbId`` is
-    # resolved via dot-path traversal in ``_row_from_mapping``.
-    # Byte-identical literal to ``cmd_upcoming_movies`` because the
-    # per-row projection is the same (same envelope, same item shape).
+    # ``_summary_seerr_upcoming_tv``: ``id`` is the top-level TVDB
+    # id the upstream row actually carries. Byte-identical literal
+    # to ``cmd_upcoming_movies`` because the per-row projection is
+    # the same (same envelope, same item shape).
     columns = [
+        "id",
         "title",
         "mediaType",
         "releaseDate",
-        "mediaInfo.tmdbId",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -1055,7 +1055,7 @@ def cmd_discover_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     shape :func:`cmd_upcoming_movies` consumes -- so the renderer is
     a near-verbatim copy of :func:`_summary_seerr_upcoming_movies`.
     Each item carries at minimum ``title``, ``mediaType``,
-    ``releaseDate`` and ``mediaInfo.tmdbId`` (same projection as the
+    ``releaseDate`` (same projection as the
     ``upcoming-movies`` / ``trending`` / ``search`` commands).
 
     Four optional filters ride on the query string:
@@ -1115,16 +1115,16 @@ def cmd_discover_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="discover-movies",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_seerr_discover_movies``: nested ``mediaInfo.tmdbId``
-    # is resolved via dot-path traversal in ``_row_from_mapping``.
-    # Byte-identical literal to ``cmd_upcoming_movies`` /
-    # ``cmd_trending`` because the per-row projection is the same
-    # (same envelope, same item shape).
+    # ``_summary_seerr_discover_movies``: ``id`` is the top-level
+    # TMDB id the upstream row actually carries. Byte-identical
+    # literal to ``cmd_upcoming_movies`` / ``cmd_trending`` because
+    # the per-row projection is the same (same envelope, same item
+    # shape).
     columns = [
+        "id",
         "title",
         "mediaType",
         "releaseDate",
-        "mediaInfo.tmdbId",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -1191,15 +1191,15 @@ def cmd_discover_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="discover-tv",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_seerr_discover_tv``: nested ``mediaInfo.tmdbId`` is
-    # resolved via dot-path traversal in ``_row_from_mapping``.
-    # Byte-identical literal to ``cmd_discover_movies`` because the
-    # per-row projection is the same (same envelope, same item shape).
+    # ``_summary_seerr_discover_tv``: ``id`` is the top-level TVDB
+    # id the upstream row actually carries. Byte-identical literal
+    # to ``cmd_discover_movies`` because the per-row projection is
+    # the same (same envelope, same item shape).
     columns = [
+        "id",
         "title",
         "mediaType",
         "releaseDate",
-        "mediaInfo.tmdbId",
     ]
     return _emit(payload, args, columns=columns)
 

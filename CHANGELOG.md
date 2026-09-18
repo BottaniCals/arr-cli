@@ -63,6 +63,32 @@ within the pre-1.0 contract documented in `README.md`.
   still on the wire). See
   `seerr-search-id-field` in the bug review for the full
   rationale and live-API evidence.
+- `seerr trending`, `seerr upcoming-movies`, `seerr upcoming-tv`,
+  `seerr discover-movies`, `seerr discover-tv` -- the curated
+  summary now projects the top-level `id` field the upstream
+  `GET /api/v1/discover/{trending,movies/upcoming,tv/upcoming,movies,tv}`
+  payloads actually carry, instead of fabricating a nested
+  `mediaInfo: {"tmdbId": 0}` placeholder for every row whose
+  upstream payload lacks the nested `mediaInfo` envelope. The
+  same defensive-else branch existed in five sibling renderers
+  after PR #41 fixed it for `seerr search`; live QA on
+  2026-09-18 confirmed 64 of 100 curated rows across the five
+  endpoints rendered the fabricated `tmdbId: 0` (18/20 on
+  `upcoming-tv`, 11/20 on `upcoming-movies`, 9/20 on
+  `discover-movies`, 17/20 on `discover-tv`, 9/20 on
+  `trending`) because upstream never exposed a nested
+  `mediaInfo` envelope for those rows. The historical projection
+  made every curated `tmdbId` field a guaranteed zero, which made
+  the join key unusable downstream. The curated summary is now
+  `{id, title, mediaType, releaseDate}` (movie keys) or
+  `{id, title, mediaType, releaseDate}` sourced from `name` /
+  `firstAirDate` (TV keys); the `--human` table column list
+  mirrors the new shape (`id | title | mediaType | releaseDate`).
+  `--verbose` is unchanged (raw discover envelope still on the
+  wire). Mirrors the field set `seerr search` (PR #41) and
+  `seerr available` (PR #39) project for a consistent mental
+  model across all five `seerr` read endpoints that share the
+  same upstream discover envelope shape.
 
 ### Changed
 

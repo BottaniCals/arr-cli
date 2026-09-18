@@ -1032,8 +1032,20 @@ def _summary_seerr_trending(payload: Any) -> list[dict[str, Any]]:
     media-type positional, so the per-item projection branches on
     each item's ``mediaType``: ``movie`` items use ``title`` /
     ``releaseDate``; ``tv`` items use ``name`` / ``firstAirDate``.
-    ``mediaInfo.tmdbId`` is consistent across both shapes. This
-    differs from :func:`_summary_seerr_search` -- search is not
+
+    The per-item projection surfaces the top-level ``id`` field the
+    upstream payload actually carries. The rows in the operator's
+    Seer ``/api/v1/discover/trending`` response do not expose a
+    nested ``mediaInfo`` envelope -- the TMDB/TVDB id lives at the
+    top level as ``id`` (same convention as :func:`_summary_seerr_search`
+    and :func:`_summary_seerr_available`). The historical fabricated
+    ``{"tmdbId": 0}`` placeholder was misleading because every row
+    was projected as ``tmdbId: 0`` even for hits with well-known
+    ids. Branch on ``mediaType`` so TV rows source their title from
+    ``name`` (TV rows expose ``name`` only, no top-level ``title``)
+    while movie rows source it from ``title``.
+
+    This differs from :func:`_summary_seerr_search` -- search is not
     known to mix media types in a single envelope -- so the
     projections are intentionally **not** byte-identical even
     though the envelopes share the same outer shape.
@@ -1046,16 +1058,10 @@ def _summary_seerr_trending(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        media_info = item.get("mediaInfo")
-        if isinstance(media_info, Mapping):
-            media_info_obj: dict[str, Any] = {
-                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
-            }
-        else:
-            media_info_obj = {"tmdbId": 0}
         is_tv = _safe_get(item, "mediaType", default="") == "tv"
         summaries.append(
             {
+                "id": _safe_get(item, "id", default=None),
                 "title": _safe_get(
                     item, "name" if is_tv else "title", default=None
                 ),
@@ -1065,7 +1071,6 @@ def _summary_seerr_trending(payload: Any) -> list[dict[str, Any]]:
                     "firstAirDate" if is_tv else "releaseDate",
                     default=None,
                 ),
-                "mediaInfo": media_info_obj,
             }
         )
     return summaries
@@ -1078,10 +1083,21 @@ def _summary_seerr_upcoming_movies(payload: Any) -> list[dict[str, Any]]:
     envelope of the shape ``{page, totalPages, totalResults,
     results: [...]}`` -- the same envelope
     :func:`_summary_seerr_trending` consumes -- so the projection is
-    intentionally identical: ``title``, ``mediaType``, ``releaseDate``,
-    ``mediaInfo.tmdbId``. A bare list is unchanged behaviour
-    (defensive against envelope-drift across Seer versions). The
-    only difference from :func:`_summary_seerr_trending` is the
+    intentionally identical: ``id``, ``title``, ``mediaType``,
+    ``releaseDate``. A bare list is unchanged behaviour (defensive
+    against envelope-drift across Seer versions).
+
+    The per-item projection surfaces the top-level ``id`` field the
+    upstream payload actually carries. The rows in the operator's
+    Seer ``/api/v1/discover/movies/upcoming`` response do not
+    expose a nested ``mediaInfo`` envelope -- the TMDB id lives at
+    the top level as ``id`` (same convention as
+    :func:`_summary_seerr_search`). The historical fabricated
+    ``{"tmdbId": 0}`` placeholder was misleading because every row
+    was projected as ``tmdbId: 0`` even for hits with well-known
+    ids.
+
+    The only difference from :func:`_summary_seerr_trending` is the
     dispatch key -- same envelope, same per-item shape, so the
     renderer is byte-identical to keep row-for-row alignment when
     the operator tabulates ``seerr trending`` and ``seerr
@@ -1095,21 +1111,14 @@ def _summary_seerr_upcoming_movies(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        media_info = item.get("mediaInfo")
-        if isinstance(media_info, Mapping):
-            media_info_obj: dict[str, Any] = {
-                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
-            }
-        else:
-            media_info_obj = {"tmdbId": 0}
         summaries.append(
             {
+                "id": _safe_get(item, "id", default=None),
                 "title": _safe_get(item, "title", default=None),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
                     item, "releaseDate", default=None
                 ),
-                "mediaInfo": media_info_obj,
             }
         )
     return summaries
@@ -1124,10 +1133,20 @@ def _summary_seerr_upcoming_tv(payload: Any) -> list[dict[str, Any]]:
     :func:`_summary_seerr_upcoming_movies` consume -- but TV items
     use ``name`` / ``firstAirDate`` rather than ``title`` /
     ``releaseDate``, so the per-item projection here is **not**
-    byte-identical to :func:`_summary_seerr_upcoming_movies`.
-    ``mediaType`` and ``mediaInfo.tmdbId`` are unchanged. A bare
+    byte-identical to :func:`_summary_seerr_upcoming_movies``.
+    ``mediaType`` and the top-level ``id`` are unchanged. A bare
     list is unchanged behaviour (defensive against envelope-drift
     across Seer versions).
+
+    The per-item projection surfaces the top-level ``id`` field the
+    upstream payload actually carries. The rows in the operator's
+    Seer ``/api/v1/discover/tv/upcoming`` response do not expose
+    a nested ``mediaInfo`` envelope -- the TVDB id lives at the
+    top level as ``id`` (same convention as
+    :func:`_summary_seerr_search`). The historical fabricated
+    ``{"tmdbId": 0}`` placeholder was misleading because every row
+    was projected as ``tmdbId: 0`` even for hits with well-known
+    ids.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1137,21 +1156,14 @@ def _summary_seerr_upcoming_tv(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        media_info = item.get("mediaInfo")
-        if isinstance(media_info, Mapping):
-            media_info_obj: dict[str, Any] = {
-                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
-            }
-        else:
-            media_info_obj = {"tmdbId": 0}
         summaries.append(
             {
+                "id": _safe_get(item, "id", default=None),
                 "title": _safe_get(item, "name", default=None),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
                     item, "firstAirDate", default=None
                 ),
-                "mediaInfo": media_info_obj,
             }
         )
     return summaries
@@ -1164,14 +1176,25 @@ def _summary_seerr_discover_movies(payload: Any) -> list[dict[str, Any]]:
     the shape ``{page, totalPages, totalResults, results: [...]}``
     -- the same envelope :func:`_summary_seerr_trending` /
     :func:`_summary_seerr_upcoming_movies` consume -- so the
-    projection is intentionally identical: ``title``,
-    ``mediaType``, ``releaseDate``, ``mediaInfo.tmdbId``. A bare
-    list is unchanged behaviour (defensive against envelope-drift
-    across Seer versions). The renderer is byte-identical to
-    :func:`_summary_seerr_upcoming_movies` so the operator's
-    default summary aligns row-for-row when ``seerr
-    upcoming-movies`` and ``seerr discover-movies`` are tabulated
-    together.
+    projection is intentionally identical: ``id``, ``title``,
+    ``mediaType``, ``releaseDate``. A bare list is unchanged
+    behaviour (defensive against envelope-drift across Seer
+    versions).
+
+    The per-item projection surfaces the top-level ``id`` field the
+    upstream payload actually carries. The rows in the operator's
+    Seer ``/api/v1/discover/movies`` response do not expose a
+    nested ``mediaInfo`` envelope -- the TMDB id lives at the top
+    level as ``id`` (same convention as
+    :func:`_summary_seerr_search`). The historical fabricated
+    ``{"tmdbId": 0}`` placeholder was misleading because every row
+    was projected as ``tmdbId: 0`` even for hits with well-known
+    ids.
+
+    The renderer is byte-identical to :func:`_summary_seerr_upcoming_movies`
+    so the operator's default summary aligns row-for-row when
+    ``seerr upcoming-movies`` and ``seerr discover-movies`` are
+    tabulated together.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1181,21 +1204,14 @@ def _summary_seerr_discover_movies(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        media_info = item.get("mediaInfo")
-        if isinstance(media_info, Mapping):
-            media_info_obj: dict[str, Any] = {
-                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
-            }
-        else:
-            media_info_obj = {"tmdbId": 0}
         summaries.append(
             {
+                "id": _safe_get(item, "id", default=None),
                 "title": _safe_get(item, "title", default=None),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
                     item, "releaseDate", default=None
                 ),
-                "mediaInfo": media_info_obj,
             }
         )
     return summaries
@@ -1210,10 +1226,19 @@ def _summary_seerr_discover_tv(payload: Any) -> list[dict[str, Any]]:
     :func:`_summary_seerr_upcoming_tv` consume -- but TV items use
     ``name`` / ``firstAirDate`` rather than ``title`` /
     ``releaseDate``, so the per-item projection here is **not**
-    byte-identical to :func:`_summary_seerr_discover_movies`.
-    ``mediaType`` and ``mediaInfo.tmdbId`` are unchanged. A bare
+    byte-identical to :func:`_summary_seerr_discover_movies``.
+    ``mediaType`` and the top-level ``id`` are unchanged. A bare
     list is unchanged behaviour (defensive against envelope-drift
     across Seer versions).
+
+    The per-item projection surfaces the top-level ``id`` field the
+    upstream payload actually carries. The rows in the operator's
+    Seer ``/api/v1/discover/tv`` response do not expose a nested
+    ``mediaInfo`` envelope -- the TVDB id lives at the top level as
+    ``id`` (same convention as :func:`_summary_seerr_search`). The
+    historical fabricated ``{"tmdbId": 0}`` placeholder was
+    misleading because every row was projected as ``tmdbId: 0``
+    even for hits with well-known ids.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1223,21 +1248,14 @@ def _summary_seerr_discover_tv(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        media_info = item.get("mediaInfo")
-        if isinstance(media_info, Mapping):
-            media_info_obj: dict[str, Any] = {
-                "tmdbId": _safe_get(media_info, "tmdbId", default=0),
-            }
-        else:
-            media_info_obj = {"tmdbId": 0}
         summaries.append(
             {
+                "id": _safe_get(item, "id", default=None),
                 "title": _safe_get(item, "name", default=None),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
                     item, "firstAirDate", default=None
                 ),
-                "mediaInfo": media_info_obj,
             }
         )
     return summaries
