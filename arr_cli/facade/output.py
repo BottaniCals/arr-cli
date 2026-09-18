@@ -621,10 +621,34 @@ def _summary_jellyfin_now(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_jellyfin_recent(payload: Any) -> list[dict[str, Any]]:
-    """Render a Jellyfin ``recent`` payload as the curated summary."""
+    """Render a Jellyfin ``recent`` payload as the curated summary.
+
+    The ``jellyfin recent`` command requests
+    ``GET /Users/{user_id}/Items?SortBy=DatePlayed&Filters=IsPlayed&includeItemTypes=Movie,Episode``
+    (see :func:`arr_cli.jellyfin.cmd_recent`). The ``includeItemTypes``
+    query parameter is the upstream contract that constrains the
+    envelope's ``Items`` array to played Movies and Episodes -- a
+    user-facing "recently watched" list. When the upstream filter is
+    not honoured (or is mis-applied) the envelope can carry library
+    views (``Type=Folder``) and collections (``Type=BoxSet``) on top
+    of the real played items, which previously leaked into the
+    curated summary as spurious rows.
+
+    To honour the contract defensively, the renderer re-applies the
+    type filter locally: only items whose ``Type`` is one of
+    ``{"Movie", "Episode"}`` are projected. Items with a missing or
+    unexpected ``Type`` are dropped, so a future Jellyfin API drift
+    that introduces another item type (or returns the wrong type for
+    an existing kind) cannot inflate the ``recent`` summary. The
+    filter is intentionally narrow -- the operator-facing semantic of
+    "recently watched" is played Movies and Episodes, and anything
+    else (Folder, BoxSet, Series, Video, MusicVideo, ...) is not a
+    valid row for that command.
+    """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
+    allowed_types = {"Movie", "Episode"}
     return [
         {
             "Name": _safe_get(item, "Name", default=None),
@@ -637,6 +661,7 @@ def _summary_jellyfin_recent(payload: Any) -> list[dict[str, Any]]:
         }
         for item in payload
         if isinstance(item, Mapping)
+        and _safe_get(item, "Type", default=None) in allowed_types
     ]
 
 

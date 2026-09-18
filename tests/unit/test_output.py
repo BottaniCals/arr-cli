@@ -1361,6 +1361,104 @@ class TestSummaryJellyfinRecent(unittest.TestCase):
         )
         self.assertIsNone(rendered[0]["UserData.LastPlayedDate"])
 
+    def test_folder_and_boxset_rows_are_filtered_out(self) -> None:
+        # Regression: when the upstream ``includeItemTypes`` filter is
+        # not honoured, library views (Folder) and collections
+        # (BoxSet) can land in the envelope's ``Items`` array on top
+        # of the real played Movies / Episodes. The renderer re-applies
+        # the type filter so only Movie and Episode rows survive.
+        payload = {
+            "Items": [
+                {"Name": "collections", "Type": "Folder",
+                 "SeriesName": None,
+                 "UserData": {"LastPlayedDate": None}},
+                {"Name": "Disclosure Day (2026)", "Type": "Folder",
+                 "SeriesName": None,
+                 "UserData": {"LastPlayedDate": None}},
+                {"Name": "Jackass - Best and Last (2026)", "Type": "Folder",
+                 "SeriesName": None,
+                 "UserData": {"LastPlayedDate": None}},
+                {"Name": "Masters of the Universe (2026)", "Type": "Folder",
+                 "SeriesName": None,
+                 "UserData": {"LastPlayedDate": None}},
+                {"Name": "Mutiny (2026)", "Type": "Folder",
+                 "SeriesName": None,
+                 "UserData": {"LastPlayedDate": None}},
+                {"Name": "Watched TV Shows", "Type": "BoxSet",
+                 "SeriesName": None,
+                 "UserData": {"LastPlayedDate": None}},
+                {"Name": "Fireheart: The Legend of Tadas Blinda",
+                 "Type": "Movie", "ProductionYear": 2024,
+                 "SeriesName": None,
+                 "UserData": {"LastPlayedDate": "2026-09-01"}},
+                {"Name": "Orders of Magnitude", "Type": "Episode",
+                 "ProductionYear": 2024, "SeriesName": "Cosmos",
+                 "UserData": {"LastPlayedDate": "2026-08-25"}},
+            ],
+            "TotalRecordCount": 8,
+            "StartIndex": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "recent")](payload)
+        names = [row["Name"] for row in rendered]
+        types = [row["Type"] for row in rendered]
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(
+            names,
+            [
+                "Fireheart: The Legend of Tadas Blinda",
+                "Orders of Magnitude",
+            ],
+        )
+        self.assertEqual(types, ["Movie", "Episode"])
+        # No Folder / BoxSet / Series rows survived the filter.
+        self.assertNotIn("Folder", types)
+        self.assertNotIn("BoxSet", types)
+        self.assertNotIn("Series", types)
+
+    def test_non_allowed_types_dropped_in_bare_list(self) -> None:
+        # Same filter logic when the renderer is called with a bare
+        # list (no envelope) -- the defensive filter must apply on
+        # every code path, not only after ``_unwrap_envelope``.
+        payload = [
+            {"Name": "Movie row", "Type": "Movie",
+             "ProductionYear": 2024, "SeriesName": None,
+             "UserData": {"LastPlayedDate": "2026-09-01"}},
+            {"Name": "Episode row", "Type": "Episode",
+             "ProductionYear": 2024, "SeriesName": "Cosmos",
+             "UserData": {"LastPlayedDate": "2026-08-25"}},
+            {"Name": "Series row", "Type": "Series",
+             "ProductionYear": 2020, "SeriesName": None,
+             "UserData": {"LastPlayedDate": "2026-07-01"}},
+            {"Name": "MusicVideo row", "Type": "MusicVideo",
+             "ProductionYear": 2020, "SeriesName": None,
+             "UserData": {"LastPlayedDate": "2026-06-01"}},
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "recent")](payload)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(
+            [row["Type"] for row in rendered],
+            ["Movie", "Episode"],
+        )
+
+    def test_items_without_type_are_dropped(self) -> None:
+        # Items that arrive without a ``Type`` field are dropped
+        # defensively -- they cannot be validated against the
+        # Movie/Episode contract and a stray row would re-introduce
+        # the original symptom (8 rows where the API has 2).
+        payload = [
+            {"Name": "Real Movie", "Type": "Movie",
+             "ProductionYear": 2024, "SeriesName": None,
+             "UserData": {"LastPlayedDate": "2026-09-01"}},
+            {"Name": "Typeless mystery row",
+             "ProductionYear": 2024, "SeriesName": None,
+             "UserData": {"LastPlayedDate": "2026-08-25"}},
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "recent")](payload)
+        self.assertEqual(len(rendered), 1)
+        names = [row["Name"] for row in rendered]
+        self.assertEqual(names, ["Real Movie"])
+        self.assertNotIn("Typeless mystery row", names)
+
 
 class TestSummaryJellyfinFavorites(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("jellyfin", "favorites")]`` matches the spec."""
