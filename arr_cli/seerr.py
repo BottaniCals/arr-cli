@@ -3,7 +3,7 @@
 This module is the Seer entry point for the ``arr-cli`` MVP.
 Seer is the unified fork of Overseerr and Jellyseerr; the CLI
 talks to whatever Seer instance the operator points it at via
-``arr.conf``. It exposes twelve read-only commands against a live
+``arr.conf``. It exposes thirteen read-only commands against a live
 Seer instance:
 
 * ``requests``                       -- ``GET /api/v1/request``                 (REQ-10 AC1)
@@ -89,6 +89,24 @@ Seer instance:
                                         of ``discover-movies`` so future drift
                                         between the two discover commands
                                         fails the unit suite immediately.
+* ``genres [MEDIA_TYPE]``               -- ``GET /api/v1/genres/<movie|tv>``;
+                                        returns the TMDB genre list as
+                                        ``[{id, name}, ...]`` so the operator
+                                        can map a friendly genre name (e.g.
+                                        ``Sci-Fi``) to a TMDB integer id
+                                        (e.g. ``878``) before passing it to
+                                        ``discover-movies --genre`` /
+                                        ``discover-tv --genre``. Optional
+                                        positional ``MEDIA_TYPE`` (``movie``
+                                        / ``tv``; default ``movie``) mirrors
+                                        ``trending``'s positional-with-default
+                                        pattern. Path / method / response
+                                        shape documented per AGENTS.md §1
+                                        "Seer note"; the canonical TMDB
+                                        genre endpoint is stable across
+                                        Overseerr → Jellyseerr → Seer, so
+                                        the implementation matches the
+                                        upstream spec by construction.
 
 Per the MVP design, every command is a thin wrapper that:
 
@@ -167,6 +185,8 @@ __all__ = [
     "cmd_upcoming_tv",
     "cmd_discover_movies",
     "cmd_discover_tv",
+    "cmd_genres",
+    "seerr_genres",
     # Path constants exposed so tests can assert against the exact
     # strings for each endpoint.
     "USER_ME_PATH",
@@ -175,6 +195,8 @@ __all__ = [
     "UPCOMING_TV_PATH",
     "DISCOVER_MOVIES_PATH",
     "DISCOVER_TV_PATH",
+    "GENRES_MOVIE_PATH",
+    "GENRES_TV_PATH",
 ]
 
 
@@ -246,10 +268,136 @@ DISCOVER_MOVIES_PATH = "/api/v1/discover/movies"
 DISCOVER_TV_PATH = "/api/v1/discover/tv"
 
 
+#: Path for the movie genres endpoint.
+#: ``GET /api/v1/genres/movie`` -- the canonical TMDB-backed genre
+#: list for movies. Stable across Overseerr → Jellyseerr → Seer;
+#: the live ``/api-docs/swagger-ui-init.js`` OpenAPI spec on the
+#: operator's instance is the source of truth per AGENTS.md §1
+#: "Seer note". Returns ``[{id: int, name: str}, ...]`` (no
+#: envelope wrapping).
+GENRES_MOVIE_PATH = "/api/v1/genres/movie"
+
+
+#: Path for the TV genres endpoint.
+#: ``GET /api/v1/genres/tv`` -- the canonical TMDB-backed genre
+#: list for TV. Stable across Overseerr → Jellyseerr → Seer;
+#: the live ``/api-docs/swagger-ui-init.js`` OpenAPI spec on the
+#: operator's instance is the source of truth per AGENTS.md §1
+#: "Seer note". Returns ``[{id: int, name: str}, ...]`` (no
+#: envelope wrapping).
+GENRES_TV_PATH = "/api/v1/genres/tv"
+
+
 # Module-level logger so the documented DEBUG probe records
 # (design.md "Pre-locking Verifications -- Seerr") surface through
 # the standard ``logging`` configuration without a private handler.
 _logger = logging.getLogger("arr_cli.seerr")
+
+
+# ---------------------------------------------------------------------------
+# Module-level HTTP helpers
+# ---------------------------------------------------------------------------
+
+
+def seerr_genres(
+    media_type: str,
+    args: argparse.Namespace,
+    cfg: ServiceConfig,
+) -> list[Any]:
+    """Return the TMDB genre list for ``media_type`` as ``[{id, name}, ...]``.
+
+    Thin module-level HTTP helper that lives next to the other
+    module-level ``seerr_*`` helpers (e.g. the ``cmd_*`` handlers
+    in this module) and follows the same per-call ``_get`` pattern.
+    Dispatches to :data:`GENRES_MOVIE_PATH` or
+    :data:`GENRES_TV_PATH` based on ``media_type`` and lets the
+    facade errors propagate unchanged so
+    :func:`arr_cli.facade.cli_common.main_wrapper` can translate
+    them into the documented ``service=seerr op=... status=...``
+    stderr line + exit code.
+
+    Parameters
+    ----------
+    media_type:
+        One of ``"movie"`` or ``"tv"``. The argparse ``choices=`` on
+        the ``genres`` subparser already rejects anything else with
+        ``SystemExit(2)`` at parse time, but the function keeps a
+        defensive guard so it can be reused safely from non-CLI
+        entry points (tests, future library consumers).
+    args:
+        The parsed argparse namespace; forwarded to :func:`_get`
+        so the documented ``--connect-timeout`` / ``--read-timeout``
+        / ``--debug`` flags are honored consistently with the
+        other seerr handlers.
+    cfg:
+        The loaded :class:`ServiceConfig`; forwarded to
+        :func:`_get` so auth (``X-Api-Key``) is injected by the
+        facade per REQ-2 AC3.
+
+    Returns
+    -------
+    list[Any]
+        The verbatim JSON list returned by the upstream endpoint,
+        i.e. ``[{id: int, name: str}, ...]``. The renderer in
+        :func:`arr_cli.facade.output._summary_seerr_genres` projects
+        this list to the curated ``id`` / ``name`` summary shape
+        so the default stdout stays small.
+
+    Raises
+    ------
+    ConfigError
+        When ``media_type`` is not ``"movie"`` or ``"tv"`` -- the
+        facade's :class:`ConfigError` (exit code 1) is the
+        documented shape for client-side validation failures, so
+        the guard raises the same class the other seerr helpers
+        would for a malformed request.
+    """
+    if media_type == "movie":
+        path = GENRES_MOVIE_PATH
+    elif media_type == "tv":
+        path = GENRES_TV_PATH
+    else:
+        raise ConfigError(
+            SERVICE_NAME,
+            "genres",
+            f"{SERVICE_NAME}: media_type must be 'movie' or 'tv'; "
+            f"got {media_type!r}",
+        )
+    # The path-constant format is ``/api/v1/...`` -- absolute, no
+    # concatenation required. If a future variant needs a trailing
+    # path fragment, the facade's percent-encoding policy keeps
+    # user-supplied tokens safe; static literal concatenation is
+    # safe today.
+    # ``op`` carries the documented ``op=`` value surfaced via
+    # :class:`ArrError` so the stderr line reads
+    # ``service=seerr op=genres/<media_type> status=...`` on
+    # failure. Match the convention used by the other seerr
+    # handlers (e.g. ``search`` / ``requests``).
+    payload = _get(
+        path,
+        args,
+        cfg,
+        op=f"genres/{media_type}",
+    )
+    # Defensive unwrap: ``GET /api/v1/genres/<mediaType>`` returns a
+    # bare list (no envelope), but a future Seer version that wraps
+    # the response in ``{results: [...]}`` would still surface as
+    # a list-like payload here. Keep the renderer contract flat
+    # (a list of ``{id, name}``) so the renderer does not have to
+    # know about either shape.
+    if isinstance(payload, Mapping):
+        inner = payload.get("results")
+        if isinstance(inner, list):
+            return inner
+        # Non-``results``-keyed mapping -- fall back to a list of
+        # single-value iterations so the renderer prints the
+        # document rather than swallowing it.
+        return list(payload.values()) if payload else []
+    if isinstance(payload, list):
+        return payload
+    # Bare scalar / ``None`` -- surface as an empty list so the
+    # renderer prints its "no rows" footer rather than crashing.
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -1011,6 +1159,52 @@ def cmd_discover_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     return _emit(payload, args, columns=columns)
 
 
+def cmd_genres(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+    """Seerr ``genres [MEDIA_TYPE]`` -- TMDB genre list as ``[{id, name}, ...]``.
+
+    ``GET /api/v1/genres/<movie|tv>`` returns a bare list of genre
+    documents ``[{id: int, name: str}, ...]`` (no envelope wrapping
+    -- the canonical TMDB genre shape). The renderer is a
+    near-verbatim projection via
+    :func:`arr_cli.facade.output._summary_seerr_genres`; the
+    per-row shape collapses to ``{id, name}`` so the default
+    ``--human`` table is the documented ``Id | Name`` (US-4).
+
+    No filters ride on the query string -- the endpoint is
+    parameter-free on Seer (matching the historical Overseerr /
+    Jellyseerr shape). The CLI surface therefore only exposes:
+
+    * A positional ``MEDIA_TYPE`` with ``choices=("movie", "tv")``
+      and ``default="movie"`` (matches :func:`cmd_trending`'s
+      positional-with-default pattern).
+    * The universal ``--verbose`` / ``--human`` flags from
+      :func:`arr_cli.facade.cli_common.universal_parents`.
+
+    Defensive ``media_type`` validation lives in
+    :func:`seerr_genres` so the helper is reusable from non-CLI
+    callers; this handler lets the facade :class:`ConfigError`
+    propagate unchanged (exit code 1).
+
+    Non-2xx responses raise :class:`HttpError(exit_code=4)` via
+    :func:`transport.get`, which :func:`main_wrapper` surfaces as
+    a structured
+    ``service=seerr op=genres/<media_type> status=<code>`` stderr
+    line; the operator's diagnostic tools keep working unchanged.
+
+    Authentication is handled transparently by the transport
+    layer (``X-Api-Key`` header per REQ-2 AC3); this handler
+    does not inspect or echo the credential.
+    """
+    payload = seerr_genres(args.genres_type, args, cfg)
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_seerr_genres``: ``id`` and ``name`` are
+    # top-level keys on every item, so no dot-path traversal is
+    # needed. Mirrors the ``cmd_requests`` column-list pattern
+    # (no nested objects in the summary shape).
+    columns = ["id", "name"]
+    return _emit(payload, args, columns=columns)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
@@ -1040,6 +1234,7 @@ _DISPATCH = {
     "upcoming-tv": cmd_upcoming_tv,
     "discover-movies": cmd_discover_movies,
     "discover-tv": cmd_discover_tv,
+    "genres": cmd_genres,
 }
 
 
@@ -1075,15 +1270,18 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         prog=SERVICE_NAME,
         description=(
             "Read-only CLI for Seer (the unified Overseerr + "
-            "Jellyseerr fork). Twelve commands expose the "
+            "Jellyseerr fork). Thirteen commands expose the "
             "household request queue, request summary counts, "
             "multi-source search, what's already available in "
             "the library, the current authenticated user, "
             "per-show TV details, per-movie details "
             "(optionally with Rotten Tomatoes ratings), the "
             "live trending-discover feed, upcoming movie "
-            "releases / TV premieres, and the general "
-            "discover-by-genre / sort / language browse."
+            "releases / TV premieres, the general "
+            "discover-by-genre / sort / language browse, "
+            "and the TMDB genre list (for mapping a "
+            "friendly genre name to the integer id the "
+            "discover filters expect)."
         ),
     )
     subparsers = parser.add_subparsers(
@@ -1426,6 +1624,30 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         help=(
             "page number forwarded as the ?page=<N> query "
             "parameter (omit = first page)"
+        ),
+    )
+
+    genres = subparsers.add_parser(
+        "genres",
+        help=(
+            "list TMDB genres as [{id, name}, ...] "
+            "(GET /api/v1/genres/<movie|tv>) so the operator "
+            "can look up the integer id expected by "
+            "discover-movies --genre / discover-tv --genre"
+        ),
+        parents=universal_parents(),
+        add_help=False,
+    )
+    genres.add_argument(
+        "genres_type",
+        nargs=argparse.OPTIONAL,
+        default="movie",
+        choices=("movie", "tv"),
+        metavar="MEDIA_TYPE",
+        help=(
+            "optional media-type filter "
+            "(movie or tv; default movie). "
+            "Argparse rejects anything else with exit code 2."
         ),
     )
 

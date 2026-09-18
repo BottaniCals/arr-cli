@@ -1106,6 +1106,54 @@ def _summary_seerr_discover_tv(payload: Any) -> list[dict[str, Any]]:
     return summaries
 
 
+def _summary_seerr_genres(payload: Any) -> list[dict[str, Any]]:
+    """Render a Seerr ``genres [MEDIA_TYPE]`` payload as the curated summary.
+
+    ``GET /api/v1/genres/<movie|tv>`` returns a bare list of
+    ``{id: int, name: str}`` documents (no envelope wrapping) --
+    the canonical TMDB genre shape. The projection is the
+    passthrough ``{id, name}`` pair per item so the default
+    ``--human`` table renders as the documented ``Id | Name``
+    (US-4). The handler's ``columns = ["id", "name"]`` literal in
+    :mod:`arr_cli.seerr` aligns row-for-row with this summary
+    shape (no nested objects, no dot-path traversal).
+
+    Defensive input handling mirrors the other seerr renderers:
+
+    * A bare list of mappings is the canonical input.
+    * A single mapping is treated as a one-row degenerate list so
+      a future Seer release that returns ``{results: [...]}`` (or
+      similar envelope) does not crash the renderer. Empty
+      mapping maps to ``[]``.
+    * Non-list / non-mapping payloads (scalar / ``None``) map to
+      ``[]`` so the renderer prints its "no rows" footer rather
+      than a stack trace.
+
+    Items that are not mappings (e.g. raw id ints from a future
+    schema change) are dropped without raising so the summary
+    shape stays homogeneous.
+    """
+    if isinstance(payload, Mapping):
+        # Treat a single mapping as a one-row degenerate list so a
+        # future envelope-shaped variant (``{results: [...]}`` or
+        # ``{genres: [...]}``) does not crash the renderer. Empty
+        # mapping maps to ``[]``.
+        payload = [payload] if payload else []
+    if not isinstance(payload, list):
+        return []
+    summaries: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        summaries.append(
+            {
+                "id": _safe_get(item, "id", default=None),
+                "name": _safe_get(item, "name", default=None),
+            }
+        )
+    return summaries
+
+
 def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
     """Render a Seerr ``tv <id>`` payload as the curated summary.
 
@@ -1358,6 +1406,7 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("seerr", "upcoming-tv"): _summary_seerr_upcoming_tv,
     ("seerr", "discover-movies"): _summary_seerr_discover_movies,
     ("seerr", "discover-tv"): _summary_seerr_discover_tv,
+    ("seerr", "genres"): _summary_seerr_genres,
     ("maintainerr", "pending"): _summary_maintainerr_pending,
 }
 

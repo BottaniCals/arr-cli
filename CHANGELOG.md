@@ -9,6 +9,17 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Added
 
+- `seerr genres [MEDIA_TYPE]` -- TMDB genre list as `[{id, name}, ...]`,
+  fetched from `GET /api/v1/genres/<movie|tv>` so the operator can map
+  a friendly genre name (e.g. `Sci-Fi`) to its TMDB integer id (e.g.
+  `878`) before passing it to `seerr discover-movies --genre` /
+  `seerr discover-tv --genre`. Optional positional `MEDIA_TYPE`
+  (`movie` / `tv`; default `movie`) mirrors `seerr trending`'s
+  positional-with-default pattern; argparse rejects any other value
+  with exit code 2 at parse time. Default summary projects each row
+  to `{id, name}`; `--verbose` emits the verbatim JSON list;
+  `--human` renders the documented `Id | Name` tabular view. Pairs
+  with the new `seerr discover-movies` / `seerr discover-tv` filters.
 - `seerr discover-movies` -- filterable movie discover against
   `GET /api/v1/discover/movies`. Defaults `sortBy=popularity.desc`,
   `language=en-US`, `page=1`. Optional filters `--genre <id>` (int),
