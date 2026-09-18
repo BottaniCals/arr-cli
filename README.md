@@ -195,7 +195,7 @@ passed.
 > it requires confirming `/api/rules` against the operator's live
 > `/api/swagger`.
 
-### 4.5 Seer (`seerr` — 12 commands)
+### 4.5 Seer (`seerr` — 13 commands)
 
 | Command                   | HTTP | Path                                    | Notes                                                                            |
 | ------------------------- | :--: | --------------------------------------- | -------------------------------------------------------------------------------- |
@@ -211,6 +211,7 @@ passed.
 | `seerr upcoming-tv`                | GET  | `/api/v1/discover/tv/upcoming?page=<…>&language=<…>`      | Paginated upcoming TV premieres. Universal flags only; no positional media type (fixed at command level). |
 | `seerr discover-movies`            | GET  | `/api/v1/discover/movies?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>` | Filterable movie discover; defaults `sortBy=popularity.desc`, `language=en-US`, `page=1`. Optional `--genre <id>` (int), `--sort <sortBy>`, `--language <code>`, `--page <n>`. `--limit` is client-side only (caps the renderer, never sent on the wire). |
 | `seerr discover-tv`                | GET  | `/api/v1/discover/tv?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>`      | Filterable TV discover; same flag surface as `discover-movies`. Structural twin; same defaults. `--limit` is client-side only. |
+| `seerr genres [MEDIA_TYPE]`        | GET  | `/api/v1/genres/<movie\|tv>`            | TMDB genre list as `[{id, name}, ...]`. `MEDIA_TYPE ∈ {movie, tv}`, default `movie` (matches `seerr trending`'s positional-with-default pattern); argparse rejects any other value with exit code 2. Pair with `seerr discover-movies --genre` / `seerr discover-tv --genre` to map a friendly genre name (e.g. `Sci-Fi`) to its TMDB integer id (e.g. `878`). |
 
 > **Upstream: Seer.** The `seerr` CLI targets
 > [Seer](https://github.com/seerr-team/seerr), the unified fork of
