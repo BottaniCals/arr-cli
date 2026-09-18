@@ -224,6 +224,22 @@ within the pre-1.0 contract documented in `README.md`.
   fails the unit suite immediately. Trending / upcoming / search /
   `genres` are unaffected -- they already followed the omit-when-default
   rule.
+- `jellyfin favorites` summary now unwraps the v12
+  `{Items, TotalRecordCount, StartIndex}` envelope instead of
+  iterating the envelope as if it were a list. The renderer's
+  previous shape matched the pre-v12 flat list and dropped every
+  well-formed v12 response to `[]`; the handler fix above proved
+  correct against the wire (verified via `--verbose` and direct
+  probe), but the user-visible default summary was still empty
+  for every invocation. The renderer now mirrors the
+  `_summary_seerr_search` envelope-unwrap pattern
+  (`payload = payload.get("Items")`) so a bare list and an
+  envelope are both rendered as the curated `{Name, Type,
+  ProductionYear, SeriesName}` projection. A new
+  `TestSummaryJellyfinFavorites::test_envelope_with_items_is_unwrapped`
+  in `tests/unit/test_output.py` feeds the renderer the documented
+  envelope shape and asserts the items surface, so a regression to
+  the pre-v12 flat-list assumption fails the unit suite immediately.
 
 ### Breaking
 

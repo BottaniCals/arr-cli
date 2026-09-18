@@ -591,7 +591,15 @@ def _summary_jellyfin_recent(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_jellyfin_favorites(payload: Any) -> list[dict[str, Any]]:
-    """Render a Jellyfin ``favorites`` payload as the curated summary."""
+    """Render a Jellyfin ``favorites`` payload as the curated summary.
+
+    ``GET /Users/{userId}/Items?Filters=IsFavorite`` returns a paginated
+    envelope of the shape ``{Items: [...], TotalRecordCount: N, StartIndex: 0}``;
+    iterate ``Items`` so the default summary is non-empty when the envelope
+    is well-formed. A bare list is unchanged behaviour.
+    """
+    if isinstance(payload, Mapping):
+        payload = payload.get("Items")
     if not isinstance(payload, list):
         return []
     return [

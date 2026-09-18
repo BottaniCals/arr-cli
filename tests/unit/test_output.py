@@ -1305,6 +1305,32 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
             [],
         )
 
+    def test_envelope_with_items_is_unwrapped(self) -> None:
+        payload = {
+            "Items": [
+                {
+                    "Name": "Fireheart",
+                    "Type": "Movie",
+                    "ProductionYear": 2011,
+                    "SeriesName": None,
+                }
+            ],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "favorites")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "Name": "Fireheart",
+                    "Type": "Movie",
+                    "ProductionYear": 2011,
+                    "SeriesName": None,
+                }
+            ],
+        )
+
 
 class TestSummaryJellyfinResume(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("jellyfin", "resume")]`` matches the spec."""
