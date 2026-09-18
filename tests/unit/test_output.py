@@ -1676,6 +1676,111 @@ class TestSummarySeerrAvailable(unittest.TestCase):
         )
 
 
+class TestSummarySeerrGenres(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "genres")]`` matches the spec.
+
+    The renderer is a passthrough projection of the canonical
+    TMDB ``[{id, name}, ...]`` shape, so the test class focuses on:
+
+    * The happy-path passthrough (rows surface verbatim).
+    * The defensive single-mapping input (one-row degenerate list).
+    * The defensive empty-mapping input (``[]``).
+    * The non-list / non-mapping / ``None`` inputs (``[]``).
+    * Items that are not mappings are dropped without raising.
+    * Missing / malformed ``id`` / ``name`` keys surface as
+      ``None`` so the renderer never crashes on upstream shape
+      drift.
+    """
+
+    def test_genres_movie_shape(self) -> None:
+        payload = [
+            {"id": 28, "name": "Action"},
+            {"id": 12, "name": "Adventure"},
+            {"id": 878, "name": "Science Fiction"},
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "genres")](payload)
+        self.assertEqual(rendered, payload)
+        # The shape contract: each row has exactly ``id`` and
+        # ``name`` -- no nested objects leak into the summary.
+        for row in rendered:
+            self.assertEqual(set(row.keys()), {"id", "name"})
+
+    def test_genres_tv_shape(self) -> None:
+        payload = [
+            {"id": 10759, "name": "Action & Adventure"},
+            {"id": 16, "name": "Animation"},
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "genres")](payload)
+        self.assertEqual(rendered, payload)
+
+    def test_genres_single_mapping_treated_as_one_row_list(self) -> None:
+        """A single mapping input is wrapped into a one-row degenerate list.
+
+        Defensive against a future Seer release that wraps the
+        response in ``{results: [...]}`` (or similar envelope).
+        """
+        payload = {"id": 878, "name": "Science Fiction"}
+        rendered = _SUMMARY_RENDERERS[("seerr", "genres")](payload)
+        self.assertEqual(rendered, [{"id": 878, "name": "Science Fiction"}])
+
+    def test_genres_empty_mapping_returns_empty_list(self) -> None:
+        rendered = _SUMMARY_RENDERERS[("seerr", "genres")]({})
+        self.assertEqual(rendered, [])
+
+    def test_genres_none_returns_empty_list(self) -> None:
+        rendered = _SUMMARY_RENDERERS[("seerr", "genres")](None)
+        self.assertEqual(rendered, [])
+
+    def test_genres_scalar_returns_empty_list(self) -> None:
+        # Bare scalar / non-list payload is treated as no rows so
+        # the renderer prints its "no rows" footer rather than a
+        # stack trace.
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "genres")]("nope"),
+            [],
+        )
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "genres")](42),
+            [],
+        )
+
+    def test_genres_empty_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("seerr", "genres")]([]),
+            [],
+        )
+
+    def test_genres_non_mapping_items_dropped_silently(self) -> None:
+        """Items that are not ``Mapping`` are dropped without raising.
+
+        Defensive against a future schema change that mixes raw
+        id integers with full genre documents in the same list
+        (e.g. ``[28, {"id": 12, "name": "Adventure"}]``). The
+        renderer drops the integer without raising so the summary
+        shape stays homogeneous.
+        """
+        payload = [
+            28,
+            "Action",
+            {"id": 12, "name": "Adventure"},
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "genres")](payload)
+        self.assertEqual(rendered, [{"id": 12, "name": "Adventure"}])
+
+    def test_genres_missing_keys_surface_as_none(self) -> None:
+        """Missing ``id`` / ``name`` keys surface as ``None`` (defensive)."""
+        payload = [{"id": 28}, {"name": "Adventure"}, {}]
+        rendered = _SUMMARY_RENDERERS[("seerr", "genres")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {"id": 28, "name": None},
+                {"id": None, "name": "Adventure"},
+                {"id": None, "name": None},
+            ],
+        )
+
+
 class TestSummarySeerrTv(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("seerr", "tv")]`` matches the spec."""
 
@@ -2323,6 +2428,12 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "mediaType": "tv",
                 "releaseDate": "2024-01-01",
                 "mediaInfo": {"tmdbId": 999},
+            }
+        ],
+        ("seerr", "genres"): [
+            {
+                "id": 28,
+                "name": "Action",
             }
         ],
     }

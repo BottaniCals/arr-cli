@@ -103,8 +103,8 @@ class TestSeerrModule(unittest.TestCase):
         parser = build_seerr_parser()
         self.assertIsInstance(parser, argparse.ArgumentParser)
 
-    def test_seerr_has_twelve_commands(self) -> None:
-        """The subparser exposes exactly the twelve documented Seerr commands."""
+    def test_seerr_has_thirteen_commands(self) -> None:
+        """The subparser exposes exactly the thirteen documented Seerr commands."""
         from arr_cli.seerr import build_seerr_parser
 
         parser = build_seerr_parser()
@@ -128,9 +128,10 @@ class TestSeerrModule(unittest.TestCase):
                 "upcoming-tv",
                 "discover-movies",
                 "discover-tv",
+                "genres",
             },
         )
-        self.assertEqual(len(subparsers_action.choices), 12)
+        self.assertEqual(len(subparsers_action.choices), 13)
 
     def test_dispatch_table_keys(self) -> None:
         """``_dispatch`` maps every command name to a callable handler."""
@@ -149,6 +150,7 @@ class TestSeerrModule(unittest.TestCase):
             "upcoming-tv",
             "discover-movies",
             "discover-tv",
+            "genres",
         }
         # Inspect the private dispatch table directly so we cover
         # the registration contract without going through argparse.
@@ -4221,6 +4223,439 @@ class TestCmdDiscoverTv(unittest.TestCase):
                         f"{header_line!r}"
                     ),
                 )
+
+
+class TestCmdGenres(unittest.TestCase):
+    """Regression tests pinning the endpoint, default media type, and
+    summary shape for ``cmd_genres``.
+
+    Seer's genre list endpoints are ``GET /api/v1/genres/movie``
+    and ``GET /api/v1/genres/tv``. Each returns a bare list of
+    ``{id: int, name: str}`` documents (no envelope wrapping) --
+    the canonical TMDB genre shape. The renderer in
+    :func:`arr_cli.facade.output._summary_seerr_genres` projects
+    the list to a passthrough ``{id, name}`` summary so the
+    default ``--human`` table renders as ``Id | Name``.
+
+    CLI surface:
+
+    * A positional ``MEDIA_TYPE`` (``movie`` / ``tv``) with
+      ``default="movie"`` so ``seerr genres`` and ``seerr genres
+      movie`` both call ``/api/v1/genres/movie``. ``choices=``
+      rejects any other value at parse time with
+      ``SystemExit(2)``.
+    * No query string filters ride the wire (the endpoint is
+      parameter-free on Seer).
+    * The universal ``--verbose`` / ``--human`` flags from
+      :func:`arr_cli.facade.cli_common.universal_parents`.
+    """
+
+    MOVIE_PAYLOAD: list[dict[str, Any]] = [
+        {"id": 28, "name": "Action"},
+        {"id": 12, "name": "Adventure"},
+        {"id": 16, "name": "Animation"},
+        {"id": 35, "name": "Comedy"},
+        {"id": 80, "name": "Crime"},
+        {"id": 878, "name": "Science Fiction"},
+    ]
+
+    TV_PAYLOAD: list[dict[str, Any]] = [
+        {"id": 10759, "name": "Action & Adventure"},
+        {"id": 16, "name": "Animation"},
+        {"id": 35, "name": "Comedy"},
+        {"id": 9648, "name": "Mystery"},
+    ]
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def _make_args(self, **overrides: Any) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``genres`` subparser defaults."""
+        base: dict[str, Any] = {
+            "config": None,
+            "debug": False,
+            "quiet": False,
+            "human": False,
+            "verbose": False,
+            "connect_timeout": 5.0,
+            "read_timeout": 30.0,
+            "retry": 0,
+            "deadline": None,
+            "limit": 20,
+            "command": "genres",
+            "genres_type": "movie",
+        }
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    # ------------------------------------------------------------------ 4.1.1
+    def test_cmd_genres_dispatch_table_registration(self) -> None:
+        """``cmd_genres`` is registered in ``_DISPATCH`` and exported via ``__all__``."""
+        import arr_cli.seerr as seerr
+
+        # Dispatch table entry points to a callable handler.
+        self.assertIn("genres", seerr._DISPATCH)
+        self.assertTrue(
+            callable(seerr._DISPATCH["genres"]),
+            msg="cmd_genres is not callable",
+        )
+        # Public surface: the handler, the module-level helper, and
+        # both path constants are exported so tests can assert
+        # against the literals.
+        self.assertIn("cmd_genres", seerr.__all__)
+        self.assertIn("seerr_genres", seerr.__all__)
+        self.assertIn("GENRES_MOVIE_PATH", seerr.__all__)
+        self.assertIn("GENRES_TV_PATH", seerr.__all__)
+        self.assertEqual(
+            seerr.GENRES_MOVIE_PATH, "/api/v1/genres/movie"
+        )
+        self.assertEqual(seerr.GENRES_TV_PATH, "/api/v1/genres/tv")
+
+    # ------------------------------------------------------------------ 4.1.2
+    def test_seerr_genres_default_hits_movie_endpoint(self) -> None:
+        """``seerr genres`` (no args) hits ``/api/v1/genres/movie`` (the documented default).
+
+        Pins US-1 AC1 ("WHEN I run ``seerr genres``, THE SYSTEM SHALL
+        call ``GET /api/v1/genres/movie``") and US-2 AC3 ("WHEN I
+        omit the positional argument, THE SYSTEM SHALL default to
+        movie").
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/movie",
+                json=self.MOVIE_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "genres"]
+            )
+            self.assertEqual(exit_code, 0)
+            # The single registered mock fired, so the path was
+            # ``/api/v1/genres/movie`` (the default). Any other path
+            # would have left the mock unmatched and surfaced a
+            # connection error.
+            self.assertEqual(len(rsps.calls), 1)
+
+    # ------------------------------------------------------------------ 4.1.3
+    def test_seerr_genres_explicit_movie_hits_movie_endpoint(self) -> None:
+        """``seerr genres movie`` hits ``/api/v1/genres/movie`` (parity with the default).
+
+        Pins US-2 AC3 ("WHEN I run ``seerr genres movie`` explicitly,
+        THE SYSTEM SHALL also call the movie endpoint -- parity
+        with the default").
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/movie",
+                json=self.MOVIE_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "genres", "movie"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    # ------------------------------------------------------------------ 4.1.4
+    def test_seerr_genres_tv_hits_tv_endpoint(self) -> None:
+        """``seerr genres tv`` hits ``/api/v1/genres/tv``.
+
+        Pins US-2 AC1 ("WHEN I run ``seerr genres tv``, THE SYSTEM
+        SHALL call ``GET /api/v1/genres/tv``").
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/tv",
+                json=self.TV_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "genres", "tv"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+
+    # ------------------------------------------------------------------ 4.1.5
+    def test_seerr_genres_invalid_media_type_rejected_at_parse_time(
+        self,
+    ) -> None:
+        """Argparse rejects ``seerr genres <other>`` at parse time (US-2 AC4).
+
+        ``choices=`` validation runs at parse time and triggers
+        argparse's ``error()`` path. ``main_wrapper`` translates
+        that ``SystemExit(2)`` into a :class:`ConfigError` so the
+        operator sees the documented exit code ``1`` (AGENTS.md §6
+        "ConfigError -- malformed CLI input") and a structured
+        ``service=config op=parse message=...`` stderr line. The
+        transport layer is never reached, so the registered mock
+        stays unfired. Mirrors
+        :func:`TestCmdTrending::test_seerr_trending_invalid_media_type_rejected_at_parse_time`.
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "genres", "bogus",
+                    ]
+                )
+            self.assertEqual(exit_code, 1)
+            self.assertEqual(len(rsps.calls), 0)
+            self.assertEqual(stdout_buf.getvalue(), "")
+            # Argparse's ``error()`` writes its usage line, then
+            # ``main_wrapper`` appends the structured
+            # ``service=config op=parse ...`` follow-up line.
+            self.assertIn(
+                "service=config op=parse",
+                stderr_buf.getvalue(),
+                msg=(
+                    "expected structured parse-error stderr line; "
+                    f"got {stderr_buf.getvalue()!r}"
+                ),
+            )
+
+    # ------------------------------------------------------------------ 4.1.6
+    def test_seerr_genres_verbose_emits_verbatim_json(self) -> None:
+        """``seerr genres --verbose`` emits the verbatim JSON list (US-3 AC1)."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/movie",
+                json=self.MOVIE_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "genres", "--verbose",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            # ``--verbose`` bypasses the summary renderer, so
+            # stdout carries the raw list verbatim. Decode + spot
+            # check a known row.
+            decoded = json.loads(stdout)
+            self.assertEqual(decoded, self.MOVIE_PAYLOAD)
+            self.assertEqual(decoded[5]["name"], "Science Fiction")
+            self.assertEqual(decoded[5]["id"], 878)
+
+    # ------------------------------------------------------------------ 4.1.7
+    def test_seerr_genres_verbose_tv_emits_verbatim_json(self) -> None:
+        """``seerr genres tv --verbose`` emits the verbatim TV JSON list (US-3 AC2)."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/tv",
+                json=self.TV_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "genres", "tv", "--verbose",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            decoded = json.loads(stdout)
+            self.assertEqual(decoded, self.TV_PAYLOAD)
+            self.assertEqual(decoded[0]["name"], "Action & Adventure")
+
+    # ------------------------------------------------------------------ 4.1.8
+    def test_seerr_genres_default_emits_id_name_summary(self) -> None:
+        """``seerr genres`` default emits the curated ``id`` / ``name`` summary shape.
+
+        Pins the contract between :func:`cmd_genres` and
+        :func:`arr_cli.facade.output._summary_seerr_genres`: the
+        default stdout is the curated ``[{id, name}, ...]`` shape,
+        not the verbatim upstream payload.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/movie",
+                json=self.MOVIE_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "genres"]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            # Summary is JSON-serialised; each row exposes ``id``
+            # and ``name`` only -- the upstream keys surface
+            # verbatim because the renderer is a passthrough
+            # projection.
+            decoded = json.loads(stdout)
+            self.assertEqual(len(decoded), len(self.MOVIE_PAYLOAD))
+            for row in decoded:
+                self.assertEqual(set(row.keys()), {"id", "name"})
+            self.assertEqual(decoded[5]["id"], 878)
+            self.assertEqual(decoded[5]["name"], "Science Fiction")
+
+    # ------------------------------------------------------------------ 4.1.9
+    def test_seerr_genres_human_renders_id_name_header(self) -> None:
+        """``seerr genres --human`` renders the ``Id | Name`` tabular view (US-4 AC1).
+
+        The handler's ``columns = ["id", "name"]`` literal pins the
+        human-mode header; spot-check both columns land on the
+        first rendered line.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/movie",
+                json=self.MOVIE_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "genres", "--human",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            header_line = stdout.splitlines()[0]
+            self.assertIn("id", header_line.lower())
+            self.assertIn("name", header_line.lower())
+            # Spot-check a known row lands somewhere on stdout --
+            # the human renderer tabulates the rows beneath the
+            # header.
+            self.assertIn("Science Fiction", stdout)
+            self.assertIn("Action", stdout)
+
+    # ------------------------------------------------------------------ 4.1.10
+    def test_seerr_genres_tv_human_renders_id_name_header(self) -> None:
+        """``seerr genres tv --human`` renders the same tabular format for TV (US-4 AC2)."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/tv",
+                json=self.TV_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf):
+                exit_code = seerr.main(
+                    [
+                        "--config", str(self.cfg_path),
+                        "genres", "tv", "--human",
+                    ]
+                )
+            stdout = stdout_buf.getvalue()
+            self.assertEqual(exit_code, 0)
+            header_line = stdout.splitlines()[0]
+            self.assertIn("id", header_line.lower())
+            self.assertIn("name", header_line.lower())
+            self.assertIn("Action & Adventure", stdout)
+
+    # ------------------------------------------------------------------ 4.1.11
+    def test_seerr_genres_http_error_propagates_exit_four(self) -> None:
+        """HTTP 4xx surfaces through ``main_wrapper`` as exit code 4 (US-1 AC3).
+
+        ``main_wrapper`` translates the facade's
+        :class:`HttpError(exit_code=4)` into a structured
+        ``service=seerr op=/api/v1/genres/movie status=404 ...``
+        stderr line and returns ``4``. The handler itself does
+        not special-case HTTP errors -- the facade propagates
+        them unchanged, then ``main_wrapper`` maps to the
+        documented exit code.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/movie",
+                json={"message": "not found"},
+                status=404,
+            )
+            import arr_cli.seerr as seerr
+
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "genres"]
+                )
+            self.assertEqual(exit_code, 4)
+            # Structured stderr line confirms the facade error
+            # contract (service=seerr op=... status=...).
+            self.assertIn(
+                "service=seerr op=/api/v1/genres/movie status=404",
+                stderr_buf.getvalue(),
+                msg=(
+                    "expected structured HttpError stderr line; "
+                    f"got {stderr_buf.getvalue()!r}"
+                ),
+            )
+
+    # ------------------------------------------------------------------ 4.1.12
+    def test_seerr_genres_module_level_helper_rejects_bad_media_type(
+        self,
+    ) -> None:
+        """``seerr_genres`` defensive guard rejects ``media_type`` outside ``{movie, tv}``.
+
+        Pins the defensive guard in :func:`seerr_genres`: the
+        argparse ``choices=`` already rejects bad values at parse
+        time with ``SystemExit(2)``, but the function keeps its
+        own guard so it can be reused safely from non-CLI entry
+        points. A bad value here surfaces as
+        :class:`ConfigError` (exit code 1).
+        """
+        from arr_cli.facade.errors import ConfigError
+
+        import arr_cli.seerr as seerr
+
+        with self.assertRaises(ConfigError) as exc_ctx:
+            seerr.seerr_genres(
+                "bogus",
+                self._make_args(),
+                None,
+            )
+        self.assertEqual(exc_ctx.exception.exit_code, 1)
 
 
 if __name__ == "__main__":
