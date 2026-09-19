@@ -6,7 +6,7 @@ exposes six read-only commands against a live Radarr instance:
 * ``calendar [start [end]]`` -- ``GET /api/v3/calendar`` (REQ-7 AC1, AC2)
 * ``wanted``                 -- ``GET /api/v3/wanted/missing`` (REQ-7 AC3)
 * ``queue``                  -- ``GET /api/v3/queue`` (REQ-7 AC4)
-* ``recent``                 -- ``GET /api/v3/history/movie`` (REQ-7 AC5)
+* ``recent``                 -- ``GET /api/v3/history?includeMovie=true&pageSize=<N>`` (REQ-7 AC5)
 * ``lookup <term>``          -- ``GET /api/v3/movie/lookup?term=<urlencoded term>`` (REQ-7 AC6)
 * ``movie [<id>]``           -- ``GET /api/v3/movie`` (REQ-2 AC1) or
                                 ``GET /api/v3/movie/{id}`` (REQ-7 AC7, REQ-3 AC2)
@@ -60,6 +60,10 @@ __all__ = [
     # (task 10) can import it from here per the design contract
     # ("Re-export ``_validate_iso_date`` or copy the 6-line validator").
     "_validate_iso_date",
+    # ``_validate_page_size`` is the ``--page-size`` validator for
+    # ``radarr recent``; exported so tests can exercise the bounds
+    # directly without going through the argparse layer.
+    "_validate_page_size",
 ]
 
 
@@ -77,6 +81,16 @@ SERVICE_NAME = "radarr"
 _ISO_DATE_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}Z?)?$"
 )
+
+
+#: Bounds for ``--page-size`` on ``radarr recent`` (the activity-log
+#: cap). The renderer projects the full row anyway so the cap
+#: protects operators from accidentally pulling thousands of rows on
+#: a heavily-used library; the upper bound matches the upstream
+#: page-size ceiling exposed by Radarr's ``/api/v3/history``.
+_PAGE_SIZE_MIN = 1
+_PAGE_SIZE_MAX = 1000
+_PAGE_SIZE_DEFAULT = 10
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +122,40 @@ def _validate_iso_date(value: str) -> str:
             ),
         )
     return value
+
+
+def _validate_page_size(value: Any) -> int:
+    """Return ``value`` as an int if it parses in ``[1, 1000]``.
+
+    Used as the ``type=`` callback for ``--page-size`` on
+    ``radarr recent`` (the activity-log cap). Out-of-range values
+    raise :class:`argparse.ArgumentTypeError` so argparse prints a
+    usage hint naming the offending value and calls ``sys.exit(2)``;
+    :func:`arr_cli.facade.cli_common.main_wrapper` translates that
+    SystemExit into the documented exit code ``1`` (via the
+    ``config=parse`` ConfigError path). The validator runs before
+    the HTTP call so a bad value never reaches ``transport.get``.
+
+    The bounds mirror Radarr's ``/api/v3/history`` upstream
+    page-size ceiling: the upper bound prevents an operator from
+    accidentally pulling a million-row history page, and the lower
+    bound of ``1`` rejects ``0`` and negatives (both would yield
+    an empty ``records`` list with no diagnostic).
+    """
+    try:
+        n = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"--page-size: invalid value {value!r}; "
+            f"expected integer in [{_PAGE_SIZE_MIN}, {_PAGE_SIZE_MAX}]"
+        )
+    if n < _PAGE_SIZE_MIN or n > _PAGE_SIZE_MAX:
+        raise argparse.ArgumentTypeError(
+            f"--page-size: invalid value {n}; "
+            f"must be between {_PAGE_SIZE_MIN} and {_PAGE_SIZE_MAX} "
+            "(inclusive)"
+        )
+    return n
 
 
 def _emit(
@@ -242,16 +290,41 @@ def cmd_queue(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Radarr ``recent`` -- recent movie history (REQ-7 AC5).
 
-    Note: Radarr's movie history is at ``/api/v3/history/movie`` (NOT
-    ``/api/v3/history`` like Sonarr). The path is hardcoded here per
-    the spec to keep both CLIs independent.
+    Hits ``GET /api/v3/history?includeMovie=true&pageSize=<N>``
+    (the activity-log endpoint), NOT ``/api/v3/history/movie``.
+    The per-movie endpoint only returns rows for a single
+    ``movieId`` and never populates a nested ``movie`` envelope,
+    so it cannot satisfy "recent events across the library". The
+    activity-log endpoint returns a paginated
+    ``{page, pageSize, sortKey, sortDirection, totalRecords,
+    records: [...]}`` envelope; we unwrap it to the bare
+    ``records`` list before rendering so the summary renderer
+    and the ``--human`` table iterate the rows directly. The
+    renderer contract (nested ``movie: {title, year}``) is
+    preserved unchanged.
+
+    The ``--page-size`` argparse flag (default ``10``) overrides
+    the page-size query parameter at the upstream boundary; the
+    ``_validate_page_size`` helper bounds it to
+    ``[1, 1000]`` so an operator cannot accidentally request a
+    million-row history page.
     """
+    page_size = getattr(args, "page_size", _PAGE_SIZE_DEFAULT)
     payload = _get(
-        "/api/v3/history/movie",
+        "/api/v3/history",
         args,
         cfg,
+        params={
+            "includeMovie": "true",
+            "pageSize": int(page_size),
+        },
         op="recent",
     )
+    # ``/api/v3/history`` returns the paginated activity-log envelope
+    # on Radarr v3; unwrap to the bare ``records`` list so the
+    # renderer and ``--human`` paths iterate the rows directly. A
+    # bare-list payload (defensive fallback) is unchanged.
+    payload = output._unwrap_envelope(payload)
     # Tabular columns match the summary-shape keys emitted by
     # ``_summary_radarr_recent``: nested ``movie.title`` /
     # ``movie.year`` are resolved via dot-path traversal in
@@ -458,11 +531,24 @@ def build_radarr_parser() -> argparse.ArgumentParser:
         add_help=False,
     )
 
-    subparsers.add_parser(
+    recent = subparsers.add_parser(
         "recent",
-        help="list recent movie history (GET /api/v3/history/movie)",
+        help=(
+            "list recent movie history "
+            "(GET /api/v3/history?includeMovie=true&pageSize=<N>)"
+        ),
         parents=universal_parents(),
         add_help=False,
+    )
+    recent.add_argument(
+        "--page-size",
+        type=_validate_page_size,
+        default=_PAGE_SIZE_DEFAULT,
+        metavar="N",
+        help=(
+            "number of history rows to fetch from the activity-log "
+            f"endpoint (1-{_PAGE_SIZE_MAX}; default {_PAGE_SIZE_DEFAULT})"
+        ),
     )
 
     lookup = subparsers.add_parser(
