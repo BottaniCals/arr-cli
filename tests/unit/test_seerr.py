@@ -1627,8 +1627,14 @@ class TestCmdTv(unittest.TestCase):
             output = _capture_stdout(cmd_tv, args, None)
         self.assertEqual(json.loads(output), self.DETAIL_PAYLOAD)
 
-    def test_cmd_tv_language_forwarded_on_both_calls(self) -> None:
-        """``--language en`` is forwarded as ``?language=en`` on both endpoints."""
+    def test_cmd_tv_language_forwarded_only_on_detail(self) -> None:
+        """``--language en`` is forwarded as ``?language=en`` on the detail endpoint only.
+
+        The ratings sub-resource on the operator's live Seer build
+        rejects unknown query parameters with ``HTTP 400``
+        (``Unknown query parameter 'language'``), so the CLI must
+        not forward ``language`` to ``/api/v1/tv/<id>/ratings``.
+        """
         from arr_cli.seerr import cmd_tv
 
         args = self._make_args(language="en", ratings=True)
@@ -1638,8 +1644,31 @@ class TestCmdTv(unittest.TestCase):
         ) as mock_get:
             _capture_stdout(cmd_tv, args, None)
         self.assertEqual(len(mock_get.call_args_list), 2)
+        detail_call, ratings_call = mock_get.call_args_list
+        # Detail endpoint receives the language filter so titles
+        # and overviews localise correctly.
+        self.assertEqual(
+            detail_call.kwargs.get("params"), {"language": "en"}
+        )
+        # Ratings sub-resource does NOT receive ``language``; the
+        # endpoint rejects it with HTTP 400 on this build.
+        self.assertIsNone(ratings_call.kwargs.get("params"))
+
+    def test_cmd_tv_ratings_call_omits_language_when_no_language_flag(
+        self,
+    ) -> None:
+        """Without ``--language``, both calls carry no params; ratings path is unaffected."""
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args(ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            _capture_stdout(cmd_tv, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 2)
         for call in mock_get.call_args_list:
-            self.assertEqual(call.kwargs.get("params"), {"language": "en"})
+            self.assertIsNone(call.kwargs.get("params"))
 
     def test_cmd_tv_no_language_omits_language_param(self) -> None:
         """Without ``--language``, no ``language`` key rides on the query string."""
@@ -2006,8 +2035,14 @@ class TestCmdMovie(unittest.TestCase):
             output = _capture_stdout(cmd_movie, args, None)
         self.assertEqual(json.loads(output), self.DETAIL_PAYLOAD)
 
-    def test_cmd_movie_language_forwarded_on_both_calls(self) -> None:
-        """``--language en`` is forwarded as ``?language=en`` on both endpoints."""
+    def test_cmd_movie_language_forwarded_only_on_detail(self) -> None:
+        """``--language en`` is forwarded as ``?language=en`` on the detail endpoint only.
+
+        The ratings sub-resource on the operator's live Seer build
+        rejects unknown query parameters with ``HTTP 400``
+        (``Unknown query parameter 'language'``), so the CLI must
+        not forward ``language`` to ``/api/v1/movie/<id>/ratings``.
+        """
         from arr_cli.seerr import cmd_movie
 
         args = self._make_args(language="en", ratings=True)
@@ -2017,8 +2052,31 @@ class TestCmdMovie(unittest.TestCase):
         ) as mock_get:
             _capture_stdout(cmd_movie, args, None)
         self.assertEqual(len(mock_get.call_args_list), 2)
+        detail_call, ratings_call = mock_get.call_args_list
+        # Detail endpoint receives the language filter so titles
+        # and overviews localise correctly.
+        self.assertEqual(
+            detail_call.kwargs.get("params"), {"language": "en"}
+        )
+        # Ratings sub-resource does NOT receive ``language``; the
+        # endpoint rejects it with HTTP 400 on this build.
+        self.assertIsNone(ratings_call.kwargs.get("params"))
+
+    def test_cmd_movie_ratings_call_omits_language_when_no_language_flag(
+        self,
+    ) -> None:
+        """Without ``--language``, both calls carry no params; ratings path is unaffected."""
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args(ratings=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[self.DETAIL_PAYLOAD, self.RATINGS_PAYLOAD],
+        ) as mock_get:
+            _capture_stdout(cmd_movie, args, None)
+        self.assertEqual(len(mock_get.call_args_list), 2)
         for call in mock_get.call_args_list:
-            self.assertEqual(call.kwargs.get("params"), {"language": "en"})
+            self.assertIsNone(call.kwargs.get("params"))
 
     def test_cmd_movie_no_language_omits_language_param(self) -> None:
         """Without ``--language``, no ``language`` key rides on the query string."""

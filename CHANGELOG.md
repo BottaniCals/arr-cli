@@ -9,6 +9,23 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `seerr tv/movie --ratings --language` -- the two handlers built a
+  single shared params dict from `--language` and forwarded it to
+  BOTH the detail endpoint (`/api/v1/{tv,movie}/{id}?language=...`,
+  which honours the param) AND the ratings sub-resource
+  (`/api/v1/{tv,movie}/{id}/ratings`, which does NOT). On the
+  operator's live Seer build the ratings endpoint rejects unknown
+  query parameters with `HTTP 400` (`Unknown query parameter
+  'language'`), so `seerr --language en-GB --ratings tv 57243`
+  always 400'd and exited 4. The handlers now build separate
+  params for the two calls: `language` rides only on the detail
+  endpoint; the ratings call is always issued without a language
+  filter (RT data is region-agnostic on this build). The `cmd_tv`
+  and `cmd_movie` docstrings were updated to reflect the new
+  per-call contract. Regression pin tests
+  `TestCmdTv.test_cmd_tv_language_forwarded_only_on_detail` and
+  `..._ratings_call_omits_language_when_no_language_flag`, plus
+  the matching twin tests in `TestCmdMovie`.
 - `jellyfin item ""` -- the handler now rejects an empty `item_id`
   as malformed CLI input and raises `ConfigError` (exit 1) with the
   documented `service=jellyfin op=item message=...` structured
