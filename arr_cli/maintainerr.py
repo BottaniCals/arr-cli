@@ -237,10 +237,16 @@ def cmd_storage(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_health(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Maintainerr ``health`` -- readiness probe (REQ-9 AC4).
 
-    The endpoint typically returns a bare boolean (``true`` when
-    ready). REQ-3 AC3 requires that JSON-only endpoints still render
-    cleanly under ``--human`` (with indentation rather than a crash);
-    :func:`output.emit` handles that case in the output module.
+    The upstream endpoint returns an object payload
+    ``{"status": "ok"|..., "uptimeSeconds": <int>,
+    "database": "ok"|..., "timestamp": "<ISO-8601>"}`` rather than
+    a bare boolean; the facade passes it through verbatim in
+    default, ``--verbose``, and ``--human`` modes (exit ``0`` when
+    ``status == "ok"``, otherwise still exit ``0`` -- the operator
+    reads the value). REQ-3 AC3 requires that JSON-only endpoints
+    still render cleanly under ``--human`` (with indentation rather
+    than a crash); :func:`output.emit` handles that case in the
+    output module.
     """
     payload = _get(
         "/api/health/ready",

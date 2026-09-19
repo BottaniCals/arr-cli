@@ -1718,8 +1718,8 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         metavar="MEDIA_TYPE",
         help=(
             "optional media-type filter "
-            "(movie or tv; default movie). "
-            "Argparse rejects anything else with exit code 2."
+            "(movie or tv; default movie). Argparse rejects "
+            "anything else; surfaces as ConfigError, exit 1."
         ),
     )
     genres.add_argument(
