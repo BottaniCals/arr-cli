@@ -2495,6 +2495,38 @@ class TestSummarySeerrSearch(unittest.TestCase):
             },
         )
 
+    def test_search_person_row_sources_title_from_name(self) -> None:
+        """Person rows expose ``name`` (not ``title``) at the top level.
+
+        Mirrors the TV-row case for ``mediaType == "person"``; the
+        operator's live Seer ``/api/v1/search`` payload carries
+        ``name`` (no top-level ``title``) on person rows, so the
+        renderer must route the ``title`` projection through the
+        same ``name`` key as TV rows. Without this branch the
+        summary surfaces ``title: null`` for every person hit.
+        """
+        payload = [
+            {
+                "id": 3084139,
+                "name": "Aggy Dune",
+                "popularity": 0.455,
+                "adult": False,
+                "mediaType": "person",
+                "profilePath": None,
+                "knownFor": [],
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "id": 3084139,
+                "title": "Aggy Dune",
+                "mediaType": "person",
+                "releaseDate": None,
+            },
+        )
+
     def test_search_missing_id_keeps_none(self) -> None:
         """``id`` is read with ``_safe_get``; missing rows surface as ``None``."""
         payload = [

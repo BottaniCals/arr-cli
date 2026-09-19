@@ -1015,7 +1015,8 @@ def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
     ``GET /api/v1/search`` returns a paginated envelope of the shape
     ``{page, totalPages, totalResults, results: [...]}``; iterate
     ``results`` so the default summary is non-empty when the envelope
-    is well-formed. A bare list is unchanged behaviour.
+    is well-formed. A bare list is unchanged behaviour. ``results[]``
+    routinely mixes movie, TV, and person rows in a single envelope.
 
     The per-item projection surfaces the top-level ``id`` field the
     upstream payload actually carries. Unlike the historical
@@ -1026,9 +1027,10 @@ def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
     historical fabricated ``{"tmdbId": 0}`` placeholder was
     misleading because every row was projected as ``tmdbId: 0`` even
     for hits with well-known ids (e.g. ``603`` for *The Matrix*).
-    Branch on ``mediaType`` so TV rows source their title from
-    ``name`` (TV rows expose ``name`` only, no top-level ``title``)
-    while movie rows source it from ``title``.
+    Branch on ``mediaType`` so TV and person rows source their title
+    from ``name`` (the upstream payload exposes ``name`` only on
+    those rows, with no top-level ``title``) while movie rows
+    source it from ``title``.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1038,13 +1040,12 @@ def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        is_tv = _safe_get(item, "mediaType", default="") == "tv"
+        media_type = _safe_get(item, "mediaType", default="")
+        title_key = "name" if media_type in ("tv", "person") else "title"
         summaries.append(
             {
                 "id": _safe_get(item, "id", default=None),
-                "title": _safe_get(
-                    item, "name" if is_tv else "title", default=None
-                ),
+                "title": _safe_get(item, title_key, default=None),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
                     item, "releaseDate", default=None

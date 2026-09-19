@@ -5630,8 +5630,17 @@ class TestCmdSearchMixedMediaTypes(unittest.TestCase):
         rendered = _summary_seerr_search(envelope)
         self.assertEqual(rendered[0]["title"], "Inception")
 
-    def test_renderer_unknown_media_type_falls_back_to_title(self) -> None:
-        """A row with an unknown ``mediaType`` falls back to top-level ``title`` (defensive default)."""
+    def test_renderer_person_row_sources_title_from_name(self) -> None:
+        """A person row sources ``title`` from top-level ``name`` (real upstream shape).
+
+        The operator's live Seer ``/api/v1/search`` payload exposes
+        ``name`` (not ``title``) on person rows. The renderer must
+        route through the ``name`` projection so ``title`` is
+        populated instead of falling through to ``None``. The
+        historical fixture for this case used a fabricated
+        ``"title": "Some Person"`` key that masked the regression --
+        this test pins the real upstream shape.
+        """
         from arr_cli.facade.output import _summary_seerr_search
 
         envelope = {
@@ -5640,14 +5649,26 @@ class TestCmdSearchMixedMediaTypes(unittest.TestCase):
             "totalResults": 1,
             "results": [
                 {
-                    "title": "Some Person",
+                    "id": 3084139,
+                    "name": "Aggy Dune",
+                    "popularity": 0.455,
+                    "adult": False,
                     "mediaType": "person",
-                    "mediaInfo": {"tmdbId": 1},
+                    "profilePath": None,
+                    "knownFor": [],
                 },
             ],
         }
         rendered = _summary_seerr_search(envelope)
-        self.assertEqual(rendered[0]["title"], "Some Person")
+        self.assertEqual(
+            rendered[0],
+            {
+                "id": 3084139,
+                "title": "Aggy Dune",
+                "mediaType": "person",
+                "releaseDate": None,
+            },
+        )
 
 
 # ---------------------------------------------------------------------------
