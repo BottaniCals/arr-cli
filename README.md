@@ -148,11 +148,11 @@ shape (decoded).
 | `jellyfin now`            | GET  | `/Sessions`                                                 | All active sessions across users.                                      |
 | `jellyfin resume`         | GET  | `/Users/{user_id}/Items/Resume`                             | Requires `jellyfin.user_id`.                                           |
 | `jellyfin recent`         | GET  | `/Users/{user_id}/Items?SortBy=DatePlayed&Filters=IsPlayed` | Requires `jellyfin.user_id`.                                           |
-| `jellyfin nextup`         | GET  | `/Shows/NextUp`                                             | Accepts optional `Limit`, `StartIndex`, `UserId` query params.         |
+| `jellyfin nextup`         | GET  | `/Shows/NextUp`                                             | `--limit` is client-side only (caps the renderer, never sent on the wire). Accepts optional `StartIndex` and `UserId` query params. |
 | `jellyfin latest`         | GET  | `/Users/{user_id}/Items/Latest`                             | Requires `jellyfin.user_id`.                                           |
 | `jellyfin search <query>` | GET  | `/Items?searchTerm=<query>`                                 | Empty query returns the service's empty-array response (not an error). |
 | `jellyfin item <id>`      | GET  | `/Items/{id}`                                               | 404 → exit code `4` with stderr naming the id.                         |
-| `jellyfin favorites`      | GET  | `/Users/{user_id}/Items?Filters=IsFavorite`                 | Requires `jellyfin.user_id`. Accepts optional `Limit` (forwarded from `--limit`). |
+| `jellyfin favorites`      | GET  | `/Users/{user_id}/Items?Filters=IsFavorite`                 | Requires `jellyfin.user_id`. `--limit` is client-side only (caps the renderer, never sent on the wire). |
 
 ### 4.2 Radarr (`radarr` — 6 commands)
 
