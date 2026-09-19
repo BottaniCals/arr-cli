@@ -295,13 +295,16 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     The per-movie endpoint only returns rows for a single
     ``movieId`` and never populates a nested ``movie`` envelope,
     so it cannot satisfy "recent events across the library". The
-    activity-log endpoint returns a paginated
+    activity-log endpoint returns the paginated
     ``{page, pageSize, sortKey, sortDirection, totalRecords,
-    records: [...]}`` envelope; we unwrap it to the bare
-    ``records`` list before rendering so the summary renderer
-    and the ``--human`` table iterate the rows directly. The
-    renderer contract (nested ``movie: {title, year}``) is
-    preserved unchanged.
+    records: [...]}`` envelope. The envelope is passed through
+    to ``_emit`` unchanged so ``--verbose`` keeps the full
+    pagination metadata (``totalRecords`` etc.) visible to
+    downstream consumers; the unwrap to the bare ``records``
+    list happens inside :func:`_summary_radarr_recent` for the
+    curated summary path (mirrors the same pattern in
+    :func:`_summary_sonarr_recent` and the Jellyfin paginated
+    renderers).
 
     The ``--page-size`` argparse flag (default ``10``) overrides
     the page-size query parameter at the upstream boundary; the
@@ -320,11 +323,6 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         },
         op="recent",
     )
-    # ``/api/v3/history`` returns the paginated activity-log envelope
-    # on Radarr v3; unwrap to the bare ``records`` list so the
-    # renderer and ``--human`` paths iterate the rows directly. A
-    # bare-list payload (defensive fallback) is unchanged.
-    payload = output._unwrap_envelope(payload)
     # Tabular columns match the summary-shape keys emitted by
     # ``_summary_radarr_recent``: nested ``movie.title`` /
     # ``movie.year`` are resolved via dot-path traversal in

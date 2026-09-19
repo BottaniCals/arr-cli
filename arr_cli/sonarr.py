@@ -271,6 +271,17 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     ``10`` so no explicit ``pageSize`` is passed (the Radarr fix
     added ``pageSize`` because Radarr's default is much larger).
 
+    The activity-log endpoint returns a paginated
+    ``{page, pageSize, sortKey, sortDirection, totalRecords,
+    records: [...]}`` envelope. The envelope is passed through
+    to ``_emit`` unchanged so ``--verbose`` keeps the full
+    pagination metadata (``totalRecords`` etc.) visible to
+    downstream consumers; the unwrap to the bare ``records``
+    list happens inside :func:`_summary_sonarr_recent` for the
+    curated summary path (mirrors the same pattern in
+    :func:`_summary_radarr_recent` and the Jellyfin paginated
+    renderers).
+
     The include flags are passed as a plain dict to ``transport.get``
     so ``requests`` percent-encodes each value exactly once on the
     wire (per the PR #49 contract); pre-encoding here would
@@ -286,11 +297,6 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         },
         op="recent",
     )
-    # ``/api/v3/history`` returns the paginated activity-log envelope
-    # on Sonarr v3; unwrap to the bare ``records`` list so the
-    # renderer and ``--human`` paths iterate the rows directly. A
-    # bare-list payload (defensive fallback) is unchanged.
-    payload = output._unwrap_envelope(payload)
     # Tabular columns match the summary-shape keys emitted by
     # ``_summary_sonarr_recent``: nested ``series.title`` /
     # ``episode.title`` are resolved via dot-path traversal in
