@@ -202,7 +202,7 @@ passed.
 | `seerr requests`          | GET  | `/api/v1/request`                       | All requests.                                                                    |
 | `seerr request-count`     | GET  | `/api/v1/request/count`                 | Aggregate request counts.                                                        |
 | `seerr search <query>`    | GET  | `/api/v1/search?query=<query>`         | Percent-encoded by the facade.                                                   |
-| `seerr available <query>` | GET  | `/api/v1/media?filter=available&take=1000` | Title-substring filter is applied client-side after the fetch.                  |
+| `seerr available <query>` | GET  | `/api/v1/media?filter=available&take=1000` | Positional `<query>` is accepted for backwards compatibility but is ignored -- upstream `/api/v1/media` records do not carry a title field. A non-empty query emits a stderr note; use `seerr search <query>` to match against titles. |
 | `seerr user`              | GET  | `/auth/me`                               | Auth self-check.                                                               |
 | `seerr tv <id>`           | GET  | `/api/v1/tv/<id>?language=<LANG>`       | Adds `…/ratings` on `--ratings`; both endpoints accept `?language=<LANG>`.       |
 | `seerr movie <id>`        | GET  | `/api/v1/movie/<id>?language=<LANG>`    | Adds `…/ratings` on `--ratings`; both endpoints accept `?language=<LANG>`. Structural twin of `seerr tv <id>`. |
