@@ -162,7 +162,7 @@ shape (decoded).
 | `radarr calendar <start> [end]` | GET  | `/api/v3/calendar?start=<start>&end=<end>` | Accepts ISO-8601 dates or datetimes; malformed input → exit `1` + stderr usage hint. |
 | `radarr wanted`                 | GET  | `/api/v3/wanted/missing`                   | Missing movies.                                                                      |
 | `radarr queue`                  | GET  | `/api/v3/queue`                            | Current download / import queue.                                                     |
-| `radarr recent`                 | GET  | `/api/v3/history/movie`                    | Movie history (path-versioned, not the generic `/history`).                          |
+| `radarr recent`                 | GET  | `/api/v3/history?includeMovie=true&pageSize=<N>` | Movie history via generic `/history`; include flag populates nested `movie.title` / `movie.year`. Uses `--page-size` (default `10`, bounds `[1, 1000]`). |
 | `radarr lookup <term>`          | GET  | `/api/v3/movie/lookup?term=<term>`         | Percent-encoded by the facade.                                                       |
 | `radarr movie <id>`             | GET  | `/api/v3/movie/{id}`                       | 404 → exit code `4` with stderr naming the id.                                       |
 

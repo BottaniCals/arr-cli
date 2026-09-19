@@ -9,6 +9,13 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `radarr recent` README drift -- the §4.2 Radarr table now
+  documents the actual endpoint
+  (`GET /api/v3/history?includeMovie=true&pageSize=<N>`) and
+  the `--page-size` flag added in PR #52, replacing the stale
+  `GET /api/v3/history/movie` row that escaped the original
+  fix (REQs §4.3 Sonarr row was updated in PR #53). No code
+  changes.
 - `jellyfin search ""` -- the handler now short-circuits an empty
   query to the canonical emit path with `[]`, exiting 0 without
   touching `/Items`. The previous implementation forwarded
