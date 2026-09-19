@@ -9,6 +9,27 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `jellyfin item ""` -- the handler now rejects an empty `item_id`
+  as malformed CLI input and raises `ConfigError` (exit 1) with the
+  documented `service=jellyfin op=item message=...` structured
+  stderr line. Without the guard, `GET /Items/` with `UserId`
+  returned the configured library-root listing (`{"Items":
+  [...], "TotalRecordCount":5, "StartIndex":0}` on the operator's
+  instance): Jellyfin treats a trailing-slash `/Items/` as a
+  recursive `/Items` query, so an empty id silently produced a
+  plausible-but-wrong payload that downstream callers could not
+  distinguish from a real item lookup. The guard runs after
+  `_require_user_id` (config validation still takes precedence)
+  and before any HTTP call -- `transport.get` is unreachable for
+  the empty-id branch. The `cmd_item` docstring was extended so
+  the new exit-code contract is documented at the handler site.
+  The pre-existing 4xx paths (`404 -> HttpError(exit 4)` and the
+  `400 -> HttpError(exit 4)` glue pin) and the
+  `_require_user_id -> ConfigError(exit 1)` path are unchanged.
+  Pin tests in `TestCmdItem.test_item_empty_id_raises_config_error`,
+  `..._empty_id_does_not_call_transport`, and
+  `..._user_id_check_takes_precedence_over_empty_id`; end-to-end
+  pin in `TestMainEntryPoint.test_main_item_empty_id_exits_one_with_structured_stderr`.
 - `radarr recent --verbose` and `sonarr recent --verbose` --
   the two handlers pre-unwrapped the paginated activity-log
   envelope to the bare `records` list at the call site, so

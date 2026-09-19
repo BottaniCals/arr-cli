@@ -735,6 +735,59 @@ class TestCmdItem(unittest.TestCase):
         self.assertEqual(ctx.exception.exit_code, 1)
         self.assertIn("section missing", ctx.exception.message)
 
+    def test_item_empty_id_raises_config_error(self) -> None:
+        # jellyfin-item-empty-id: an empty ``item_id`` (e.g. from
+        # an unset shell variable, ``jellyfin item ""``) is rejected
+        # as malformed CLI input. Without the guard, ``GET /Items/``
+        # with ``UserId`` returns the configured library-root
+        # listing (Jellyfin treats a trailing-slash ``/Items/`` as
+        # a recursive ``/Items`` query), silently giving downstream
+        # callers a plausible-but-wrong payload they cannot
+        # distinguish from a real item lookup. The handler MUST
+        # raise ``ConfigError(exit 1)`` so ``main_wrapper`` emits
+        # the documented ``service=jellyfin op=item message=...``
+        # stderr line instead of letting the wire call fire.
+        cfg = _service_config()
+        args = _namespace(item_id="")
+        with self.assertRaises(ConfigError) as ctx:
+            cmd_item(args, cfg)
+        self.assertEqual(ctx.exception.exit_code, 1)
+        self.assertEqual(ctx.exception.service, SERVICE_NAME)
+        self.assertEqual(ctx.exception.op, "item")
+        self.assertIn("item ID must not be empty", ctx.exception.message)
+
+    def test_item_empty_id_does_not_call_transport(self) -> None:
+        # Pin the "no HTTP call on empty id" contract: the empty-id
+        # guard MUST run before ``_get`` so a misconfigured
+        # ``transport.get`` (or a regression that re-introduces the
+        # trailing-slash ``/Items/`` call) cannot silently round-trip
+        # the upstream library-root listing. Patches ``transport.get``
+        # to raise so any HTTP call surfaces immediately.
+        cfg = _service_config()
+        args = _namespace(item_id="")
+        with patch(
+            "arr_cli.jellyfin.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty item_id"
+            ),
+        ):
+            with self.assertRaises(ConfigError):
+                cmd_item(args, cfg)
+
+    def test_item_user_id_check_takes_precedence_over_empty_id(self) -> None:
+        # When both ``cfg.jellyfin.user_id`` is missing AND the
+        # supplied ``item_id`` is empty the operator sees the
+        # config-shape problem first (it's the harder-to-diagnose
+        # failure mode and the one that needs fixing before the
+        # CLI invocation makes sense). Pins the order: user_id
+        # validation runs before the input-shape guard.
+        cfg = _service_config(user_id=None)
+        args = _namespace(item_id="")
+        with self.assertRaises(ConfigError) as ctx:
+            cmd_item(args, cfg)
+        self.assertEqual(ctx.exception.exit_code, 1)
+        self.assertIn("user_id", ctx.exception.message)
+
 
 # ---------------------------------------------------------------------------
 # Test: cmd_favorites
@@ -1048,6 +1101,36 @@ class TestMainEntryPoint(unittest.TestCase):
                 ["--config", str(self.cfg_path), "item", "42"]
             )
         self.assertEqual(exit_code, 4)
+
+    def test_main_item_empty_id_exits_one_with_structured_stderr(self) -> None:
+        # End-to-end pin for jellyfin-item-empty-id:
+        # ``jellyfin item ""`` must exit 1 (ConfigError) with the
+        # documented ``service=jellyfin op=item message=...``
+        # structured stderr line. No HTTP call fires — ``transport.get``
+        # is patched to raise so any wire round-trip surfaces
+        # immediately. Without the guard the CLI exited 0 with the
+        # upstream library-root listing on stdout.
+        with patch(
+            "arr_cli.jellyfin.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty item_id"
+            ),
+        ):
+            exit_code = main(
+                ["--config", str(self.cfg_path), "item", ""]
+            )
+            _, stderr = _capture_stderr_stdout(
+                main,
+                ["--config", str(self.cfg_path), "item", ""],
+            )
+        self.assertEqual(exit_code, 1)
+        self.assertTrue(
+            stderr.startswith(
+                "service=jellyfin op=item message="
+            ),
+            msg=f"unexpected stderr shape: {stderr!r}",
+        )
+        self.assertIn("item ID must not be empty", stderr)
 
     def test_main_search_emits_payload(self) -> None:
         # Regression coverage for ``jellyfin-search-nextup-envelope-unwrap``:
