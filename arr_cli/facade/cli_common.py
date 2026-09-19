@@ -49,6 +49,7 @@ Interfaces / arr_facade.cli_common").
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import traceback
 from typing import Callable, Sequence
@@ -70,6 +71,61 @@ __all__ = [
     "reset_warnings",
     "universal_parents",
 ]
+
+
+#: Sentinel attribute set on a module logger once the facade's debug
+#: stderr handler has been attached. Used to keep :func:`_configure_debug_logging`
+#: idempotent across repeated ``main_wrapper`` invocations within the
+#: same process (the pytest suite runs many of them).
+_DEBUG_HANDLER_KEY = "_arr_cli_debug_handler_attached"
+
+#: Namespaces the facade owns and the only ones whose ``debug()``
+#: records are documented to surface on stderr. ``arr_cli.facade.transport``
+#: emits the redacted request/response pair; ``arr_cli.facade.output``
+#: and ``arr_cli.seerr`` emit their own DEBUG records that are part
+#: of the same diagnostics contract.
+_DEBUG_LOGGER_NAMES: tuple[str, ...] = (
+    "arr_cli.facade.transport",
+    "arr_cli.facade.output",
+    "arr_cli.seerr",
+)
+
+
+def _configure_debug_logging() -> None:
+    """Attach a stderr ``DEBUG`` handler to the facade module loggers.
+
+    ``--debug`` is documented to emit the redacted request/response
+    pair on stderr. ``transport._record_debug`` writes that record via
+    ``logging.getLogger("arr_cli.facade.transport").debug(...)``, but
+    Python's root logger defaults to ``WARNING`` and none of the
+    facade modules call ``basicConfig`` or attach a handler, so the
+    ``debug()`` records were silently dropped on stderr (ticket:
+    debug-flag-silent-request-response-log).
+
+    This helper closes the gap by lowering each facade logger to
+    ``DEBUG`` and attaching a ``StreamHandler(sys.stderr)`` exactly
+    once per process. The handler is attached directly to the module
+    loggers rather than at the root level so the existing
+    ``_logger.propagate = False`` policy (set by the facade modules
+    to bypass any host test-runner handler that might swallow
+    WARNING records) is preserved.
+
+    Idempotent: each module logger is marked via
+    :data:`_DEBUG_HANDLER_KEY` so repeated ``main_wrapper`` calls
+    within the same process do not stack duplicate handlers.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(
+        logging.Formatter("%(name)s %(levelname)s %(message)s")
+    )
+    for name in _DEBUG_LOGGER_NAMES:
+        logger = logging.getLogger(name)
+        if getattr(logger, _DEBUG_HANDLER_KEY, False):
+            continue
+        logger.setLevel(logging.DEBUG)
+        logger.addHandler(handler)
+        setattr(logger, _DEBUG_HANDLER_KEY, True)
 
 
 #: Module-level dedupe set for :func:`warn_once`. Tracked by
@@ -566,6 +622,17 @@ def main_wrapper(
         )
 
     debug = getattr(args, "debug", False)
+
+    if debug:
+        # ``--debug`` is documented to emit the redacted
+        # request/response pair on stderr. The facade's module loggers
+        # default to ``NOTSET`` (which inherits the root logger's
+        # ``WARNING`` level), so without this call every
+        # ``_logger.debug(...)`` record is silently dropped and the
+        # operator sees no trace of what the CLI actually sent over
+        # the wire. Idempotent across repeated ``main_wrapper`` calls
+        # within the same process (see :func:`_configure_debug_logging`).
+        _configure_debug_logging()
 
     try:
         result = handler(args, cfg)
