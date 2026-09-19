@@ -325,13 +325,22 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     empty array result rather than a 4xx error, which matches the
     requirement's "otherwise the service's empty-array response"
     branch.
+
+    The ``Recursive=true`` query parameter is REQUIRED on Jellyfin
+    v10+/v12: ``GET /Items`` defaults to a non-recursive scan of
+    the configured library-root view, so without ``Recursive=true``
+    the server returns the library folders themselves (Anime,
+    collections, Movies, Playlists, Shows) for every query —
+    including no-match and empty queries — rather than walking the
+    full library graph and returning the actual matches (or
+    ``[]`` for misses). Do not strip this flag.
     """
     query = getattr(args, "query", "") or ""
     payload = _get(
         "/Items",
         args,
         cfg,
-        params={"searchTerm": query},
+        params={"searchTerm": query, "Recursive": True},
         op="search",
     )
     columns = ["Name", "Type", "ProductionYear", "SeriesName"]
