@@ -873,18 +873,19 @@ def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
 def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
     """Render a Sonarr ``recent`` payload as the curated summary.
 
-    ``GET /api/v3/history`` returns flat activity-log rows -- each
-    row carries ``seriesId`` and ``episodeId`` plus a ``sourceTitle``
-    for the released episode name, but no nested ``series`` /
-    ``episode`` objects. The historical renderer projected
-    ``{series: {title: null}, episode: {title: null}}`` for every row
-    (every record on the operator's live instance projected
-    ``series.title: null`` and ``episode.title: null``); the
-    defensive else-branch was firing because the upstream payload
-    never populates those keys. Project the identity fields the
-    payload actually carries so the summary is meaningful and the
-    operator can chain ``seriesId`` / ``episodeId`` into
-    ``sonarr series <id>`` or cross-reference ``sourceTitle``.
+    ``GET /api/v3/history?includeSeries=true&includeEpisode=true``
+    returns activity-log rows that carry nested ``series: {title}``
+    / ``episode: {title}`` envelopes (populated by Sonarr when the
+    operator opts in via the documented include flags). The
+    renderer projects both the nested objects (preserving the
+    originally documented ``{series: {title}, episode: {title},
+    eventType, date}`` contract) and the flat identity fields the
+    upstream payload also carries -- the fix is additive so
+    operators chaining ``--json`` consumers against the summary
+    shape do not break on the field set. A missing envelope (e.g.
+    a row from an older Sonarr version that ignores the include
+    flag, or a defensive fallback for an unflagged payload) renders
+    as ``{title: None}`` instead of crashing.
     """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
@@ -893,8 +894,24 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
     for item in payload:
         if not isinstance(item, Mapping):
             continue
+        series = item.get("series")
+        if isinstance(series, Mapping):
+            series_obj: dict[str, Any] = {
+                "title": _safe_get(series, "title", default=None),
+            }
+        else:
+            series_obj = {"title": None}
+        episode = item.get("episode")
+        if isinstance(episode, Mapping):
+            episode_obj: dict[str, Any] = {
+                "title": _safe_get(episode, "title", default=None),
+            }
+        else:
+            episode_obj = {"title": None}
         summaries.append(
             {
+                "series": series_obj,
+                "episode": episode_obj,
                 "id": _safe_get(item, "id", default=None),
                 "seriesId": _safe_get(item, "seriesId", default=None),
                 "episodeId": _safe_get(item, "episodeId", default=None),

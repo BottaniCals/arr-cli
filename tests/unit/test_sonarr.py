@@ -565,7 +565,15 @@ class TestCmdRecent(unittest.TestCase):
         # The path is Sonarr's TV history endpoint -- this is the
         # documented divergence from Radarr's ``/history/movie``.
         self.assertEqual(positional[1], "/api/v3/history")
-        self.assertIsNone(kwargs.get("params"))
+        # The include flags cause Sonarr to populate the nested
+        # ``series: {title}`` / ``episode: {title}`` envelopes on
+        # each activity-log row. The dict is passed verbatim so
+        # ``requests`` percent-encodes each value exactly once on
+        # the wire (per the PR #49 contract).
+        self.assertEqual(
+            kwargs.get("params"),
+            {"includeSeries": "true", "includeEpisode": "true"},
+        )
 
     def test_recent_does_not_hit_history_movie_path(self) -> None:
         # Defensive: Radarr's path MUST NOT be used here. A future
@@ -577,13 +585,100 @@ class TestCmdRecent(unittest.TestCase):
         positional = mock_get.call_args.args
         self.assertNotEqual(positional[1], "/api/v3/history/movie")
 
+    def test_recent_does_not_pass_explicit_page_size(self) -> None:
+        # Sonarr's default page size is the documented ``10`` so no
+        # explicit ``pageSize`` is forwarded. A future copy-paste
+        # from the ``radarr recent`` fix (which added
+        # ``--page-size`` because Radarr's default is much larger)
+        # MUST NOT introduce an unnecessary ``pageSize=10`` on
+        # Sonarr.
+        cfg = _service_config()
+        args = _namespace()
+        with _patched_get_payload([]) as mock_get:
+            cmd_recent(args, cfg)
+        kwargs = mock_get.call_args.kwargs
+        params = kwargs.get("params") or {}
+        self.assertNotIn("pageSize", params)
+
+    def test_recent_unwraps_paginated_envelope(self) -> None:
+        # ``GET /api/v3/history`` returns the paginated activity-log
+        # envelope; ``cmd_recent`` must unwrap to the bare
+        # ``records`` list so the renderer sees the rows directly.
+        cfg = _service_config()
+        args = _namespace()
+        envelope = {
+            "page": 1,
+            "pageSize": 10,
+            "sortKey": "date",
+            "sortDirection": "descending",
+            "totalRecords": 2,
+            "records": [
+                {
+                    "id": 1,
+                    "series": {"title": "Star Trek: Strange New Worlds"},
+                    "episode": {"title": "Orders of Magnitude"},
+                    "eventType": "downloadFolderImported",
+                    "date": "2026-09-18T01:59:01Z",
+                },
+                {
+                    "id": 2,
+                    "series": {"title": "Severance"},
+                    "episode": {"title": "The Work Is Never Done"},
+                    "eventType": "downloadFolderImported",
+                    "date": "2026-09-18T02:00:00Z",
+                },
+            ],
+        }
+        with _patched_get_payload(envelope):
+            rendered = _capture_stdout(cmd_recent, args, cfg)
+        rows = json.loads(rendered)
+        self.assertEqual(len(rows), 2)
+        # Nested ``series.title`` / ``episode.title`` are populated from
+        # the upstream payload (populated because the operator opted in
+        # via the documented ``includeSeries=true&includeEpisode=true``
+        # query parameters), not flattened and not null.
+        self.assertEqual(
+            rows[0]["series"]["title"], "Star Trek: Strange New Worlds"
+        )
+        self.assertEqual(rows[0]["episode"]["title"], "Orders of Magnitude")
+        self.assertEqual(rows[1]["series"]["title"], "Severance")
+        self.assertEqual(
+            rows[1]["episode"]["title"], "The Work Is Never Done"
+        )
+
+    def test_recent_bare_list_payload_unchanged(self) -> None:
+        # Defensive: if the upstream ever returned a bare list (the
+        # pre-pagination contract), ``_unwrap_envelope`` passes it
+        # through unchanged.
+        cfg = _service_config()
+        args = _namespace()
+        payload = [
+            {
+                "id": 1,
+                "series": {"title": "Severance"},
+                "episode": {"title": "The Work Is Never Done"},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            rendered = _capture_stdout(cmd_recent, args, cfg)
+        self.assertEqual(json.loads(rendered), payload)
+
     def test_recent_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
         args = _namespace(human=False)
-        payload = {"events": [{"series": {"title": "Show X"}}]}
+        payload = [
+            {
+                "series": {"title": "Severance"},
+                "episode": {"title": "The Work Is Never Done"},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
         with _patched_get_payload(payload):
-            output = _capture_stdout(cmd_recent, args, cfg)
-        self.assertEqual(json.loads(output), payload)
+            rendered = _capture_stdout(cmd_recent, args, cfg)
+        self.assertEqual(json.loads(rendered), payload)
 
 
 # ---------------------------------------------------------------------------

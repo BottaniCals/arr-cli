@@ -261,30 +261,48 @@ def cmd_queue(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Sonarr ``recent`` -- recent TV history (REQ-8 AC5).
 
-    Note: Sonarr's TV history is at ``/api/v3/history`` (NOT
-    ``/api/v3/history/movie`` like Radarr -- that is the documented
-    divergence between the two CLIs). The path is hardcoded here per
-    the spec to keep both CLIs independent and to make the contract
-    obvious in the test suite.
+    Hits ``GET /api/v3/history?includeSeries=true&includeEpisode=true``
+    (the activity-log endpoint), NOT ``/api/v3/history/movie`` like
+    Radarr. The include flags cause Sonarr to populate the nested
+    ``series: {title}`` / ``episode: {title}`` envelopes on each
+    activity-log row, which restores the originally documented
+    ``{series: {title}, episode: {title}, eventType, date}``
+    summary contract. Sonarr's default page size is the documented
+    ``10`` so no explicit ``pageSize`` is passed (the Radarr fix
+    added ``pageSize`` because Radarr's default is much larger).
+
+    The include flags are passed as a plain dict to ``transport.get``
+    so ``requests`` percent-encodes each value exactly once on the
+    wire (per the PR #49 contract); pre-encoding here would
+    double-encode and Sonarr would silently drop the filter.
     """
     payload = _get(
         "/api/v3/history",
         args,
         cfg,
+        params={
+            "includeSeries": "true",
+            "includeEpisode": "true",
+        },
         op="recent",
     )
+    # ``/api/v3/history`` returns the paginated activity-log envelope
+    # on Sonarr v3; unwrap to the bare ``records`` list so the
+    # renderer and ``--human`` paths iterate the rows directly. A
+    # bare-list payload (defensive fallback) is unchanged.
+    payload = output._unwrap_envelope(payload)
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_sonarr_recent``. ``/api/v3/history`` returns flat
-    # activity-log rows with ``seriesId`` / ``episodeId`` /
-    # ``sourceTitle`` -- no nested ``series`` / ``episode`` objects
-    # -- so the columns are the flat top-level identity fields the
-    # upstream payload actually carries.
+    # ``_summary_sonarr_recent``: nested ``series.title`` /
+    # ``episode.title`` are resolved via dot-path traversal in
+    # ``_row_from_mapping``. ``sourceTitle`` is retained as a
+    # download-path audit trail (dropping it would widen the fix's
+    # blast radius beyond the sister Radarr fix).
     columns = [
-        "seriesId",
-        "episodeId",
-        "sourceTitle",
+        "series.title",
+        "episode.title",
         "eventType",
         "date",
+        "sourceTitle",
         "quality",
     ]
     return _emit(payload, args, columns=columns)
