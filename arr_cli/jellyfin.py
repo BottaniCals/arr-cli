@@ -255,30 +255,18 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_nextup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Jellyfin ``nextup`` — next-up episodes (REQ-6 AC4).
 
-    Accepts optional ``Limit`` and ``StartIndex`` query parameters.
-    ``UserId`` is read from ``cfg.jellyfin.user_id`` via
-    :func:`_require_user_id` and is required on Jellyfin v12+; the
-    universal ``--limit`` flag is forwarded to ``Limit`` and
-    ``--start-index`` is a command-local flag registered on the
-    subparser for pagination. Mirrors the three sibling
-    user-scoped handlers (``resume`` / ``recent`` / ``latest`` /
-    ``favorites``).
+    Accepts optional ``StartIndex`` and required ``UserId`` query
+    parameters. ``UserId`` is read from ``cfg.jellyfin.user_id`` via
+    :func:`_require_user_id` (required on Jellyfin v12+). The
+    universal ``--limit`` flag is **client-side only**: it caps the
+    ``--human`` renderer via :func:`_emit` -> :func:`output.emit`
+    and never rides the wire, matching the project-wide contract
+    documented in README §3 and the sibling ``seerr discover-*``
+    rows in README §4.5. ``--start-index`` is a command-local flag
+    registered on the subparser for wire-side pagination.
     """
     user_id = _require_user_id(cfg)
     params: dict[str, Any] = {}
-    limit = getattr(args, "limit", None)
-    if limit is not None:
-        # The CLI stores ``args.limit`` as the page-size requested for
-        # ``--human`` view; we reuse the same value for the Jellyfin
-        # ``Limit`` query parameter so the server-side cap matches the
-        # client-side pagination cap.
-        try:
-            params["Limit"] = int(limit)
-        except (TypeError, ValueError):
-            # argparse types ``--limit`` as int already; this branch
-            # is defensive against a future change that drops the
-            # type annotation.
-            pass
     start_index = getattr(args, "start_index", None)
     if start_index is not None:
         try:
@@ -389,16 +377,14 @@ def cmd_favorites(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     ``/Users/<user_id>/Items/Favorites`` sub-resource path; the
     v12-compatible replacement is
     ``/Users/<user_id>/Items?Filters=IsFavorite``, the same shape
-    ``cmd_recent`` uses with ``Filters=IsPlayed``.
+    ``cmd_recent`` uses with ``Filters=IsPlayed``. The universal
+    ``--limit`` flag is **client-side only** (caps the ``--human``
+    renderer via :func:`_emit` -> :func:`output.emit`); it is never
+    forwarded to the wire, matching the project-wide contract in
+    README §3 and the sibling ``seerr discover-*`` rows in §4.5.
     """
     user_id = _require_user_id(cfg)
     params: dict[str, Any] = {"Filters": "IsFavorite"}
-    limit = getattr(args, "limit", None)
-    if limit is not None:
-        try:
-            params["Limit"] = int(limit)
-        except (TypeError, ValueError):
-            pass
     payload = _get(
         f"/Users/{transport.encode_path_segment(user_id)}/Items",
         args,

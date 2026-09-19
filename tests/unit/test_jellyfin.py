@@ -418,8 +418,10 @@ class TestCmdRecent(unittest.TestCase):
 
 
 class TestCmdNextUp(unittest.TestCase):
-    """REQ-6 AC4: ``GET /Shows/NextUp`` with optional Limit / StartIndex and
-    ``UserId`` always read from ``cfg.jellyfin.user_id`` (v12+ contract)."""
+    """REQ-6 AC4: ``GET /Shows/NextUp`` with optional ``StartIndex`` and
+    ``UserId`` always read from ``cfg.jellyfin.user_id`` (v12+ contract).
+    ``--limit`` is intentionally **not** forwarded to the wire; it is a
+    client-side cap on the ``--human`` renderer (README §3, §4.5)."""
 
     def test_nextup_hits_shows_nextup(self) -> None:
         cfg = _service_config()
@@ -429,13 +431,14 @@ class TestCmdNextUp(unittest.TestCase):
         positional = mock_get.call_args.args
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(positional[1], "/Shows/NextUp")
-        # The universal ``--limit`` default is forwarded to the
-        # service as ``Limit=20``; ``UserId`` is read from config
+        # The universal ``--limit`` default is **not** forwarded to
+        # the wire: ``cmd_nextup`` honours the project-wide
+        # ``--limit``-is-client-side-only contract documented in
+        # README §3 and §4.5. ``UserId`` is read from config
         # (``cfg.jellyfin.user_id == "jf-user-1"``) because the
-        # Jellyfin v12 /Shows/NextUp endpoint requires it.
-        self.assertEqual(
-            kwargs["params"], {"Limit": 20, "UserId": "jf-user-1"}
-        )
+        # Jellyfin v12 ``/Shows/NextUp`` endpoint requires it.
+        self.assertEqual(kwargs["params"], {"UserId": "jf-user-1"})
+        self.assertNotIn("Limit", kwargs["params"])
 
     def test_nextup_uses_configured_user_id_by_default(self) -> None:
         # With no ``--user-id`` on the command line the handler
@@ -448,7 +451,7 @@ class TestCmdNextUp(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(
             kwargs["params"],
-            {"Limit": 20, "UserId": "configured-jellyfin-user"},
+            {"UserId": "configured-jellyfin-user"},
         )
 
     def test_nextup_missing_user_id_raises_config_error(self) -> None:
@@ -462,22 +465,29 @@ class TestCmdNextUp(unittest.TestCase):
         self.assertEqual(ctx.exception.exit_code, 1)
         self.assertIn("user_id", ctx.exception.message)
 
-    def test_nextup_forwards_limit(self) -> None:
+    def test_nextup_does_not_forward_limit_to_wire(self) -> None:
+        # Pin the ``--limit``-is-client-side-only contract for
+        # ``cmd_nextup``: setting ``args.limit`` must NOT add a
+        # ``Limit`` query parameter to the upstream request, even
+        # when ``--limit`` is explicitly set far above the default.
+        # Client-side capping still flows through ``_emit`` ->
+        # ``output.emit`` for the ``--human`` renderer.
         cfg = _service_config()
         args = _namespace(limit=50)
         with _patched_get_payload([]) as mock_get:
             cmd_nextup(args, cfg)
         kwargs = mock_get.call_args.kwargs
-        self.assertEqual(
-            kwargs["params"], {"Limit": 50, "UserId": "jf-user-1"}
-        )
+        self.assertEqual(kwargs["params"], {"UserId": "jf-user-1"})
+        self.assertNotIn("Limit", kwargs["params"])
 
     def test_nextup_no_limit_param_when_limit_is_none(self) -> None:
         # When the parser defaults ``--limit`` to ``None`` (e.g. a
         # downstream caller bypasses the universal flag), the
         # ``Limit`` key is omitted from the params dict so the
         # service falls back to its own default; ``UserId`` is still
-        # forwarded from config.
+        # forwarded from config. ``--limit`` is always client-side
+        # only, so this branch covers the ``None`` case for parity
+        # with explicit values.
         cfg = _service_config()
         args = _namespace(limit=None)
         with _patched_get_payload([]) as mock_get:
@@ -493,7 +503,7 @@ class TestCmdNextUp(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(
             kwargs["params"],
-            {"Limit": 20, "StartIndex": 10, "UserId": "jf-user-1"},
+            {"StartIndex": 10, "UserId": "jf-user-1"},
         )
 
     def test_nextup_combined_params(self) -> None:
@@ -504,7 +514,7 @@ class TestCmdNextUp(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(
             kwargs["params"],
-            {"Limit": 5, "StartIndex": 2, "UserId": "jf-user-1"},
+            {"StartIndex": 2, "UserId": "jf-user-1"},
         )
 
 
@@ -751,7 +761,14 @@ class TestCmdFavorites(unittest.TestCase):
             )
             cmd_favorites(args, cfg)
 
-    def test_favorites_forwards_limit(self) -> None:
+    def test_favorites_does_not_forward_limit_to_wire(self) -> None:
+        # Pin the ``--limit``-is-client-side-only contract for
+        # ``cmd_favorites``: setting ``args.limit`` must NOT add a
+        # ``Limit`` query parameter to the upstream request. The
+        # only query keys that ride the wire are the service filter
+        # (``Filters=IsFavorite``) and the percent-encoded user id
+        # in the path; ``--limit`` only ever caps the ``--human``
+        # renderer via ``_emit`` -> ``output.emit``.
         cfg = _service_config(user_id="jf-user-1")
         args = _namespace(limit=50)
         with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
@@ -762,7 +779,7 @@ class TestCmdFavorites(unittest.TestCase):
                 status=200,
                 match=[
                     matchers.query_param_matcher(
-                        {"Filters": "IsFavorite", "Limit": "50"}
+                        {"Filters": "IsFavorite"}
                     ),
                 ],
             )
