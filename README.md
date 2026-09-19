@@ -174,7 +174,7 @@ shape (decoded).
 | `sonarr calendar <start> [end]` | GET  | `/api/v3/calendar?start=<start>&end=<end>` | Accepts ISO-8601 dates or datetimes; malformed input → exit `1` + stderr usage hint. |
 | `sonarr wanted`                 | GET  | `/api/v3/wanted/missing`                   | Missing episodes.                                                                    |
 | `sonarr queue`                  | GET  | `/api/v3/queue`                            | Current download / import queue.                                                     |
-| `sonarr recent`                 | GET  | `/api/v3/history`                          | TV history (NOT `/history/movie` like Radarr).                                       |
+| `sonarr recent`                 | GET  | `/api/v3/history?includeSeries=true&includeEpisode=true` | TV history (NOT `/history/movie` like Radarr); include flags populate nested `series`/`episode` titles. |
 | `sonarr lookup <term>`          | GET  | `/api/v3/series/lookup?term=<term>`        | Percent-encoded by the facade.                                                       |
 | `sonarr series <id>`            | GET  | `/api/v3/series/{id}`                      | 404 → exit code `4` with stderr naming the id.                                       |
 

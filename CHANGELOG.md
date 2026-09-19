@@ -76,23 +76,32 @@ within the pre-1.0 contract documented in `README.md`.
   `..._populated_for_season`, `..._populated_for_episode`, and
   `..._null_for_series_top_level`.
 
-- `sonarr recent` -- the curated summary now projects the flat
-  identity fields the upstream `GET /api/v3/history` payload
-  actually carries (`id`, `seriesId`, `episodeId`, `sourceTitle`,
-  `eventType`, `date`, `quality`) instead of fabricating empty
-  `{series: {title: null}, episode: {title: null}}` projections
-  for keys the activity-log rows never populate. The
-  `/api/v3/history` endpoint emits flat rows with `seriesId` /
-  `episodeId` plus a `sourceTitle` for the released episode name,
-  but no nested `series` / `episode` envelopes; every record on
-  the operator's live Sonarr instance previously projected
-  `series.title: null` and `episode.title: null`. The `--human`
-  table column list now mirrors the new flat shape (no
-  dot-path traversal needed). `--verbose` is unchanged (raw
-  history rows still on the wire). Operators who need a friendly
-  series / episode title can resolve the ids via
-  `sonarr series <id>` or look up the release by `sourceTitle`.
-  Pin test in `TestSonarrRecent.test_sonarr_recent_pins_actual_history_row_shape`.
+- `sonarr recent` -- the curated summary now projects the nested
+  `series: {title}` / `episode: {title}` envelopes that Sonarr
+  populates when the operator opts in via the documented
+  `includeSeries=true&includeEpisode=true` query parameters. The
+  earlier fix (commit `087c8bb`) flattened the summary to
+  identity fields because `/api/v3/history` returns flat rows by
+  default; that fix missed that Sonarr DOES populate the nested
+  objects when the include flags are passed. The endpoint now
+  hits `GET /api/v3/history?includeSeries=true&includeEpisode=true`
+  (the include flags are passed as a plain dict to `transport.get`
+  so `requests` percent-encodes each value exactly once on the
+  wire, per the PR #49 contract). The renderer projects both the
+  nested objects (preserving the originally documented
+  `{series: {title}, episode: {title}, eventType, date}`
+  contract) and the flat identity fields the upstream payload
+  also carries -- the fix is additive so `--json` consumers do
+  not break on the field set. The `--human` column list uses
+  dot-path tokens (`series.title` / `episode.title`) resolved by
+  `_row_from_mapping`. A missing envelope renders as
+  `{title: null}` instead of crashing. Sonarr's default page size
+  is the documented `10` so no explicit `pageSize` is passed
+  (the `radarr recent` fix added `pageSize` because Radarr's
+  default is much larger). `--verbose` is unchanged (raw history
+  rows still on the wire). Pin tests in
+  `TestCmdRecent.test_recent_hits_history_path_with_include_series_and_episode`
+  and `TestSummarySonarrRecent.test_sonarr_recent_projects_nested_series_and_episode_titles`.
 - `seerr requests` -- the curated summary now surfaces the
   identity fields from the per-row `media` sub-dict (`id`,
   `mediaType`, `tmdbId`, `tvdbId`, `externalServiceSlug`,
