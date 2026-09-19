@@ -1033,6 +1033,16 @@ class TestMainEntryPoint(unittest.TestCase):
         self.assertEqual(exit_code, 4)
 
     def test_main_search_emits_payload(self) -> None:
+        # Regression coverage for ``jellyfin-search-nextup-envelope-unwrap``:
+        # ``jellyfin search <term>`` (no flag) now emits the curated
+        # summary, not the verbatim upstream envelope. The renderer
+        # iterates the upstream ``Items`` list and projects the
+        # four columns ``cmd_search`` advertises, filling missing
+        # fields with the documented defaults. The bare-list mock
+        # payload exercises the renderer through its no-op unwrap
+        # branch (the upstream envelope path is covered by the
+        # ``test_summary_jellyfin_search_unwraps_envelope`` test
+        # in ``tests/unit/test_output.py``).
         payload = [{"Name": "The Matrix", "Type": "Movie"}]
         with patch(
             "arr_cli.jellyfin.transport.get",
@@ -1042,7 +1052,17 @@ class TestMainEntryPoint(unittest.TestCase):
                 main,
                 ["--config", str(self.cfg_path), "search", "matrix"],
             )
-        self.assertEqual(json.loads(stdout), payload)
+        self.assertEqual(
+            json.loads(stdout),
+            [
+                {
+                    "Name": "The Matrix",
+                    "Type": "Movie",
+                    "ProductionYear": 0,
+                    "SeriesName": None,
+                }
+            ],
+        )
 
     def test_main_human_renders_table(self) -> None:
         # ``--human`` switches from JSON pass-through to tabular

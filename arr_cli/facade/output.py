@@ -788,6 +788,58 @@ def _summary_radarr_wanted(payload: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _summary_jellyfin_search(payload: Any) -> list[dict[str, Any]]:
+    """Render a Jellyfin ``search`` payload as the curated summary.
+
+    ``GET /Items?searchTerm=...&Recursive=true`` returns a paginated
+    envelope of the shape ``{Items: [...], TotalRecordCount: N,
+    StartIndex: 0}``; iterate ``Items`` so the default summary is
+    non-empty when the envelope is well-formed. A bare list is
+    unchanged behaviour. ``search`` is broader than ``recent`` /
+    ``resume`` -- Jellyfin also returns Series, Season, BoxSet, etc.
+    -- so no defensive type filter is applied.
+    """
+    payload = _unwrap_envelope(payload)
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "Name": _safe_get(item, "Name", default=None),
+            "Type": _safe_get(item, "Type", default=None),
+            "ProductionYear": _safe_get(item, "ProductionYear", default=0),
+            "SeriesName": _safe_get(item, "SeriesName", default=None),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_jellyfin_nextup(payload: Any) -> list[dict[str, Any]]:
+    """Render a Jellyfin ``nextup`` payload as the curated summary.
+
+    ``GET /Shows/NextUp?UserId=...`` returns a paginated envelope of
+    the shape ``{Items: [...], TotalRecordCount: N, StartIndex: 0}``;
+    iterate ``Items`` so the default summary is non-empty when the
+    envelope is well-formed. A bare list is unchanged behaviour.
+    """
+    payload = _unwrap_envelope(payload)
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "Name": _safe_get(item, "Name", default=None),
+            "SeriesName": _safe_get(item, "SeriesName", default=None),
+            "ParentIndexNumber": _safe_get(
+                item, "ParentIndexNumber", default=0
+            ),
+            "IndexNumber": _safe_get(item, "IndexNumber", default=0),
+            "PremiereDate": _safe_get(item, "PremiereDate", default=None),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
 def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
     """Render a Radarr ``queue`` payload as the curated summary."""
     payload = _unwrap_envelope(payload)
@@ -1633,6 +1685,8 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("jellyfin", "favorites"): _summary_jellyfin_favorites,
     ("jellyfin", "resume"): _summary_jellyfin_resume,
     ("jellyfin", "latest"): _summary_jellyfin_latest,
+    ("jellyfin", "search"): _summary_jellyfin_search,
+    ("jellyfin", "nextup"): _summary_jellyfin_nextup,
     ("radarr", "wanted"): _summary_radarr_wanted,
     ("radarr", "queue"): _summary_radarr_queue,
     ("radarr", "recent"): _summary_radarr_recent,
