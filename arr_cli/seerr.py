@@ -162,6 +162,7 @@ import argparse
 import logging
 import sys
 from typing import Any, Mapping, Sequence
+from urllib.parse import quote
 
 from arr_cli.facade import output, transport
 from arr_cli.facade.cli_common import build_parser, main_wrapper, universal_parents
@@ -290,13 +291,19 @@ GENRES_TV_PATH = "/api/v1/genres/tv"
 
 
 #: Characters that trigger Seer's openapi validator rejection of the
-#: ``query`` parameter on ``/api/v1/search`` even though ``requests``
-#: already percent-encodes the value on the wire. Conservative default:
-#: the two characters operators commonly type in search terms (literal
-#: space and ``+``). Mirrors the empirical repro for
-#: ``seerr-search-reserved-chars``; the live ``/api-docs/swagger-ui-init.js``
-#: OpenAPI spec on the operator's instance is the source of truth for
-#: the full set per AGENTS.md §1 "Seer note".
+#: ``query`` parameter on ``/api/v1/search``. ``requests`` encodes a
+#: literal space as form-style ``+`` on the wire (and a literal ``+``
+#: as ``%2B``); Seer's validator rejects the form-encoded space. When
+#: any of these chars appears in the typed query, :func:`cmd_search`
+#: pre-encodes the value with ``urllib.parse.quote(value, safe="")``
+#: so the wire format becomes the double-encoded ``%2520`` /
+#: ``%252B`` form that the live Seer build accepts. Conservative
+#: default: the two characters operators commonly type in search
+#: terms (literal space and ``+``). Empirical source: the
+#: ``seerr-search-reserved-chars`` and ``seerr-search-multiword``
+#: tickets; the live ``/api-docs/swagger-ui-init.js`` OpenAPI spec
+#: on the operator's instance is the source of truth for the full
+#: set per AGENTS.md §1 "Seer note".
 _SEERR_RESERVED_QUERY_CHARS = frozenset({" ", "+"})
 
 
@@ -604,14 +611,24 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     exposed by Seer; the live ``/api-docs/swagger-ui-init.js``
     OpenAPI spec is the source of truth (AGENTS.md §1 "Seer note").
 
-    A query containing any character in
-    :data:`_SEERR_RESERVED_QUERY_CHARS` (e.g. a literal space)
-    short-circuits to an empty result set with a stderr diagnostic
-    rather than hitting the upstream endpoint, because Seer's
-    openapi validator rejects the request with HTTP 400 even
-    though ``requests`` already percent-encodes the value on the
-    wire. Fix for ``seerr-search-reserved-chars``; mirrors the
-    empty-query short-circuit in :func:`arr_cli.jellyfin.cmd_search`.
+    Queries containing a character in
+    :data:`_SEERR_RESERVED_QUERY_CHARS` (literal space or ``+``)
+    are RFC 3986 percent-encoded at this call site with
+    ``urllib.parse.quote(value, safe="")`` before they reach the
+    transport layer. ``requests`` then re-encodes the ``%`` to
+    ``%25`` on the wire (a literal space becomes ``%2520``; a
+    literal ``+`` becomes ``%252B``). The live Seer build accepts
+    this double-encoded form; the form-encoded ``+`` that
+    ``requests`` emits by default for a literal space triggers an
+    openapi-validator rejection (HTTP 400). The pre-encoding is
+    scoped to this single call site so the transport layer's
+    no-pre-encode contract for the other endpoints is preserved
+    -- see the ``transport-params-double-encoded`` ticket cited
+    in the parent ``seerr-search-reserved-chars`` review. Restores
+    multi-word search (``seerr search "doctor who"``) after the
+    parent ticket's silent-empty fallback; single-word queries are
+    unaffected (the pre-encoding branch is gated on the reserved-
+    char predicate).
     """
     query = getattr(args, "query", "") or ""
     # Tabular columns match the summary-shape keys emitted by
@@ -627,28 +644,23 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "mediaType",
         "releaseDate",
     ]
+    # Pre-encode the query value only when a reserved char is
+    # present. Single-word queries (``query="dune"``) skip this
+    # branch so their wire format stays the documented single-word
+    # shape. The set is conservative -- extend only with empirical
+    # evidence from the operator's live Seer build (AGENTS.md §1
+    # "Seer note"). Pre-encoding lives at the call site, NOT in the
+    # transport layer, so the ``transport-params-double-encoded``
+    # contract for the other endpoints is preserved (the docstring
+    # above cites the parent ticket's analysis).
+    query_param: str = query
     if query and any(c in query for c in _SEERR_RESERVED_QUERY_CHARS):
-        # Operator-facing diagnostic per AGENTS.md §1 ("diagnostics
-        # on stderr"); mirrors the ``cmd_available`` "substring
-        # filter ignored" tone. Short-circuit to the canonical emit
-        # path with ``[]`` so the result set is empty (not an
-        # ``HttpError`` → exit 4 from the upstream 400). The
-        # transport layer is intentionally NOT pre-encoded here:
-        # that would regress the ``transport-params-double-encoded``
-        # ticket (see ``arr_cli/facade/transport.py:_encode_params``).
-        print(
-            f"seerr search: query {query!r} contains a reserved "
-            "character (e.g. space); short-circuiting to empty "
-            "result set (upstream /api/v1/search rejects reserved "
-            "chars in `query`).",
-            file=sys.stderr,
-        )
-        return _emit([], args, columns=columns)
+        query_param = quote(query, safe="")
     payload = _get(
         "/api/v1/search",
         args,
         cfg,
-        params={"query": query},
+        params={"query": query_param},
         op="search",
     )
     return _emit(payload, args, columns=columns)

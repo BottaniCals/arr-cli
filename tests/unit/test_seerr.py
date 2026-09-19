@@ -756,12 +756,14 @@ class TestCmdSearch(unittest.TestCase):
 
         Note: the original ``raw_query`` used to include a literal
         space (``"hello world?special&chars"``); the
-        ``seerr-search-reserved-chars`` guard now short-circuits
-        queries containing reserved chars (space, ``+``) before the
-        transport call, so the space was removed to keep this test
-        meaningful as a handler-vs-transport responsibility pin.
-        Non-reserved special chars (``?``, ``&``, etc.) still flow
-        through to ``transport.get`` unchanged.
+        ``seerr-search-reserved-chars`` guard now pre-encodes
+        queries containing reserved chars (space, ``+``) at this
+        call site before the transport call (the transport layer
+        then double-encodes the ``%`` for the wire), so the space
+        was removed to keep this test meaningful as a handler-vs-
+        transport responsibility pin. Non-reserved special chars
+        (``?``, ``&``, etc.) still flow through to ``transport.get``
+        unchanged.
         """
         raw_query = "hello?special&chars"
         with patch(
@@ -846,17 +848,17 @@ class TestCmdSearch(unittest.TestCase):
 
 
 class TestCmdSearchReservedChars(unittest.TestCase):
-    """Regression tests for ``seerr-search-reserved-chars``.
+    """Regression tests for ``seerr-search-reserved-chars`` (parent)
+    and the follow-up ``seerr-search-multiword``.
 
     Seer's openapi validator rejects ``/api/v1/search?query=<value>``
-    when ``<value>`` contains a reserved character (most commonly a
-    literal space) even though ``requests`` percent-encodes the value
-    on the wire. The CLI must short-circuit client-side to an empty
-    result set with a stderr diagnostic instead of surfacing the
-    upstream 400 as exit 4 (``HttpError``).
-
-    Mirrors ``test_jellyfin.TestCmdSearch``'s empty-query
-    short-circuit tests in structure.
+    when ``<value>`` arrives on the wire form-encoded with ``+`` for
+    spaces (the default ``requests`` behaviour). The CLI now pre-
+    encodes the value with ``urllib.parse.quote(value, safe="")`` at
+    the :func:`cmd_search` call site so the wire format becomes the
+    double-encoded ``%2520`` form that the live Seer build accepts.
+    Mirrors the ``seerr-search-reserved-chars`` / ``seerr-search-
+    multiword`` bug reviews.
     """
 
     def _make_args(
@@ -880,35 +882,68 @@ class TestCmdSearchReservedChars(unittest.TestCase):
             query=query,
         )
 
-    def test_search_multi_word_with_space_short_circuits_to_empty_list(self) -> None:
-        """``query=\"doctor who\"`` short-circuits to ``[]`` without hitting the endpoint.
+    def test_search_multi_word_with_space_pre_encodes_query(self) -> None:
+        """``query='doctor who'`` hits transport with ``query='doctor%20who'``.
 
-        Seer's openapi validator rejects the literal space even after
-        ``requests`` percent-encodes it on the wire, so the CLI must
-        not attempt the HTTP call. ``transport.get`` is patched to
-        raise so any call surfaces immediately.
+        Follow-up to ``seerr-search-reserved-chars``: instead of
+        short-circuiting to ``[]``, the CLI now reaches the upstream
+        endpoint with the query value RFC 3986 percent-encoded at the
+        call site. ``requests`` will re-encode the ``%`` to ``%25`` on
+        the wire (final form: ``%2520``); the live Seer build accepts
+        that. Repros the operator's manual workaround
+        (``seerr search "doctor%20who"``) without the operator having
+        to know the encoding trick.
         """
         from arr_cli.seerr import cmd_search
+        from urllib.parse import quote
 
         cfg = None
         args = self._make_args(query="doctor who")
         with patch(
-            "arr_cli.seerr.transport.get",
-            side_effect=AssertionError(
-                "transport.get must not be called for a query with "
-                "reserved characters (space)"
-            ),
-        ):
-            stdout, _stderr = _capture_stderr_stdout(cmd_search, args, cfg)
-        self.assertEqual(json.loads(stdout), [])
+            "arr_cli.seerr.transport.get", return_value=[]
+        ) as mock_get:
+            cmd_search(args, cfg)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(
+            kwargs["params"],
+            {"query": quote("doctor who", safe="")},
+        )
 
-    def test_search_single_word_still_calls_transport(self) -> None:
-        """``query=\"doctor\"`` (no reserved chars) still hits ``transport.get``.
+    def test_search_plus_sign_pre_encodes_to_2B(self) -> None:
+        """``query='doctor+who'`` pre-encodes to ``doctor%2Bwho``.
 
-        Regression guard against an over-eager predicate that would
-        short-circuit all queries. The single-word path must remain
-        unchanged: ``transport.get`` is called once with
-        ``params={\"query\": \"doctor\"}``.
+        Regression guard for the ``+`` branch of
+        :data:`_SEERR_RESERVED_QUERY_CHARS` -- the encoded form
+        (``%2B``) decodes to a literal ``+``, not a space, so
+        operators typing ``+`` deliberately get that exact token in
+        the search rather than having it interpreted as a separator.
+        """
+        from arr_cli.seerr import cmd_search
+        from urllib.parse import quote
+
+        cfg = None
+        args = self._make_args(query="doctor+who")
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=[]
+        ) as mock_get:
+            cmd_search(args, cfg)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(
+            kwargs["params"],
+            {"query": quote("doctor+who", safe="")},
+        )
+
+    def test_search_single_word_unchanged_no_pre_encoding(self) -> None:
+        """``query='doctor'`` (no reserved chars) flows through unchanged.
+
+        Pins the contract that pre-encoding is opt-in only when a
+        reserved char is present. Single-word queries keep their
+        original (non-encoded) shape so the wire format for the
+        common case is byte-identical to pre-fix and the
+        single-word transport contract documented in
+        :mod:`tests.unit.test_transport` continues to apply.
         """
         from arr_cli.seerr import cmd_search
 
@@ -922,50 +957,56 @@ class TestCmdSearchReservedChars(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(kwargs["params"], {"query": "doctor"})
 
-    def test_search_reserved_chars_human_renders_empty_list(self) -> None:
-        """``--human`` renders the documented ``(empty list)`` literal for reserved-char queries.
+    def test_search_reserved_chars_no_stderr_diagnostic(self) -> None:
+        """Reserved-char query no longer emits the parent-ticket stderr note.
 
-        Pins the second priority-chain branch in
-        :func:`arr_cli.facade.output.emit` for the new guard: with
-        ``--human`` the short-circuit must render ``(empty list)``,
-        not the verbatim JSON ``[]``.
-        """
-        from arr_cli.seerr import cmd_search
-
-        cfg = None
-        args = self._make_args(query="doctor who", human=True)
-        with patch(
-            "arr_cli.seerr.transport.get",
-            side_effect=AssertionError(
-                "transport.get must not be called for a query with "
-                "reserved characters (space)"
-            ),
-        ):
-            stdout, _stderr = _capture_stderr_stdout(cmd_search, args, cfg)
-        self.assertEqual(stdout.strip(), "(empty list)")
-
-    def test_search_reserved_chars_emits_stderr_diagnostic(self) -> None:
-        """Reserved-char query emits a stderr diagnostic explaining the empty result.
-
-        Without the stderr note, an empty ``[]`` looks like \"no
-        matches\" rather than \"query rejected locally because
-        upstream would 400\". The operator needs to see why the
-        result set is empty.
+        The parent ticket's ``seerr search: query ... contains a
+        reserved character`` diagnostic was specific to the silent-
+        empty short-circuit. Pre-encoding restores the request to the
+        upstream, so the diagnostic is misleading and is removed --
+        the operator now sees real results rather than an empty
+        list, which doesn't need explaining.
         """
         from arr_cli.seerr import cmd_search
 
         cfg = None
         args = self._make_args(query="doctor who")
         with patch(
-            "arr_cli.seerr.transport.get",
-            side_effect=AssertionError(
-                "transport.get must not be called for a query with "
-                "reserved characters (space)"
-            ),
+            "arr_cli.seerr.transport.get", return_value=[]
         ):
             _stdout, stderr = _capture_stderr_stdout(cmd_search, args, cfg)
-        self.assertIn("reserved", stderr)
-        self.assertIn("doctor who", stderr)
+        self.assertNotIn("reserved", stderr)
+
+    def test_search_reserved_chars_calls_transport_not_short_circuit(self) -> None:
+        """Reserved-char query reaches ``transport.get`` rather than short-circuiting.
+
+        Regression guard for the follow-up ticket. The parent ticket
+        short-circuited to ``[]`` for reserved-char queries; the
+        follow-up must reach the upstream. The exact pre-encoded value
+        is pinned by :meth:`test_search_multi_word_with_space_pre_encodes_query`;
+        this test asserts only that the call IS made (i.e. the
+        short-circuit branch is gone).
+        """
+        from arr_cli.seerr import cmd_search
+
+        cfg = None
+        args = self._make_args(query="doctor who")
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=[]
+        ) as mock_get:
+            cmd_search(args, cfg)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        # If the silent-empty short-circuit were re-introduced, this
+        # would be ``[]`` (i.e. ``mock_get.call_args_list`` would be
+        # empty). The pre-encoding branch instead reaches transport.
+        self.assertGreaterEqual(
+            len(mock_get.call_args_list), 1,
+            msg=(
+                "transport.get was not called; cmd_search likely "
+                "short-circuited to [] (regression of "
+                "seerr-search-reserved-chars fix)."
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
