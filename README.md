@@ -147,10 +147,10 @@ shape (decoded).
 | ------------------------- | :--: | ----------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `jellyfin now`            | GET  | `/Sessions`                                                 | All active sessions across users.                                      |
 | `jellyfin resume`         | GET  | `/Users/{user_id}/Items/Resume`                             | Requires `jellyfin.user_id`.                                           |
-| `jellyfin recent`         | GET  | `/Users/{user_id}/Items?SortBy=DatePlayed&Filters=IsPlayed` | Requires `jellyfin.user_id`.                                           |
-| `jellyfin nextup`         | GET  | `/Shows/NextUp`                                             | `--limit` is client-side only (caps the renderer, never sent on the wire). Accepts optional `StartIndex` and `UserId` query params. |
+| `jellyfin recent`         | GET  | `/Users/{user_id}/Items?SortBy=DatePlayed&Filters=IsPlayed&includeItemTypes=Movie,Episode` | Requires `jellyfin.user_id`. `includeItemTypes=Movie,Episode` is required on Jellyfin v12 (without it the server returns a single episode instead of the rolled-up recent set). |
+| `jellyfin nextup`         | GET  | `/Shows/NextUp`                                             | `--limit` is client-side only (caps the renderer, never sent on the wire). `UserId` is always sent from `jellyfin.user_id` (required on v12+). Accepts `--start-index N` for wire-side pagination (forwarded as `StartIndex`). |
 | `jellyfin latest`         | GET  | `/Users/{user_id}/Items/Latest`                             | Requires `jellyfin.user_id`.                                           |
-| `jellyfin search <query>` | GET  | `/Items?searchTerm=<query>`                                 | Empty query returns the service's empty-array response (not an error). |
+| `jellyfin search <query>` | GET  | `/Items?searchTerm=<query>&Recursive=true`                  | `Recursive=true` is required on Jellyfin v10+/v12 — without it `/Items` returns the five library-root folders rather than matches. An empty query short-circuits client-side (returns `[]` without calling `/Items`), since `searchTerm=` combined with `Recursive=true` would otherwise walk the full library. |
 | `jellyfin item <id>`      | GET  | `/Items/{id}`                                               | 404 → exit code `4` with stderr naming the id.                         |
 | `jellyfin favorites`      | GET  | `/Users/{user_id}/Items?Filters=IsFavorite`                 | Requires `jellyfin.user_id`. `--limit` is client-side only (caps the renderer, never sent on the wire). |
 
