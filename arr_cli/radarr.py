@@ -485,6 +485,29 @@ def build_radarr_parser() -> argparse.ArgumentParser:
         help="Radarr subcommand (see below)",
     )
 
+    # ``--page-size`` is also registered at the top level so the
+    # documented ``radarr --page-size N recent`` invocation parses
+    # (argparse can only recognise a flag when it is registered on
+    # the parser that is currently parsing; a subparser-only flag
+    # is invisible to the top-level parser and the first positional
+    # after the flag value is consumed as the COMMAND choice --
+    # ``--page-size 5 recent`` would otherwise error with
+    # ``argument COMMAND: invalid choice: '5'``). The flag is also
+    # registered on the ``recent`` subparser below so the
+    # ``radarr recent --page-size N`` form keeps working and so
+    # ``radarr wanted --page-size 5`` still surfaces a usage error
+    # instead of silently no-op'ing under ``cmd_wanted``.
+    parser.add_argument(
+        "--page-size",
+        type=_validate_page_size,
+        default=_PAGE_SIZE_DEFAULT,
+        metavar="N",
+        help=(
+            "number of history rows to fetch from the activity-log "
+            f"endpoint (1-{_PAGE_SIZE_MAX}; default {_PAGE_SIZE_DEFAULT})"
+        ),
+    )
+
     calendar = subparsers.add_parser(
         "calendar",
         help=(
@@ -541,7 +564,17 @@ def build_radarr_parser() -> argparse.ArgumentParser:
     recent.add_argument(
         "--page-size",
         type=_validate_page_size,
-        default=_PAGE_SIZE_DEFAULT,
+        # ``default=argparse.SUPPRESS`` so a value parsed at the
+        # top level (see the ``parser.add_argument`` above) is not
+        # clobbered by the subparser's own default-lookup step --
+        # the argparse quirk the universal-flag parent documents in
+        # ``cli_common._build_universal_parent`` (top-level value
+        # is overwritten by the subparser's default unless we
+        # suppress). The natural default lives on the top-level
+        # registration only; a user that omits ``--page-size``
+        # entirely still gets ``_PAGE_SIZE_DEFAULT`` from the
+        # top-level action.
+        default=argparse.SUPPRESS,
         metavar="N",
         help=(
             "number of history rows to fetch from the activity-log "

@@ -1361,6 +1361,84 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         help="Seerr subcommand (see below)",
     )
 
+    # The five filter flags below (``--ratings``, ``--language``,
+    # ``--page``, ``--genre``, ``--sort``) are also registered at
+    # the top level so documented invocations like
+    # ``seerr --language en movie 603`` and
+    # ``seerr --ratings tv 1396`` parse (argparse can only
+    # recognise a flag when it is registered on the parser that is
+    # currently parsing; a subparser-only flag is invisible to the
+    # top-level parser and the first positional after the flag
+    # value is consumed as the COMMAND choice --
+    # ``--language en movie 603`` would otherwise error with
+    # ``argument COMMAND: invalid choice: 'en'``). The flags are
+    # ALSO registered on the relevant subparsers below so the
+    # ``seerr movie 603 --language en`` form keeps working AND so
+    # ``seerr search --ratings foo`` still surfaces a usage error
+    # instead of silently no-op'ing under ``cmd_search``. The
+    # natural defaults live here on the top-level registration;
+    # the matching subparser registrations use
+    # ``default=argparse.SUPPRESS`` so they don't clobber a
+    # top-level-supplied value via the argparse quirk the
+    # universal-flag parent documents in
+    # ``cli_common._build_universal_parent``.
+    parser.add_argument(
+        "--ratings",
+        action="store_true",
+        default=False,
+        help=(
+            "also fetch Rotten Tomatoes critic + audience scores "
+            "(GET /api/v1/{tv,movie}/<id>/ratings) and merge them "
+            "into the default summary; honoured by ``movie`` and "
+            "``tv``"
+        ),
+    )
+    parser.add_argument(
+        "--language",
+        default=None,
+        metavar="LANG",
+        help=(
+            "ISO 639-1 language code forwarded as the "
+            "?language=<LANG> query parameter; honoured by "
+            "``movie``, ``tv``, ``trending``, ``upcoming-movies``, "
+            "``upcoming-tv``, ``discover-movies``, "
+            "``discover-tv``, and ``genres``"
+        ),
+    )
+    parser.add_argument(
+        "--page",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "page number forwarded as the ?page=<N> query "
+            "parameter; honoured by ``upcoming-movies``, "
+            "``upcoming-tv``, ``discover-movies``, and "
+            "``discover-tv``"
+        ),
+    )
+    parser.add_argument(
+        "--genre",
+        type=int,
+        default=None,
+        metavar="ID",
+        help=(
+            "TMDB genre id forwarded as the ?genre=<ID> query "
+            "parameter; honoured by ``discover-movies`` and "
+            "``discover-tv``"
+        ),
+    )
+    parser.add_argument(
+        "--sort",
+        default=None,
+        metavar="SORT_BY",
+        help=(
+            "sort key forwarded as the ?sortBy=<SORT_BY> query "
+            "parameter; honoured by ``discover-movies`` and "
+            "``discover-tv``"
+        ),
+    )
+
     subparsers.add_parser(
         "requests",
         help="list media requests (GET /api/v1/request)",
@@ -1440,9 +1518,22 @@ def build_seerr_parser() -> argparse.ArgumentParser:
             "TMDB/TVDB TV show id (e.g. 57243 for Doctor Who)"
         ),
     )
+    # ``--ratings`` and ``--language`` are also registered at the
+    # top level above so the documented
+    # ``seerr --language en movie 603`` /
+    # ``seerr --ratings tv 1396`` invocations parse. They are kept
+    # here too so the ``seerr tv 1396 --ratings`` /
+    # ``seerr movie 603 --language en`` form keeps working AND so
+    # ``seerr search --ratings foo`` still surfaces a usage error
+    # instead of silently no-op'ing under ``cmd_search``.
     tv.add_argument(
         "--ratings",
         action="store_true",
+        # ``default=argparse.SUPPRESS`` so a value parsed at the
+        # top level is not clobbered by the subparser's default
+        # lookup. The natural ``False`` default lives on the
+        # top-level registration.
+        default=argparse.SUPPRESS,
         help=(
             "also fetch Rotten Tomatoes critic + audience scores "
             "(GET /api/v1/tv/<id>/ratings) and merge them into the "
@@ -1451,7 +1542,11 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     tv.add_argument(
         "--language",
-        default=None,
+        # ``default=argparse.SUPPRESS`` so a value parsed at the
+        # top level is not clobbered by the subparser's default
+        # lookup. The natural ``None`` default lives on the
+        # top-level registration.
+        default=argparse.SUPPRESS,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "
@@ -1479,6 +1574,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     movie.add_argument(
         "--ratings",
         action="store_true",
+        default=argparse.SUPPRESS,
         help=(
             "also fetch Rotten Tomatoes critic + audience scores "
             "(GET /api/v1/movie/<id>/ratings) and merge them into "
@@ -1487,7 +1583,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     movie.add_argument(
         "--language",
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "
@@ -1527,9 +1623,13 @@ def build_seerr_parser() -> argparse.ArgumentParser:
             "(day or week; default week)"
         ),
     )
+    # ``--language`` is also registered at the top level above so
+    # ``seerr --language en trending`` parses. Kept here so
+    # ``seerr trending --language en`` keeps working AND so
+    # ``seerr search --language en`` surfaces a usage error.
     trending.add_argument(
         "--language",
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "
@@ -1550,7 +1650,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     upcoming_movies.add_argument(
         "--page",
         type=int,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="N",
         help=(
             "page number forwarded as the ?page=<N> query "
@@ -1559,7 +1659,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     upcoming_movies.add_argument(
         "--language",
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "
@@ -1580,7 +1680,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     upcoming_tv.add_argument(
         "--page",
         type=int,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="N",
         help=(
             "page number forwarded as the ?page=<N> query "
@@ -1589,7 +1689,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     upcoming_tv.add_argument(
         "--language",
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "
@@ -1611,7 +1711,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     discover_movies.add_argument(
         "--genre",
         type=int,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="ID",
         help=(
             "TMDB genre id forwarded as the ?genre=<ID> query "
@@ -1620,7 +1720,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     discover_movies.add_argument(
         "--sort",
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="SORT_BY",
         help=(
             "sort key forwarded as the ?sortBy=<SORT_BY> query "
@@ -1629,7 +1729,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     discover_movies.add_argument(
         "--language",
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "
@@ -1640,7 +1740,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     discover_movies.add_argument(
         "--page",
         type=int,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="N",
         help=(
             "page number forwarded as the ?page=<N> query "
@@ -1662,7 +1762,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     discover_tv.add_argument(
         "--genre",
         type=int,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="ID",
         help=(
             "TMDB genre id forwarded as the ?genre=<ID> query "
@@ -1671,7 +1771,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     discover_tv.add_argument(
         "--sort",
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="SORT_BY",
         help=(
             "sort key forwarded as the ?sortBy=<SORT_BY> query "
@@ -1680,7 +1780,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     discover_tv.add_argument(
         "--language",
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "
@@ -1691,7 +1791,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     discover_tv.add_argument(
         "--page",
         type=int,
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="N",
         help=(
             "page number forwarded as the ?page=<N> query "
@@ -1724,7 +1824,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     )
     genres.add_argument(
         "--language",
-        default=None,
+        default=argparse.SUPPRESS,
         metavar="LANG",
         help=(
             "ISO 639-1 language code forwarded as the "

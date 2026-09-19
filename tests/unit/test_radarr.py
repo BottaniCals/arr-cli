@@ -47,6 +47,7 @@ from arr_cli.facade.errors import (  # noqa: E402
 from arr_cli.radarr import (  # noqa: E402
     SERVICE_NAME,
     _DISPATCH,
+    _PAGE_SIZE_DEFAULT,
     _validate_iso_date,
     build_radarr_parser,
     cmd_calendar,
@@ -1208,6 +1209,75 @@ class TestBuildRadarrParser(unittest.TestCase):
         self.assertTrue(args.human)
         self.assertEqual(args.limit, 10)
         self.assertEqual(args.command, "wanted")
+
+
+# ---------------------------------------------------------------------------
+# Test: ``--page-size`` works in either position
+# ---------------------------------------------------------------------------
+
+
+class TestPageSizeFlagPosition(unittest.TestCase):
+    """``--page-size`` is registered at both parser levels so it parses in either position.
+
+    Regression for ticket
+    ``[media-cli] Subcommand-only flags fail when placed before subcommand``.
+    Argparse only recognises a flag on the parser that is currently
+    parsing, so a subparser-only registration breaks
+    ``radarr --page-size N recent`` (the documented
+    ``page-size=N`` form would be consumed as the COMMAND choice).
+    The fix registers ``--page-size`` on the top-level parser AND on
+    the ``recent`` subparser so both invocations parse and route
+    the value through to ``cmd_recent`` unchanged.
+    """
+
+    def setUp(self) -> None:
+        self.parser = build_radarr_parser()
+
+    def test_page_size_before_subcommand(self) -> None:
+        args = self.parser.parse_args(["--page-size", "42", "recent"])
+        self.assertEqual(args.command, "recent")
+        self.assertEqual(args.page_size, 42)
+
+    def test_page_size_after_subcommand(self) -> None:
+        args = self.parser.parse_args(["recent", "--page-size", "42"])
+        self.assertEqual(args.command, "recent")
+        self.assertEqual(args.page_size, 42)
+
+    def test_page_size_default_when_omitted(self) -> None:
+        # The natural default lives on the top-level registration
+        # only (``_PAGE_SIZE_DEFAULT = 10``); a user that omits the
+        # flag entirely still gets the documented default.
+        args = self.parser.parse_args(["recent"])
+        self.assertEqual(args.command, "recent")
+        self.assertEqual(args.page_size, _PAGE_SIZE_DEFAULT)
+
+    def test_page_size_validation_runs_in_both_positions(self) -> None:
+        # ``_validate_page_size`` rejects out-of-range values; the
+        # validator must run regardless of where the flag was placed
+        # so a typo before the subcommand is not silently accepted.
+        for argv in (
+            ["--page-size", "0", "recent"],
+            ["recent", "--page-size", "1001"],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(SystemExit) as ctx:
+                    self.parser.parse_args(argv)
+                self.assertEqual(ctx.exception.code, 2)
+
+    def test_page_size_after_unrelated_subcommand_errors(self) -> None:
+        # ``wanted`` does not register ``--page-size``; argparse
+        # MUST reject the flag after the subcommand so the operator
+        # sees a usage error instead of silently no-op'ing under
+        # ``cmd_wanted``. (The before-subcommand form
+        # ``--page-size 5 wanted`` is a silent no-op by design --
+        # the top-level parser consumes the flag, the unrelated
+        # subcommand never sees it, and ``cmd_wanted`` ignores the
+        # ``page_size`` attribute on its args namespace. This
+        # mirrors the universal-flag pattern documented in
+        # ``cli_common._build_universal_parent``.)
+        with self.assertRaises(SystemExit) as ctx:
+            self.parser.parse_args(["wanted", "--page-size", "5"])
+        self.assertEqual(ctx.exception.code, 2)
 
 
 # ---------------------------------------------------------------------------

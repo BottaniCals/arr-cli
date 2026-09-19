@@ -482,6 +482,26 @@ def build_jellyfin_parser() -> argparse.ArgumentParser:
         help="Jellyfin subcommand (see below)",
     )
 
+    # ``--start-index`` is also registered at the top level so the
+    # documented ``jellyfin --start-index N nextup`` invocation
+    # parses (argparse can only recognise a flag when it is
+    # registered on the parser that is currently parsing; a
+    # subparser-only flag is invisible to the top-level parser and
+    # the first positional after the flag value is consumed as the
+    # COMMAND choice -- ``--start-index 5 nextup`` would otherwise
+    # error with ``argument COMMAND: invalid choice: '5'``). The
+    # flag is also registered on the ``nextup`` subparser below so
+    # the ``jellyfin nextup --start-index N`` form keeps working
+    # and so ``jellyfin now --start-index 5`` still surfaces a
+    # usage error instead of silently no-op'ing under ``cmd_now``.
+    parser.add_argument(
+        "--start-index",
+        type=int,
+        default=None,
+        metavar="N",
+        help="pagination offset forwarded to the service as StartIndex",
+    )
+
     subparsers.add_parser(
         "now",
         help="list active sessions (GET /Sessions)",
@@ -510,7 +530,13 @@ def build_jellyfin_parser() -> argparse.ArgumentParser:
     nextup.add_argument(
         "--start-index",
         type=int,
-        default=None,
+        # ``default=argparse.SUPPRESS`` so a value parsed at the
+        # top level (see the ``parser.add_argument`` above) is not
+        # clobbered by the subparser's own default-lookup step --
+        # the argparse quirk the universal-flag parent documents
+        # in ``cli_common._build_universal_parent``. The natural
+        # default lives on the top-level registration only.
+        default=argparse.SUPPRESS,
         metavar="N",
         help="pagination offset forwarded to the service as StartIndex",
     )
