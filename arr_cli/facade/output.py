@@ -790,6 +790,7 @@ def _summary_radarr_wanted(payload: Any) -> list[dict[str, Any]]:
 
 def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
     """Render a Radarr ``queue`` payload as the curated summary."""
+    payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     return [
@@ -853,6 +854,7 @@ def _summary_sonarr_wanted(payload: Any) -> list[dict[str, Any]]:
 
 def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
     """Render a Sonarr ``queue`` payload as the curated summary."""
+    payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     return [
