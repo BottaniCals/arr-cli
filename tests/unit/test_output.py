@@ -1951,6 +1951,38 @@ class TestSummaryRadarrQueue(unittest.TestCase):
             [],
         )
 
+    def test_envelope_unwrapped(self) -> None:
+        """``GET /api/v3/queue`` returns the paginated envelope."""
+        payload = {
+            "page": 1,
+            "pageSize": 10,
+            "sortKey": "timeleft",
+            "sortDirection": "descending",
+            "totalRecords": 1,
+            "records": [
+                {
+                    "title": "Vanguard",
+                    "status": "downloading",
+                    "trackedDownloadStatus": "ok",
+                    "size": 1000,
+                    "sizeleft": 500,
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "title": "Vanguard",
+                    "status": "downloading",
+                    "trackedDownloadStatus": "ok",
+                    "size": 1000,
+                    "sizeleft": 500,
+                }
+            ],
+        )
+
 
 class TestSummaryRadarrRecent(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("radarr", "recent")]`` matches the spec.
@@ -2130,6 +2162,38 @@ class TestSummarySonarrQueue(unittest.TestCase):
         self.assertEqual(
             _SUMMARY_RENDERERS[("sonarr", "queue")](None),
             [],
+        )
+
+    def test_envelope_unwrapped(self) -> None:
+        """``GET /api/v3/queue`` returns the paginated envelope."""
+        payload = {
+            "page": 1,
+            "pageSize": 10,
+            "sortKey": "timeleft",
+            "sortDirection": "descending",
+            "totalRecords": 1,
+            "records": [
+                {
+                    "title": "Vanguard",
+                    "status": "downloading",
+                    "trackedDownloadStatus": "ok",
+                    "size": 1000,
+                    "sizeleft": 500,
+                }
+            ],
+        }
+        rendered = _SUMMARY_RENDERERS[("sonarr", "queue")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "title": "Vanguard",
+                    "status": "downloading",
+                    "trackedDownloadStatus": "ok",
+                    "size": 1000,
+                    "sizeleft": 500,
+                }
+            ],
         )
 
 
