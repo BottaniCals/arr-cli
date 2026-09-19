@@ -734,15 +734,20 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     stdout stays chat-agent-sized instead of dumping 228KB of JSON.
 
     ``--ratings`` additionally calls
-    ``GET /api/v1/tv/{tvId}/ratings?language=...`` and merges the small
+    ``GET /api/v1/tv/{tvId}/ratings`` and merges the small
     Rotten Tomatoes critic + audience JSON under
     ``payload["ratings"]``. The renderer surfaces both scores via the
     same path; a single-fetch invocation leaves ``ratings`` unset so
     callers who don't ask for RT data don't pay the extra round trip.
 
-    The ``language`` query parameter is forwarded to both endpoints so
-    localized titles / overviews / RT data line up across the merged
-    payload.
+    The ``language`` query parameter is forwarded to the detail
+    endpoint only; the ratings sub-resource on the operator's live
+    Seer build rejects unknown query parameters with ``HTTP 400``
+    (``Unknown query parameter 'language'``) so passing ``language``
+    there would always 400. Localized titles / overviews therefore
+    line up across the detail payload, while ratings are always
+    fetched without a language filter (RT data is region-agnostic
+    on this build).
 
     Non-2xx responses raise :class:`HttpError(exit_code=4)` via
     :func:`transport.get`, which :func:`main_wrapper` surfaces as a
@@ -755,14 +760,20 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """
     tv_id = getattr(args, "id", "") or ""
     language = getattr(args, "language", None)
-    params: dict[str, Any] = {}
-    if language:
-        params["language"] = language
+    # Detail endpoint accepts ``language``; the ratings sub-resource
+    # does NOT (returns HTTP 400 ``Unknown query parameter 'language'``
+    # on the operator's live Seer build), so the two calls get
+    # separate params dicts. ``None`` is the absence-of-language
+    # signal so we don't pollute the URL with an empty ``?language=``.
+    detail_params: dict[str, Any] = (
+        {"language": language} if language else {}
+    )
+    ratings_params: dict[str, Any] = {}
     payload = _get(
         f"/api/v1/tv/{tv_id}",
         args,
         cfg,
-        params=params or None,
+        params=detail_params or None,
         op=f"tv/{tv_id}",
     )
     if getattr(args, "ratings", False):
@@ -770,7 +781,7 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             f"/api/v1/tv/{tv_id}/ratings",
             args,
             cfg,
-            params=params or None,
+            params=ratings_params or None,
             op=f"tv/{tv_id}/ratings",
         )
         if isinstance(payload, Mapping) and isinstance(ratings, Mapping):
@@ -826,16 +837,21 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     human-readable.
 
     ``--ratings`` additionally calls
-    ``GET /api/v1/movie/{movieId}/ratings?language=...`` and
-    merges the small Rotten Tomatoes critic + audience JSON
-    under ``payload["ratings"]``. The renderer surfaces both
-    scores via the same path; a single-fetch invocation leaves
-    ``ratings`` unset so callers who don't ask for RT data
-    don't pay the extra round trip.
+    ``GET /api/v1/movie/{movieId}/ratings`` and merges the small
+    Rotten Tomatoes critic + audience JSON under
+    ``payload["ratings"]``. The renderer surfaces both scores via
+    the same path; a single-fetch invocation leaves ``ratings``
+    unset so callers who don't ask for RT data don't pay the
+    extra round trip.
 
-    The ``language`` query parameter is forwarded to both
-    endpoints so localized titles / overviews / RT data line up
-    across the merged payload.
+    The ``language`` query parameter is forwarded to the detail
+    endpoint only; the ratings sub-resource on the operator's
+    live Seer build rejects unknown query parameters with
+    ``HTTP 400`` (``Unknown query parameter 'language'``) so
+    passing ``language`` there would always 400. Localized
+    titles / overviews therefore line up across the detail
+    payload, while ratings are always fetched without a
+    language filter (RT data is region-agnostic on this build).
 
     Structural twin of :func:`cmd_tv` so future drift between
     the two commands fails the unit suite immediately.
@@ -853,14 +869,20 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """
     movie_id = getattr(args, "id", "") or ""
     language = getattr(args, "language", None)
-    params: dict[str, Any] = {}
-    if language:
-        params["language"] = language
+    # Detail endpoint accepts ``language``; the ratings sub-resource
+    # does NOT (returns HTTP 400 ``Unknown query parameter 'language'``
+    # on the operator's live Seer build), so the two calls get
+    # separate params dicts. ``None`` is the absence-of-language
+    # signal so we don't pollute the URL with an empty ``?language=``.
+    detail_params: dict[str, Any] = (
+        {"language": language} if language else {}
+    )
+    ratings_params: dict[str, Any] = {}
     payload = _get(
         f"/api/v1/movie/{movie_id}",
         args,
         cfg,
-        params=params or None,
+        params=detail_params or None,
         op=f"movie/{movie_id}",
     )
     if getattr(args, "ratings", False):
@@ -868,7 +890,7 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             f"/api/v1/movie/{movie_id}/ratings",
             args,
             cfg,
-            params=params or None,
+            params=ratings_params or None,
             op=f"movie/{movie_id}/ratings",
         )
         if isinstance(payload, Mapping) and isinstance(ratings, Mapping):
