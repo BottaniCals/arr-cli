@@ -4532,8 +4532,13 @@ class TestCmdGenres(unittest.TestCase):
       movie`` both call ``/api/v1/genres/movie``. ``choices=``
       rejects any other value at parse time with
       ``SystemExit(2)``.
-    * No query string filters ride the wire (the endpoint is
-      parameter-free on Seer).
+    * An optional ``--language <LANG>`` (``ISO 639-1``) flag
+      forwarded as ``?language=<LANG>`` so the upstream Seer
+      endpoint returns a localised genre list; without the flag
+      the request is parameter-free (server default). Pairs with
+      ``seerr discover-movies --genre <id> --language <LANG>``
+      and ``seerr discover-tv --genre <id> --language <LANG>``
+      so the lookup-then-filter chain stays in one locale.
     * The universal ``--verbose`` / ``--human`` flags from
       :func:`arr_cli.facade.cli_common.universal_parents`.
     """
@@ -4580,6 +4585,7 @@ class TestCmdGenres(unittest.TestCase):
             "limit": 20,
             "command": "genres",
             "genres_type": "movie",
+            "language": None,
         }
         base.update(overrides)
         return argparse.Namespace(**base)
@@ -4944,6 +4950,122 @@ class TestCmdGenres(unittest.TestCase):
                 None,
             )
         self.assertEqual(exc_ctx.exception.exit_code, 1)
+
+    # ------------------------------------------------------------------ 4.1.13
+    def test_seerr_genres_language_en_hits_movie_endpoint_with_query_param(
+        self,
+    ) -> None:
+        """``seerr genres movie --language en`` forwards ``?language=en`` on the wire.
+
+        Pin for the ``--language`` flag on the movie endpoint:
+        ``responses``' exact-URL matcher fires only when the
+        request lands on the registered ``?language=en`` URL --
+        any drift (no query, wrong key, empty value) leaves the
+        mock unmatched and surfaces as a ``NetworkError`` exit
+        code 3 instead of the expected exit 0.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/movie"
+                "?language=en",
+                json=self.MOVIE_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "genres", "movie", "--language", "en",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # Spot-check the actual on-the-wire URL so a future
+            # regression to a different query-key name (e.g.
+            # ``?lang=``) fails this assertion rather than
+            # silently swapping the wire contract.
+            self.assertIn("language=en", rsps.calls[0].request.url)
+
+    # ------------------------------------------------------------------ 4.1.14
+    def test_seerr_genres_language_en_hits_tv_endpoint_with_query_param(
+        self,
+    ) -> None:
+        """``seerr genres tv --language en`` forwards ``?language=en`` on the wire."""
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/tv"
+                "?language=en",
+                json=self.TV_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                [
+                    "--config", str(self.cfg_path),
+                    "genres", "tv", "--language", "en",
+                ]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            self.assertIn("language=en", rsps.calls[0].request.url)
+
+    # ------------------------------------------------------------------ 4.1.15
+    def test_seerr_genres_no_language_omits_language_query_param(self) -> None:
+        """Without ``--language``, the request URL carries no ``language=`` query param.
+
+        Mirrors the ``cmd_tv`` / ``cmd_movie`` "no language"
+        contract: the flag defaults to ``None`` so the request
+        stays parameter-free and the upstream server picks its
+        own default. A future regression that always sends
+        ``?language=`` would leave the bare-URL mock unmatched
+        and surface as exit code 3.
+        """
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/genres/movie",
+                json=self.MOVIE_PAYLOAD,
+                status=200,
+            )
+            import arr_cli.seerr as seerr
+
+            exit_code = seerr.main(
+                ["--config", str(self.cfg_path), "genres"]
+            )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(len(rsps.calls), 1)
+            # No language key on the wire -- server picks default.
+            self.assertNotIn("language=", rsps.calls[0].request.url)
+
+    # ------------------------------------------------------------------ 4.1.16
+    def test_seerr_genres_help_lists_language_option(self) -> None:
+        """``seerr genres --help`` lists ``--language`` in the options block.
+
+        Acceptance criterion: ``seerr genres movie --help``
+        lists ``--language`` in the options block, matching the
+        help-text style of ``seerr tv --help`` / ``seerr movie
+        --help``. The argparse help text is the operator-facing
+        contract for the new flag -- surfacing the flag in the
+        generated usage text is part of the deliverable, not a
+        nice-to-have.
+        """
+        import arr_cli.seerr as seerr
+
+        parser = seerr.build_seerr_parser()
+        with contextlib.redirect_stdout(io.StringIO()) as stdout_buf:
+            with self.assertRaises(SystemExit) as exc_ctx:
+                parser.parse_args(["genres", "--help"])
+        self.assertEqual(exc_ctx.exception.code, 0)
+        help_text = stdout_buf.getvalue()
+        self.assertIn("--language", help_text)
+        # ISO 639-1 framing lives in the help text too -- spot
+        # check so a regression that drops the framing surfaces
+        # in the unit layer rather than the operator's terminal.
+        self.assertIn("LANG", help_text)
 
 
 # ---------------------------------------------------------------------------

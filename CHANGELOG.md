@@ -180,6 +180,23 @@ within the pre-1.0 contract documented in `README.md`.
   against `GET /api/v1/discover/tv`. Same flag surface, same defaults,
   same client-side `--limit` contract. Pair with `seerr genres tv` to
   look up TMDB genre ids.
+- `seerr genres [MEDIA_TYPE]` -- new `--language <LANG>` flag
+  (`ISO 639-1`) forwarded as `?language=<LANG>` on
+  `GET /api/v1/genres/<movie|tv>`. Fixes the broken
+  `seerr genres movie --language en → discover-movies --genre <id>
+  --language en` chain: the lookup step previously rejected the
+  flag at parse time (exit code 2) because the historical handler
+  docstring claimed the endpoint was parameter-free -- a misread
+  against the live Seer API. Both `/api/v1/genres/movie` and
+  `/api/v1/genres/tv` accept and honour the `language` query
+  parameter on the operator's live Seer instance. Without the
+  flag the request stays parameter-free (server default
+  behaviour preserved). `--help` lists the new option in the
+  same shape as `seerr tv --help` / `seerr movie --help`. Pin
+  tests in `TestCmdGenres.test_seerr_genres_language_en_hits_movie_endpoint_with_query_param`,
+  `..._hits_tv_endpoint_with_query_param`,
+  `..._no_language_omits_language_query_param`, and
+  `..._help_lists_language_option`.
 
 ### Removed
 

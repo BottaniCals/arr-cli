@@ -304,6 +304,8 @@ def seerr_genres(
     media_type: str,
     args: argparse.Namespace,
     cfg: ServiceConfig,
+    *,
+    params: dict[str, Any] | None = None,
 ) -> list[Any]:
     """Return the TMDB genre list for ``media_type`` as ``[{id, name}, ...]``.
 
@@ -334,6 +336,13 @@ def seerr_genres(
         The loaded :class:`ServiceConfig`; forwarded to
         :func:`_get` so auth (``X-Api-Key``) is injected by the
         facade per REQ-2 AC3.
+    params:
+        Optional query-string filter dict forwarded as the
+        ``params=`` kwarg to :func:`_get`. The ``genres``
+        subcommand uses this to forward ``language`` so the
+        upstream Seer endpoint returns a localised genre list;
+        pass ``None`` (the default) for an unfiltered request
+        matching the historical "parameter-free" contract.
 
     Returns
     -------
@@ -378,6 +387,7 @@ def seerr_genres(
         path,
         args,
         cfg,
+        params=params,
         op=f"genres/{media_type}",
     )
     # Defensive unwrap: ``GET /api/v1/genres/<mediaType>`` returns a
@@ -1214,13 +1224,25 @@ def cmd_genres(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     per-row shape collapses to ``{id, name}`` so the default
     ``--human`` table is the documented ``Id | Name`` (US-4).
 
-    No filters ride on the query string -- the endpoint is
-    parameter-free on Seer (matching the historical Overseerr /
-    Jellyseerr shape). The CLI surface therefore only exposes:
+    One optional filter rides on the query string:
+
+    * ``language`` (``ISO 639-1``) -- only forwarded when
+      ``--language`` is set; no empty ``?language=`` rides the
+      wire. Matches the upstream Seer ``/api/v1/genres/<movie|tv>``
+      contract (the historical "parameter-free" claim in the
+      previous docstring was a misread against the live endpoint,
+      surfaced 2026-09-19 when a `seerr genres movie --language en`
+      invocation broke the `seerr genres movie --language en
+      -> discover-movies --genre <id> --language en` chain).
+
+    The CLI surface therefore exposes:
 
     * A positional ``MEDIA_TYPE`` with ``choices=("movie", "tv")``
       and ``default="movie"`` (matches :func:`cmd_trending`'s
       positional-with-default pattern).
+    * The optional ``--language`` flag, mirroring the help-text
+      shape used by :func:`cmd_tv` / :func:`cmd_movie` /
+      :func:`cmd_upcoming_*` / :func:`cmd_discover_*`.
     * The universal ``--verbose`` / ``--human`` flags from
       :func:`arr_cli.facade.cli_common.universal_parents`.
 
@@ -1239,7 +1261,11 @@ def cmd_genres(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     layer (``X-Api-Key`` header per REQ-2 AC3); this handler
     does not inspect or echo the credential.
     """
-    payload = seerr_genres(args.genres_type, args, cfg)
+    params: dict[str, Any] = {}
+    language = getattr(args, "language", None)
+    if language:
+        params["language"] = language
+    payload = seerr_genres(args.genres_type, args, cfg, params=params or None)
     # Tabular columns match the summary-shape keys emitted by
     # ``_summary_seerr_genres``: ``id`` and ``name`` are
     # top-level keys on every item, so no dot-path traversal is
@@ -1694,6 +1720,16 @@ def build_seerr_parser() -> argparse.ArgumentParser:
             "optional media-type filter "
             "(movie or tv; default movie). "
             "Argparse rejects anything else with exit code 2."
+        ),
+    )
+    genres.add_argument(
+        "--language",
+        default=None,
+        metavar="LANG",
+        help=(
+            "ISO 639-1 language code forwarded as the "
+            "?language=<LANG> query parameter "
+            "(omit = use upstream default)"
         ),
     )
 
