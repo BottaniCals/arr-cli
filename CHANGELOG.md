@@ -9,6 +9,22 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `jellyfin search <term> --human` and `jellyfin nextup --human`
+  -- the two handlers registered `--human` column lists, but
+  their endpoints return the paginated
+  `{Items: [...], TotalRecordCount, StartIndex}` envelope. With
+  no entry in `_SUMMARY_RENDERERS`, `emit()` skipped `summarize()`
+  and the verbatim envelope reached `human()` →
+  `_render_object()`, collapsing the entire `Items` array under
+  a single multi-line string. This fix adds
+  `_summary_jellyfin_search` and `_summary_jellyfin_nextup`
+  (mirroring `_summary_jellyfin_favorites`) and registers both.
+  The `--human` view now renders the registered column table,
+  and the no-flag default path now emits the curated
+  `Items`-only summary instead of the full envelope
+  (`jellyfin-search-nextup-envelope-unwrap`). No change to
+  `arr_cli/jellyfin.py` -- the handler-registered columns
+  already matched.
 - `seerr available` README §4.5 doc drift -- the row for
   `seerr available <query>` no longer promises a client-side
   title-substring post-filter; that filter was retired in PR #39

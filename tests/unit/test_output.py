@@ -717,14 +717,27 @@ class TestEmitHumanSummarizeRoute(unittest.TestCase):
             ),
         )
 
-
-class TestEmitHumanVerbatimFallback(unittest.TestCase):
-    """``emit(..., human_mode=True, verbose_mode=False)`` falls through to
-    verbatim when ``(service, command)`` is not in
-    :data:`_SUMMARY_RENDERERS` (REQ-2 AC7)."""
-
-    def test_known_non_candidate_jellyfin_search(self) -> None:
-        payload = [{"Name": "Foo", "Type": "Movie"}]
+    def test_jellyfin_search_human_renders_table(self) -> None:
+        # Regression for ``jellyfin-search-nextup-envelope-unwrap``:
+        # ``emit(..., human_mode=True, service="jellyfin",
+        # command="search")`` must render the registered column
+        # table even when ``payload`` is the paginated
+        # ``{Items: [...], TotalRecordCount, StartIndex}`` envelope
+        # returned by ``GET /Items?searchTerm=...&Recursive=true``.
+        # Without a registered summary renderer, ``human()`` would
+        # collapse the envelope via ``_render_object()``.
+        payload = {
+            "Items": [
+                {
+                    "Name": "The Matrix",
+                    "Type": "Movie",
+                    "ProductionYear": 1999,
+                    "SeriesName": None,
+                }
+            ],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
         out = _capture_stdout(
             emit,
             payload,
@@ -732,10 +745,137 @@ class TestEmitHumanVerbatimFallback(unittest.TestCase):
             verbose_mode=False,
             service="jellyfin",
             command="search",
+            columns=["Name", "Type", "ProductionYear", "SeriesName"],
         )
-        expected_buffer = io.StringIO()
-        print(human(payload), file=expected_buffer)
-        self.assertEqual(out, expected_buffer.getvalue())
+        self.assertIn(
+            "Name",
+            out.splitlines()[0],
+            msg=(
+                f"jellyfin --human search header {out.splitlines()[0]!r} "
+                "missing the 'Name' column -- the curated table is no "
+                "longer being rendered"
+            ),
+        )
+        self.assertIn(
+            "ProductionYear",
+            out.splitlines()[0],
+            msg=(
+                f"jellyfin --human search header {out.splitlines()[0]!r} "
+                "missing the 'ProductionYear' column"
+            ),
+        )
+        # The envelope collapse markers must NOT appear -- if
+        # either leaks into the rendered output, the envelope is
+        # being routed through ``_render_object()`` instead of the
+        # registered renderer.
+        self.assertNotIn(
+            "TotalRecordCount:",
+            out,
+            msg=(
+                "jellyfin --human search output still contains the "
+                "envelope 'TotalRecordCount:' marker; the summary "
+                "renderer is not unwrapping the envelope -- see "
+                "bug ``jellyfin-search-nextup-envelope-unwrap``"
+            ),
+        )
+        # ``_render_object`` opens with ``{\n  <key>`` -- it must
+        # not appear in human-rendered table output.
+        self.assertNotIn(
+            "{\n  Items:",
+            out,
+            msg=(
+                "jellyfin --human search output still begins with "
+                "the ``_render_object`` envelope opener "
+                "{\\n  Items:; the renderer is not registered -- "
+                "see bug ``jellyfin-search-nextup-envelope-unwrap``"
+            ),
+        )
+
+    def test_jellyfin_nextup_human_renders_table(self) -> None:
+        # Regression for ``jellyfin-search-nextup-envelope-unwrap``:
+        # ``emit(..., human_mode=True, service="jellyfin",
+        # command="nextup")`` must render the registered column
+        # table even when ``payload`` is the paginated envelope
+        # returned by ``GET /Shows/NextUp``.
+        payload = {
+            "Items": [
+                {
+                    "Name": "The One With the Rumor",
+                    "SeriesName": "Friends",
+                    "ParentIndexNumber": 4,
+                    "IndexNumber": 12,
+                    "PremiereDate": "2002-01-10T00:00:00.0000000Z",
+                }
+            ],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
+        out = _capture_stdout(
+            emit,
+            payload,
+            human_mode=True,
+            verbose_mode=False,
+            service="jellyfin",
+            command="nextup",
+            columns=[
+                "Name",
+                "SeriesName",
+                "ParentIndexNumber",
+                "IndexNumber",
+                "PremiereDate",
+            ],
+        )
+        self.assertIn(
+            "Name",
+            out.splitlines()[0],
+            msg=(
+                f"jellyfin --human nextup header {out.splitlines()[0]!r} "
+                "missing the 'Name' column -- the curated table is no "
+                "longer being rendered"
+            ),
+        )
+        self.assertIn(
+            "SeriesName",
+            out.splitlines()[0],
+            msg=(
+                f"jellyfin --human nextup header {out.splitlines()[0]!r} "
+                "missing the 'SeriesName' column"
+            ),
+        )
+        self.assertIn(
+            "PremiereDate",
+            out.splitlines()[0],
+            msg=(
+                f"jellyfin --human nextup header {out.splitlines()[0]!r} "
+                "missing the 'PremiereDate' column"
+            ),
+        )
+        self.assertNotIn(
+            "TotalRecordCount:",
+            out,
+            msg=(
+                "jellyfin --human nextup output still contains the "
+                "envelope 'TotalRecordCount:' marker; the summary "
+                "renderer is not unwrapping the envelope -- see "
+                "bug ``jellyfin-search-nextup-envelope-unwrap``"
+            ),
+        )
+        self.assertNotIn(
+            "{\n  Items:",
+            out,
+            msg=(
+                "jellyfin --human nextup output still begins with "
+                "the ``_render_object`` envelope opener "
+                "{\\n  Items:; the renderer is not registered -- "
+                "see bug ``jellyfin-search-nextup-envelope-unwrap``"
+            ),
+        )
+
+
+class TestEmitHumanVerbatimFallback(unittest.TestCase):
+    """``emit(..., human_mode=True, verbose_mode=False)`` falls through to
+    verbatim when ``(service, command)`` is not in
+    :data:`_SUMMARY_RENDERERS` (REQ-2 AC7)."""
 
     def test_known_non_candidate_radarr_calendar(self) -> None:
         payload = [{"title": "Foo", "releaseDate": "2024-01-01"}]
@@ -1648,6 +1788,227 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
                 "top-level Series row projected a non-null "
                 "SeriesName; Series items have no parent series"
             ),
+        )
+
+
+class TestSummaryJellyfinSearch(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("jellyfin", "search")]`` matches the spec.
+
+    Regression for ``jellyfin-search-nextup-envelope-unwrap``: the
+    ``/Items?searchTerm=...&Recursive=true`` endpoint returns the
+    paginated ``{Items: [...], TotalRecordCount, StartIndex}``
+    envelope. Without a registered renderer, ``emit()`` skips
+    ``summarize()`` and ``human()`` collapses the envelope via
+    ``_render_object()``.
+    """
+
+    def test_search_unwraps_envelope(self) -> None:
+        payload = {
+            "Items": [
+                {
+                    "Name": "The Matrix",
+                    "Type": "Movie",
+                    "ProductionYear": 1999,
+                    "SeriesName": None,
+                },
+                {
+                    "Name": "Friends",
+                    "Type": "Series",
+                    "ProductionYear": 1994,
+                    "SeriesName": None,
+                },
+            ],
+            "TotalRecordCount": 2,
+            "StartIndex": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "search")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "Name": "The Matrix",
+                    "Type": "Movie",
+                    "ProductionYear": 1999,
+                    "SeriesName": None,
+                },
+                {
+                    "Name": "Friends",
+                    "Type": "Series",
+                    "ProductionYear": 1994,
+                    "SeriesName": None,
+                },
+            ],
+        )
+
+    def test_search_handles_bare_list(self) -> None:
+        # Defensive tolerance: pre-envelope clients (or a future
+        # Jellyfin version that drops the envelope) may pass a bare
+        # list. The renderer must project the same keys.
+        payload = [
+            {
+                "Name": "The Matrix",
+                "Type": "Movie",
+                "ProductionYear": 1999,
+                "SeriesName": None,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "search")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "Name": "The Matrix",
+                    "Type": "Movie",
+                    "ProductionYear": 1999,
+                    "SeriesName": None,
+                }
+            ],
+        )
+
+    def test_search_empty_envelope(self) -> None:
+        payload = {"Items": [], "TotalRecordCount": 0, "StartIndex": 0}
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("jellyfin", "search")](payload),
+            [],
+        )
+
+    def test_search_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("jellyfin", "search")](None),
+            [],
+        )
+
+    def test_search_does_not_drop_envelope_metadata_keys(self) -> None:
+        # The renderer's projection is the four fields
+        # ``cmd_search`` already advertises -- nothing more (no
+        # ``Items`` / ``TotalRecordCount`` / ``StartIndex`` leak
+        # through to the curated summary).
+        payload = {
+            "Items": [
+                {
+                    "Name": "The Matrix",
+                    "Type": "Movie",
+                    "ProductionYear": 1999,
+                    "SeriesName": None,
+                    "Overview": "kept upstream only",
+                }
+            ],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "search")](payload)
+        self.assertEqual(
+            sorted(rendered[0].keys()),
+            ["Name", "ProductionYear", "SeriesName", "Type"],
+        )
+
+
+class TestSummaryJellyfinNextup(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("jellyfin", "nextup")]`` matches the spec.
+
+    Regression for ``jellyfin-search-nextup-envelope-unwrap``: the
+    ``/Shows/NextUp?UserId=...`` endpoint returns the paginated
+    ``{Items: [...], TotalRecordCount, StartIndex}`` envelope. The
+    renderer unwraps the envelope and projects the five columns
+    ``cmd_nextup`` advertises (``Name``, ``SeriesName``,
+    ``ParentIndexNumber``, ``IndexNumber``, ``PremiereDate``).
+    """
+
+    def test_nextup_unwraps_envelope(self) -> None:
+        payload = {
+            "Items": [
+                {
+                    "Name": "The One With the Rumor",
+                    "SeriesName": "Friends",
+                    "ParentIndexNumber": 4,
+                    "IndexNumber": 12,
+                    "PremiereDate": "2002-01-10T00:00:00.0000000Z",
+                }
+            ],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "nextup")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "Name": "The One With the Rumor",
+                    "SeriesName": "Friends",
+                    "ParentIndexNumber": 4,
+                    "IndexNumber": 12,
+                    "PremiereDate": "2002-01-10T00:00:00.0000000Z",
+                }
+            ],
+        )
+
+    def test_nextup_handles_bare_list(self) -> None:
+        payload = [
+            {
+                "Name": "The One With the Rumor",
+                "SeriesName": "Friends",
+                "ParentIndexNumber": 4,
+                "IndexNumber": 12,
+                "PremiereDate": "2002-01-10T00:00:00.0000000Z",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "nextup")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "Name": "The One With the Rumor",
+                    "SeriesName": "Friends",
+                    "ParentIndexNumber": 4,
+                    "IndexNumber": 12,
+                    "PremiereDate": "2002-01-10T00:00:00.0000000Z",
+                }
+            ],
+        )
+
+    def test_nextup_empty_envelope(self) -> None:
+        payload = {"Items": [], "TotalRecordCount": 0, "StartIndex": 0}
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("jellyfin", "nextup")](payload),
+            [],
+        )
+
+    def test_nextup_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("jellyfin", "nextup")](None),
+            [],
+        )
+
+    def test_nextup_defaults_on_missing_fields(self) -> None:
+        # ``cmd_nextup`` may project a row whose upstream ``Items``
+        # payload omits ``PremiereDate`` (e.g. unaired episodes in
+        # the nextup window on a future Jellyfin version); the
+        # renderer must fall back to ``None`` / ``0`` rather than
+        # raise on ``_safe_get`` call signature.
+        payload = {
+            "Items": [
+                {
+                    "Name": "Soon",
+                    "SeriesName": "Some Show",
+                    # ParentIndexNumber / IndexNumber / PremiereDate
+                    # intentionally missing.
+                }
+            ],
+            "TotalRecordCount": 1,
+            "StartIndex": 0,
+        }
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "nextup")](payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "Name": "Soon",
+                    "SeriesName": "Some Show",
+                    "ParentIndexNumber": 0,
+                    "IndexNumber": 0,
+                    "PremiereDate": None,
+                }
+            ],
         )
 
 
@@ -4242,6 +4603,23 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "ProductionYear": 2025,
                 "SeriesName": "Bar",
                 "DateCreated": "2025-06-01T00:00:00Z",
+            }
+        ],
+        ("jellyfin", "search"): [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 1999,
+                "SeriesName": "Friends",
+            }
+        ],
+        ("jellyfin", "nextup"): [
+            {
+                "Name": "Foo",
+                "SeriesName": "Bar",
+                "ParentIndexNumber": 4,
+                "IndexNumber": 12,
+                "PremiereDate": "2002-01-10T00:00:00Z",
             }
         ],
         ("radarr", "wanted"): [
