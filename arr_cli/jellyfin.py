@@ -355,9 +355,29 @@ def cmd_item(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     the caller doesn't need to inspect the status code;
     :func:`main_wrapper` then emits the structured stderr line
     naming the id.
+
+    An empty ``item_id`` (e.g. ``jellyfin item ""`` from an unset
+    shell variable) is rejected as malformed CLI input before
+    any HTTP call: the handler raises :class:`ConfigError`
+    (exit 1) so :func:`main_wrapper` emits the documented
+    ``service=jellyfin op=item message=...`` stderr line.
+    Without the guard, ``GET /Items/`` with ``UserId`` returns
+    the configured library-root listing (Jellyfin treats a
+    trailing-slash ``/Items/`` as a recursive ``/Items`` query),
+    silently giving downstream callers a plausible-but-wrong
+    payload they cannot distinguish from a real item lookup.
     """
     user_id = _require_user_id(cfg)
     raw_id = getattr(args, "item_id", "")
+    if not raw_id:
+        raise ConfigError(
+            SERVICE_NAME,
+            "item",
+            (
+                f"{SERVICE_NAME}: item ID must not be empty — "
+                "provide a non-empty Jellyfin item id"
+            ),
+        )
     item_id = transport.encode_path_segment(raw_id)
     payload = _get(
         f"/Items/{item_id}",
