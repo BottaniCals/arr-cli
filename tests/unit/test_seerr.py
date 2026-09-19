@@ -753,8 +753,17 @@ class TestCmdSearch(unittest.TestCase):
         ``test_jellyfin.test_search_query_with_special_chars`` and
         ``test_radarr.test_lookup_percent_encodes_term`` contracts
         that pin the handler-vs-transport responsibility split.
+
+        Note: the original ``raw_query`` used to include a literal
+        space (``"hello world?special&chars"``); the
+        ``seerr-search-reserved-chars`` guard now short-circuits
+        queries containing reserved chars (space, ``+``) before the
+        transport call, so the space was removed to keep this test
+        meaningful as a handler-vs-transport responsibility pin.
+        Non-reserved special chars (``?``, ``&``, etc.) still flow
+        through to ``transport.get`` unchanged.
         """
-        raw_query = "hello world?special&chars"
+        raw_query = "hello?special&chars"
         with patch(
             "arr_cli.seerr.transport.get", return_value=[]
         ) as mock_get:
@@ -829,6 +838,134 @@ class TestCmdSearch(unittest.TestCase):
                 "/api/v1/search",
                 msg=f"cmd_search targeted unexpected path: {path!r}",
             )
+
+
+# ---------------------------------------------------------------------------
+# Test: ``cmd_search`` short-circuits on reserved characters in query
+# ---------------------------------------------------------------------------
+
+
+class TestCmdSearchReservedChars(unittest.TestCase):
+    """Regression tests for ``seerr-search-reserved-chars``.
+
+    Seer's openapi validator rejects ``/api/v1/search?query=<value>``
+    when ``<value>`` contains a reserved character (most commonly a
+    literal space) even though ``requests`` percent-encodes the value
+    on the wire. The CLI must short-circuit client-side to an empty
+    result set with a stderr diagnostic instead of surfacing the
+    upstream 400 as exit 4 (``HttpError``).
+
+    Mirrors ``test_jellyfin.TestCmdSearch``'s empty-query
+    short-circuit tests in structure.
+    """
+
+    def _make_args(
+        self,
+        query: str = "doctor",
+        human: bool = False,
+    ) -> argparse.Namespace:
+        """Build an ``argparse.Namespace`` mirroring the ``search`` subparser defaults."""
+        return argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=human,
+            verbose=False,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="search",
+            query=query,
+        )
+
+    def test_search_multi_word_with_space_short_circuits_to_empty_list(self) -> None:
+        """``query=\"doctor who\"`` short-circuits to ``[]`` without hitting the endpoint.
+
+        Seer's openapi validator rejects the literal space even after
+        ``requests`` percent-encodes it on the wire, so the CLI must
+        not attempt the HTTP call. ``transport.get`` is patched to
+        raise so any call surfaces immediately.
+        """
+        from arr_cli.seerr import cmd_search
+
+        cfg = None
+        args = self._make_args(query="doctor who")
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for a query with "
+                "reserved characters (space)"
+            ),
+        ):
+            stdout, _stderr = _capture_stderr_stdout(cmd_search, args, cfg)
+        self.assertEqual(json.loads(stdout), [])
+
+    def test_search_single_word_still_calls_transport(self) -> None:
+        """``query=\"doctor\"`` (no reserved chars) still hits ``transport.get``.
+
+        Regression guard against an over-eager predicate that would
+        short-circuit all queries. The single-word path must remain
+        unchanged: ``transport.get`` is called once with
+        ``params={\"query\": \"doctor\"}``.
+        """
+        from arr_cli.seerr import cmd_search
+
+        cfg = None
+        args = self._make_args(query="doctor")
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=[]
+        ) as mock_get:
+            cmd_search(args, cfg)
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(kwargs["params"], {"query": "doctor"})
+
+    def test_search_reserved_chars_human_renders_empty_list(self) -> None:
+        """``--human`` renders the documented ``(empty list)`` literal for reserved-char queries.
+
+        Pins the second priority-chain branch in
+        :func:`arr_cli.facade.output.emit` for the new guard: with
+        ``--human`` the short-circuit must render ``(empty list)``,
+        not the verbatim JSON ``[]``.
+        """
+        from arr_cli.seerr import cmd_search
+
+        cfg = None
+        args = self._make_args(query="doctor who", human=True)
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for a query with "
+                "reserved characters (space)"
+            ),
+        ):
+            stdout, _stderr = _capture_stderr_stdout(cmd_search, args, cfg)
+        self.assertEqual(stdout.strip(), "(empty list)")
+
+    def test_search_reserved_chars_emits_stderr_diagnostic(self) -> None:
+        """Reserved-char query emits a stderr diagnostic explaining the empty result.
+
+        Without the stderr note, an empty ``[]`` looks like \"no
+        matches\" rather than \"query rejected locally because
+        upstream would 400\". The operator needs to see why the
+        result set is empty.
+        """
+        from arr_cli.seerr import cmd_search
+
+        cfg = None
+        args = self._make_args(query="doctor who")
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for a query with "
+                "reserved characters (space)"
+            ),
+        ):
+            _stdout, stderr = _capture_stderr_stdout(cmd_search, args, cfg)
+        self.assertIn("reserved", stderr)
+        self.assertIn("doctor who", stderr)
 
 
 # ---------------------------------------------------------------------------
