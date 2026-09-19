@@ -9,6 +9,34 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `radarr lookup ""` and `sonarr lookup ""` -- both handlers now
+  short-circuit to stdout `[]` (exit 0) when the positional
+  `<term>` is empty or missing, mirroring the `jellyfin search ""`
+  and `seerr search ""` contracts already documented in §4 of
+  `README.md`. Previously the empty term was forwarded verbatim
+  as `term=` to `/api/v3/movie/lookup` (Radarr) or
+  `/api/v3/series/lookup` (Sonarr): RadarrAPI rejected it with
+  `HTTP 503 Value cannot be null. (Parameter 'input')` and
+  Sonarr's SkyHook rejected it with `HTTP 503 Object reference
+  not set to an instance of an object`, both surfacing as a
+  noisy `service=radarr op=/api/v3/movie/lookup status=503 ...`
+  stderr line and exit 4. The short-circuit runs after
+  `getattr(args, "term", "") or ""` (the same defensive fallback
+  the previous handler used) and before the `_get(...)` call, so
+  `transport.get` is unreachable for the empty-term branch.
+  `cmd_lookup` docstrings in both `arr_cli/radarr.py` and
+  `arr_cli/sonarr.py` were extended to document the new exit-code
+  contract at the handler site. The non-empty-term path is
+  unchanged (still percent-encoded by the facade). The
+  README §4.2 / §4.3 table note columns for `radarr lookup` and
+  `sonarr lookup` now describe the short-circuit explicitly.
+  Pin tests in
+  `TestCmdLookup.test_lookup_empty_term_short_circuits_to_empty_list`,
+  `..._missing_term_short_circuits_to_empty_list`, and
+  `..._empty_term_human_renders_empty_list` (and the matching
+  trio in `TestCmdLookup` under `test_sonarr.py`); the previous
+  `..._empty_term_still_calls_endpoint` / `..._missing_term_defaults_to_empty`
+  tests were removed because they pinned the buggy behaviour.
 - `seerr tv/movie --ratings --language` -- the two handlers built a
   single shared params dict from `--language` and forwarded it to
   BOTH the detail endpoint (`/api/v1/{tv,movie}/{id}?language=...`,

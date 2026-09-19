@@ -770,26 +770,63 @@ class TestCmdLookup(unittest.TestCase):
             kwargs["params"], {"term": "hello world?special&chars"}
         )
 
-    def test_lookup_empty_term_still_calls_endpoint(self) -> None:
-        # When the user runs ``sonarr lookup`` with no positional
-        # argument the subparser defaults ``term`` to ""; the handler
-        # still forwards the empty term rather than erroring.
+    def test_lookup_empty_term_short_circuits_to_empty_list(self) -> None:
+        # ``lookup-empty-term-short-circuit`` (matches
+        # ``jellyfin-search-empty-query``): an explicit empty
+        # ``term`` (``sonarr lookup ""`` or the no-positional form)
+        # must short-circuit to the canonical emit path with
+        # stdout ``[]`` and must NOT touch the
+        # ``/api/v3/series/lookup`` endpoint -- SkyHook rejects
+        # ``term=`` with ``HTTP 503 Object reference not set to an
+        # instance of an object``, which would otherwise surface
+        # as a noisy exit 4. ``transport.get`` is patched to
+        # raise so any HTTP call surfaces immediately.
         cfg = _service_config()
         args = _namespace(term="")
-        with _patched_get_payload([]) as mock_get:
-            cmd_lookup(args, cfg)
-        kwargs = mock_get.call_args.kwargs
-        self.assertEqual(kwargs["params"], {"term": ""})
+        with patch(
+            "arr_cli.sonarr.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty term"
+            ),
+        ):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        self.assertEqual(json.loads(output), [])
 
-    def test_lookup_missing_term_defaults_to_empty(self) -> None:
-        # Defensive: if the field is absent entirely, the handler
-        # still falls back to an empty string.
+    def test_lookup_missing_term_short_circuits_to_empty_list(self) -> None:
+        # When the user runs ``sonarr lookup`` with no positional
+        # argument the subparser defaults ``term`` to ""; the
+        # handler treats the missing attribute the same as ``""``
+        # and short-circuits to ``[]`` without touching the
+        # upstream endpoint. Pins the argparse.OPTIONAL default
+        # of ``""`` and the handler guard in one test.
         cfg = _service_config()
         args = _namespace()  # no term field
-        with _patched_get_payload([]) as mock_get:
-            cmd_lookup(args, cfg)
-        kwargs = mock_get.call_args.kwargs
-        self.assertEqual(kwargs["params"], {"term": ""})
+        self.assertFalse(hasattr(args, "term"))
+        with patch(
+            "arr_cli.sonarr.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty term"
+            ),
+        ):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        self.assertEqual(json.loads(output), [])
+
+    def test_lookup_empty_term_human_renders_empty_list(self) -> None:
+        # ``--human`` branch: with ``--human`` an empty ``term``
+        # must render the documented ``(empty list)`` literal,
+        # not the verbatim JSON ``[]``. Pairs the JSON pin above
+        # with the second priority-chain branch that
+        # ``output.emit`` uses.
+        cfg = _service_config()
+        args = _namespace(term="", human=True)
+        with patch(
+            "arr_cli.sonarr.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty term"
+            ),
+        ):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        self.assertEqual(output.strip(), "(empty list)")
 
     def test_lookup_human_column_list(self) -> None:
         # The --human column list on lookup uses the real upstream

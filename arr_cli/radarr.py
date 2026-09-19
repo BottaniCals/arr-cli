@@ -343,6 +343,17 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     transport layer percent-encodes the value so special characters
     (slashes, spaces, ``?``, ``&``) cannot break the URL.
 
+    An empty ``term`` (e.g. ``radarr lookup ""`` or ``radarr lookup``
+    with no positional) is intercepted before any HTTP call: it
+    exits 0 with stdout ``[]`` (or the documented ``"(empty list)"``
+    rendering under ``--human``). Skipping the ``/api/v3/movie/lookup``
+    call avoids RadarrAPI's "Value cannot be null. (Parameter 'input')"
+    failure on an empty ``term``, which surfaces to the operator as a
+    noisy ``HTTP 503`` (exit 4) and matches the behaviour of
+    ``jellyfin search ""`` and ``seerr search ""`` documented in
+    README §4. See ``lookup-empty-term-short-circuit`` for the
+    upstream rationale.
+
     the ``monitored`` field on these records is the source default
     (TMDB for Radarr, TVDB for Sonarr), not the user's library
     state. The ``id`` column disambiguates library rows (numeric
@@ -351,13 +362,6 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     a clean library listing use ``radarr movie``.
     """
     term = getattr(args, "term", "") or ""
-    payload = _get(
-        "/api/v3/movie/lookup",
-        args,
-        cfg,
-        params={"term": term},
-        op="lookup",
-    )
     columns = [
         "title",
         "year",
@@ -366,6 +370,19 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "id",
         "monitored",
     ]
+    if not term:
+        # Short-circuit on empty term to ``[]``; mirrors the
+        # ``jellyfin search ""`` / ``seerr search ""`` contract
+        # (README §4) and avoids the noisy ``HTTP 503`` from
+        # RadarrAPI on ``term=``. See ``lookup-empty-term-short-circuit``.
+        return _emit([], args, columns=columns)
+    payload = _get(
+        "/api/v3/movie/lookup",
+        args,
+        cfg,
+        params={"term": term},
+        op="lookup",
+    )
     return _emit(payload, args, columns=columns)
 
 
