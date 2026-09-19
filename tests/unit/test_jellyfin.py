@@ -548,7 +548,9 @@ class TestCmdSearch(unittest.TestCase):
         positional = mock_get.call_args.args
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(positional[1], "/Items")
-        self.assertEqual(kwargs["params"], {"searchTerm": "matrix"})
+        self.assertEqual(
+            kwargs["params"], {"searchTerm": "matrix", "Recursive": True}
+        )
 
     def test_search_empty_query_still_calls_endpoint(self) -> None:
         # REQ-6 AC6: empty query returns the service's empty-array
@@ -559,7 +561,7 @@ class TestCmdSearch(unittest.TestCase):
         with _patched_get_payload([]) as mock_get:
             cmd_search(args, cfg)
         kwargs = mock_get.call_args.kwargs
-        self.assertEqual(kwargs["params"], {"searchTerm": ""})
+        self.assertEqual(kwargs["params"], {"searchTerm": "", "Recursive": True})
 
     def test_search_missing_query_defaults_to_empty(self) -> None:
         # When the user runs ``jellyfin search`` with no positional
@@ -570,7 +572,7 @@ class TestCmdSearch(unittest.TestCase):
         with _patched_get_payload([]) as mock_get:
             cmd_search(args, cfg)
         kwargs = mock_get.call_args.kwargs
-        self.assertEqual(kwargs["params"], {"searchTerm": ""})
+        self.assertEqual(kwargs["params"], {"searchTerm": "", "Recursive": True})
 
     def test_search_query_with_special_chars(self) -> None:
         # The transport layer percent-encodes the value; the handler
@@ -581,8 +583,29 @@ class TestCmdSearch(unittest.TestCase):
             cmd_search(args, cfg)
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(
-            kwargs["params"], {"searchTerm": "hello world?special&chars"}
+            kwargs["params"],
+            {"searchTerm": "hello world?special&chars", "Recursive": True},
         )
+
+    def test_search_forwards_recursive_true(self) -> None:
+        # jellyfin-search-recursive regression pin: ``Recursive=true``
+        # must be on every /Items search request so the server walks
+        # the full library graph. Without it, Jellyfin's /Items
+        # endpoint defaults Recursive=false and returns the configured
+        # library-root folders (Anime, collections, Movies, Playlists,
+        # Shows) for every query — including no-match and empty
+        # queries — instead of an honest empty array. Mirrors the
+        # style of test_item_forwards_user_id_param.
+        cfg = _service_config()
+        args = _namespace(query="dune")
+        with _patched_get_payload([]) as mock_get:
+            cmd_search(args, cfg)
+        positional = mock_get.call_args.args
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(positional[1], "/Items")
+        params = kwargs["params"]
+        self.assertEqual(params["searchTerm"], "dune")
+        self.assertIs(params["Recursive"], True)
 
 
 # ---------------------------------------------------------------------------
