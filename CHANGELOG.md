@@ -9,6 +9,23 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `radarr recent --verbose` and `sonarr recent --verbose` --
+  the two handlers pre-unwrapped the paginated activity-log
+  envelope to the bare `records` list at the call site, so
+  `--verbose` (and `--human` over the verbatim payload) saw a
+  bare list instead of the full `{page, pageSize, sortKey,
+  sortDirection, totalRecords, records: [...]}` envelope. The
+  unwrap is now owned by `_summary_radarr_recent` and
+  `_summary_sonarr_recent` (the existing renderer-side pattern
+  already used by `_summary_jellyfin_recent`,
+  `_summary_jellyfin_search`, and every other paginated
+  renderer), so the envelope reaches `emit()` unchanged and
+  `--verbose` emits it verbatim -- paging consumers can read
+  `totalRecords` / `pageSize` again. The curated summary
+  projection and the `--human` table are unchanged
+  (`recent-verbose-verbatim-envelope`). No README change
+  required: §1 already promises verbatim service JSON for
+  `--verbose`.
 - `jellyfin search <term> --human` and `jellyfin nextup --human`
   -- the two handlers registered `--human` column lists, but
   their endpoints return the paginated

@@ -861,7 +861,22 @@ def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
-    """Render a Radarr ``recent`` payload as the curated summary."""
+    """Render a Radarr ``recent`` payload as the curated summary.
+
+    ``GET /api/v3/history`` returns the paginated activity-log
+    envelope of the shape ``{page, pageSize, sortKey, sortDirection,
+    totalRecords, records: [...]}``; unwrap to the bare ``records``
+    list so the summary is non-empty when the envelope is
+    well-formed. A bare list is unchanged behaviour (defensive
+    against envelope-drift across Radarr versions). The unwrap
+    happens here, inside the renderer, so the ``--verbose`` path
+    still emits the verbatim envelope (the upstream pagination
+    metadata ``totalRecords`` etc. is then visible to downstream
+    consumers). Mirrors the same pattern in
+    :func:`_summary_sonarr_recent` and the Jellyfin paginated
+    renderers.
+    """
+    payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     summaries: list[dict[str, Any]] = []

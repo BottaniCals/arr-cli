@@ -602,10 +602,13 @@ class TestCmdRecent(unittest.TestCase):
 
     def test_recent_unwraps_paginated_envelope(self) -> None:
         # ``GET /api/v3/history`` returns the paginated activity-log
-        # envelope; ``cmd_recent`` must unwrap to the bare
-        # ``records`` list so the renderer sees the rows directly.
+        # envelope; ``_summary_sonarr_recent`` unwraps it to the
+        # bare ``records`` list so the summary is non-empty when
+        # the envelope is well-formed. The unwrap lives in the
+        # renderer (not the handler) so ``--verbose`` keeps the
+        # full envelope on the wire for downstream consumers.
         cfg = _service_config()
-        args = _namespace()
+        args = _namespace(command="recent")
         envelope = {
             "page": 1,
             "pageSize": 10,
@@ -646,19 +649,63 @@ class TestCmdRecent(unittest.TestCase):
             rows[1]["episode"]["title"], "The Work Is Never Done"
         )
 
+    def test_recent_verbose_emits_verbatim_envelope(self) -> None:
+        # ``--verbose`` must surface the verbatim paginated envelope
+        # (including ``totalRecords`` etc.) for paging consumers.
+        # Regression for the ``--verbose is not verbatim`` ticket:
+        # the renderer-side unwrap means ``cmd_recent`` no longer
+        # pre-unwraps, so the verbatim envelope survives the
+        # ``--verbose`` pass-through.
+        cfg = _service_config()
+        args = _namespace(verbose=True, command="recent")
+        envelope = {
+            "page": 3,
+            "pageSize": 5,
+            "sortKey": "date",
+            "sortDirection": "descending",
+            "totalRecords": 17,
+            "records": [
+                {
+                    "id": 21,
+                    "series": {"title": "For All Mankind"},
+                    "episode": {"title": "The Eagle Crowded the Mountain"},
+                    "eventType": "downloadFolderImported",
+                    "date": "2026-09-19T11:00:00Z",
+                },
+            ],
+        }
+        with _patched_get_payload(envelope):
+            rendered = _capture_stdout(cmd_recent, args, cfg)
+        emitted = json.loads(rendered)
+        # The envelope is emitted verbatim -- ``totalRecords``,
+        # ``pageSize``, ``sortKey``, ``sortDirection``, and ``page``
+        # are all visible to downstream consumers.
+        self.assertEqual(emitted, envelope)
+        self.assertEqual(emitted["totalRecords"], 17)
+        self.assertEqual(emitted["pageSize"], 5)
+        self.assertEqual(emitted["page"], 3)
+
     def test_recent_bare_list_payload_unchanged(self) -> None:
         # Defensive: if the upstream ever returned a bare list (the
         # pre-pagination contract), ``_unwrap_envelope`` passes it
-        # through unchanged.
+        # through unchanged. The renderer then projects each row
+        # to the curated ``{series, episode, id, seriesId,
+        # episodeId, sourceTitle, eventType, date, quality}``
+        # summary shape (the upstream ``sourceTitle`` / identity
+        # fields flow through verbatim).
         cfg = _service_config()
-        args = _namespace()
+        args = _namespace(command="recent")
         payload = [
             {
                 "id": 1,
                 "series": {"title": "Severance"},
                 "episode": {"title": "The Work Is Never Done"},
+                "seriesId": 99,
+                "episodeId": 7,
+                "sourceTitle": "Severance.S02E07.720p.mkv",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
+                "quality": "WEBDL-1080p",
             }
         ]
         with _patched_get_payload(payload):
@@ -667,17 +714,27 @@ class TestCmdRecent(unittest.TestCase):
 
     def test_recent_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
-        args = _namespace(human=False)
+        args = _namespace(human=False, command="recent")
+        # Carry every column the renderer projects so the output
+        # is a verbatim forward of the input; missing fields
+        # surface as ``None`` per ``_safe_get(..., default=None)``.
         payload = [
             {
+                "id": 1,
                 "series": {"title": "Severance"},
                 "episode": {"title": "The Work Is Never Done"},
+                "seriesId": 99,
+                "episodeId": 7,
+                "sourceTitle": "Severance.S02E07.720p.mkv",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
+                "quality": "WEBDL-1080p",
             }
         ]
         with _patched_get_payload(payload):
             rendered = _capture_stdout(cmd_recent, args, cfg)
+        # The curated summary is a verbatim forward of the bare
+        # envelope row because every projected column is present.
         self.assertEqual(json.loads(rendered), payload)
 
 

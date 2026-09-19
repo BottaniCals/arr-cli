@@ -612,10 +612,13 @@ class TestCmdRecent(unittest.TestCase):
 
     def test_recent_unwraps_paginated_envelope(self) -> None:
         # ``GET /api/v3/history`` returns the paginated activity-log
-        # envelope; ``cmd_recent`` must unwrap to the bare
-        # ``records`` list so the renderer sees the rows directly.
+        # envelope; ``_summary_radarr_recent`` unwraps it to the
+        # bare ``records`` list so the summary is non-empty when
+        # the envelope is well-formed. The unwrap lives in the
+        # renderer (not the handler) so ``--verbose`` keeps the
+        # full envelope on the wire for downstream consumers.
         cfg = _service_config()
-        args = _namespace(page_size=10)
+        args = _namespace(page_size=10, command="recent")
         envelope = {
             "page": 1,
             "pageSize": 10,
@@ -648,12 +651,52 @@ class TestCmdRecent(unittest.TestCase):
         self.assertEqual(rows[1]["movie"]["title"], "Inception")
         self.assertEqual(rows[1]["movie"]["year"], 2010)
 
+    def test_recent_verbose_emits_verbatim_envelope(self) -> None:
+        # ``--verbose`` must surface the verbatim paginated envelope
+        # (including ``totalRecords`` etc.) for paging consumers.
+        # Regression for the ``--verbose is not verbatim`` ticket:
+        # the renderer-side unwrap means ``cmd_recent`` no longer
+        # pre-unwraps, so the verbatim envelope survives the
+        # ``--verbose`` pass-through.
+        cfg = _service_config()
+        args = _namespace(page_size=10, verbose=True, command="recent")
+        envelope = {
+            "page": 2,
+            "pageSize": 5,
+            "sortKey": "date",
+            "sortDirection": "descending",
+            "totalRecords": 42,
+            "records": [
+                {
+                    "id": 11,
+                    "movie": {"title": "Arrival", "year": 2016},
+                    "eventType": "downloadFolderImported",
+                    "date": "2026-09-19T10:00:00Z",
+                },
+            ],
+        }
+        with _patched_get_payload(envelope):
+            rendered = _capture_stdout(cmd_recent, args, cfg)
+        emitted = json.loads(rendered)
+        # The envelope is emitted verbatim -- ``totalRecords``,
+        # ``pageSize``, ``sortKey``, ``sortDirection``, and ``page``
+        # are all visible to downstream consumers.
+        self.assertEqual(emitted, envelope)
+        self.assertEqual(emitted["totalRecords"], 42)
+        self.assertEqual(emitted["pageSize"], 5)
+        self.assertEqual(emitted["page"], 2)
+
     def test_recent_bare_list_payload_unchanged(self) -> None:
         # Defensive: if the upstream ever returned a bare list (the
         # pre-pagination contract), ``_unwrap_envelope`` passes it
-        # through unchanged.
+        # through unchanged. The renderer then projects each row
+        # to the curated ``{movie, eventType, date}`` summary
+        # shape (the ``id`` field is intentionally not projected
+        # -- the curated summary surfaces the human-readable
+        # columns only; ``--verbose`` is the path for the raw
+        # record).
         cfg = _service_config()
-        args = _namespace(page_size=10)
+        args = _namespace(page_size=10, command="recent")
         payload = [
             {
                 "id": 1,
@@ -662,13 +705,20 @@ class TestCmdRecent(unittest.TestCase):
                 "date": "2024-06-01",
             }
         ]
+        expected = [
+            {
+                "movie": {"title": "Foo", "year": 2024},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
         with _patched_get_payload(payload):
             rendered = _capture_stdout(cmd_recent, args, cfg)
-        self.assertEqual(json.loads(rendered), payload)
+        self.assertEqual(json.loads(rendered), expected)
 
     def test_recent_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
-        args = _namespace(page_size=10, human=False)
+        args = _namespace(page_size=10, human=False, command="recent")
         payload = [
             {
                 "movie": {"title": "The Matrix", "year": 1999},
@@ -678,6 +728,10 @@ class TestCmdRecent(unittest.TestCase):
         ]
         with _patched_get_payload(payload):
             rendered = _capture_stdout(cmd_recent, args, cfg)
+        # The curated summary has the same shape as the input here
+        # because the input carries only the columns the renderer
+        # projects -- the renderer is a near-verbatim forward of
+        # the bare envelope rows.
         self.assertEqual(json.loads(rendered), payload)
 
 
