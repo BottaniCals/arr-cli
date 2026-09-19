@@ -1953,7 +1953,21 @@ class TestSummaryRadarrQueue(unittest.TestCase):
 
 
 class TestSummaryRadarrRecent(unittest.TestCase):
-    """``_SUMMARY_RENDERERS[("radarr", "recent")]`` matches the spec."""
+    """``_SUMMARY_RENDERERS[("radarr", "recent")]`` matches the spec.
+
+    The renderer projects the nested ``movie: {title, year}``
+    envelope from the ``GET /api/v3/history?includeMovie=true``
+    activity-log rows verbatim -- the contract is preserved
+    unchanged across the ``radarr-recent-endpoint-params`` fix that
+    switched the upstream call from the per-movie endpoint
+    (``/api/v3/history/movie``, which never populates the nested
+    ``movie`` envelope and would always return ``[]``) to the
+    activity-log endpoint with ``includeMovie=true``. The
+    ``cmd_recent`` layer unwraps the upstream paginated envelope
+    to the bare ``records`` list before this renderer sees it; the
+    tests in this class pin the renderer behaviour on those
+    already-unwrapped rows plus the documented defensive fallback.
+    """
 
     def test_recent_with_movie(self) -> None:
         payload = [
@@ -1981,6 +1995,72 @@ class TestSummaryRadarrRecent(unittest.TestCase):
             rendered[0]["movie"],
             {"title": None, "year": 0},
         )
+
+    def test_recent_pins_actual_history_row_shape(self) -> None:
+        # ``GET /api/v3/history?includeMovie=true`` returns paginated
+        # activity-log rows with a nested ``movie: {title, year, ...}``
+        # envelope when ``includeMovie=true``. ``cmd_recent`` unwraps
+        # the upstream paginated envelope to the bare ``records``
+        # list before this renderer sees it; this test pins the
+        # renderer-end contract against a row shape taken verbatim
+        # from the live operator's payload (per
+        # ``bug-review.md``/``radarr-recent-endpoint-params``). A
+        # regression that re-introduced ``{movie: {title: null}}``
+        # fabrication, or that flattened the nested envelope, would
+        # surface here.
+        records = [
+            {
+                "id": 42,
+                "movieId": 67,
+                "movie": {
+                    "title": "The Matrix",
+                    "year": 1999,
+                    "tmdbId": 603,
+                },
+                "eventType": "downloadFolderImported",
+                "date": "2026-09-18T01:59:01Z",
+                "downloadId": "string-id-abc",
+                "data": {},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "recent")](records)
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        # Nested ``movie`` is preserved with ``title`` / ``year``
+        # populated from the upstream payload -- never null and never
+        # flattened to the top level. The contract from
+        # ``bug-review.md`` (constraint: do NOT flatten the nested
+        # ``movie: {title, year}`` shape) is honoured.
+        self.assertEqual(
+            row,
+            {
+                "movie": {"title": "The Matrix", "year": 1999},
+                "eventType": "downloadFolderImported",
+                "date": "2026-09-18T01:59:01Z",
+            },
+        )
+        # No envelope leakage: the curated summary is the same shape
+        # regardless of whether the upstream wrapped rows in a
+        # paginated envelope (which ``cmd_recent`` strips before
+        # calling this renderer).
+        for envelope_field in (
+            "page",
+            "pageSize",
+            "sortKey",
+            "sortDirection",
+            "totalRecords",
+            "records",
+        ):
+            self.assertNotIn(envelope_field, row)
+        # Upstream fields not in the curated projection are ignored
+        # (no leakage of the full payload into the summary).
+        for passthrough_field in (
+            "id",
+            "movieId",
+            "downloadId",
+            "data",
+        ):
+            self.assertNotIn(passthrough_field, row)
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(

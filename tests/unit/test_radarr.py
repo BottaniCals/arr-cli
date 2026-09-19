@@ -533,28 +533,152 @@ class TestCmdQueue(unittest.TestCase):
 
 
 class TestCmdRecent(unittest.TestCase):
-    """``GET /api/v3/history/movie`` (NOT ``/history`` like Sonarr)."""
+    """``GET /api/v3/history?includeMovie=true&pageSize=<N>``
+    (the activity-log endpoint), NOT ``/api/v3/history/movie`` which
+    is a per-movie lookup that never populates the nested ``movie``
+    envelope and would always return ``[]`` for the recent-across-
+    library intent.
 
-    def test_recent_hits_history_movie_path(self) -> None:
+    This class pins the endpoint, the query parameters, the
+    ``--page-size`` override, and the row shape (nested
+    ``movie: {title, year}`` populated, not flattened).
+    """
+
+    def test_recent_hits_history_path_with_include_movie_and_page_size(
+        self,
+    ) -> None:
         cfg = _service_config()
-        args = _namespace()
+        args = _namespace(page_size=10)
         with _patched_get_payload([]) as mock_get:
             cmd_recent(args, cfg)
         positional = mock_get.call_args.args
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(positional[0], "radarr")
-        # The path is the movie-specific history endpoint -- this is
-        # the documented divergence from Sonarr's ``/history``.
-        self.assertEqual(positional[1], "/api/v3/history/movie")
-        self.assertIsNone(kwargs.get("params"))
+        # Path is the activity-log endpoint, not the per-movie
+        # one. The per-movie endpoint (``/api/v3/history/movie``)
+        # only returns rows for a single ``movieId`` and never
+        # populates the nested ``movie`` envelope, so it can
+        # never satisfy "recent events across the library".
+        self.assertEqual(positional[1], "/api/v3/history")
+        # ``includeMovie=true`` is required: without it the activity-
+        # log rows don't populate the nested ``movie: {title, year}``
+        # object and the renderer falls back to nulls. ``pageSize=10``
+        # is the default and matches the project-wide "recent"
+        # semantics while capping the upstream response.
+        self.assertEqual(
+            kwargs.get("params"),
+            {"includeMovie": "true", "pageSize": 10},
+        )
+
+    def test_recent_does_not_hit_history_movie_path(self) -> None:
+        # Defensive: a future copy-paste regression that reintroduces
+        # the per-movie path MUST be caught here. The per-movie
+        # endpoint is the wrong endpoint for this command.
+        cfg = _service_config()
+        args = _namespace(page_size=10)
+        with _patched_get_payload([]) as mock_get:
+            cmd_recent(args, cfg)
+        positional = mock_get.call_args.args
+        self.assertNotEqual(positional[1], "/api/v3/history/movie")
+
+    def test_recent_default_page_size_is_ten(self) -> None:
+        # When ``--page-size`` is absent from the namespace (e.g. a
+        # future caller that bypasses argparse) the handler falls back
+        # to the documented default of 10 -- not ``None``, not
+        # ``0`` -- so the upstream response is always bounded.
+        cfg = _service_config()
+        args = _namespace()  # no page_size kwarg
+        with _patched_get_payload([]) as mock_get:
+            cmd_recent(args, cfg)
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(
+            kwargs.get("params"),
+            {"includeMovie": "true", "pageSize": 10},
+        )
+
+    def test_recent_forwards_page_size_override(self) -> None:
+        # The ``--page-size`` flag overrides the default of 10 and is
+        # forwarded verbatim to the upstream endpoint as the
+        # ``pageSize`` query parameter.
+        cfg = _service_config()
+        args = _namespace(page_size=42)
+        with _patched_get_payload([]) as mock_get:
+            cmd_recent(args, cfg)
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(
+            kwargs.get("params"),
+            {"includeMovie": "true", "pageSize": 42},
+        )
+
+    def test_recent_unwraps_paginated_envelope(self) -> None:
+        # ``GET /api/v3/history`` returns the paginated activity-log
+        # envelope; ``cmd_recent`` must unwrap to the bare
+        # ``records`` list so the renderer sees the rows directly.
+        cfg = _service_config()
+        args = _namespace(page_size=10)
+        envelope = {
+            "page": 1,
+            "pageSize": 10,
+            "sortKey": "date",
+            "sortDirection": "descending",
+            "totalRecords": 2,
+            "records": [
+                {
+                    "id": 1,
+                    "movie": {"title": "The Matrix", "year": 1999},
+                    "eventType": "downloadFolderImported",
+                    "date": "2026-09-18T01:59:01Z",
+                },
+                {
+                    "id": 2,
+                    "movie": {"title": "Inception", "year": 2010},
+                    "eventType": "downloadFolderImported",
+                    "date": "2026-09-18T02:00:00Z",
+                },
+            ],
+        }
+        with _patched_get_payload(envelope):
+            rendered = _capture_stdout(cmd_recent, args, cfg)
+        rows = json.loads(rendered)
+        self.assertEqual(len(rows), 2)
+        # Nested ``movie.title`` / ``movie.year`` are populated from
+        # the upstream payload, not flattened and not null.
+        self.assertEqual(rows[0]["movie"]["title"], "The Matrix")
+        self.assertEqual(rows[0]["movie"]["year"], 1999)
+        self.assertEqual(rows[1]["movie"]["title"], "Inception")
+        self.assertEqual(rows[1]["movie"]["year"], 2010)
+
+    def test_recent_bare_list_payload_unchanged(self) -> None:
+        # Defensive: if the upstream ever returned a bare list (the
+        # pre-pagination contract), ``_unwrap_envelope`` passes it
+        # through unchanged.
+        cfg = _service_config()
+        args = _namespace(page_size=10)
+        payload = [
+            {
+                "id": 1,
+                "movie": {"title": "Foo", "year": 2024},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            rendered = _capture_stdout(cmd_recent, args, cfg)
+        self.assertEqual(json.loads(rendered), payload)
 
     def test_recent_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
-        args = _namespace(human=False)
-        payload = {"events": [{"movie": {"title": "Movie X"}}]}
+        args = _namespace(page_size=10, human=False)
+        payload = [
+            {
+                "movie": {"title": "The Matrix", "year": 1999},
+                "eventType": "downloadFolderImported",
+                "date": "2026-09-18T01:59:01Z",
+            }
+        ]
         with _patched_get_payload(payload):
-            output = _capture_stdout(cmd_recent, args, cfg)
-        self.assertEqual(json.loads(output), payload)
+            rendered = _capture_stdout(cmd_recent, args, cfg)
+        self.assertEqual(json.loads(rendered), payload)
 
 
 # ---------------------------------------------------------------------------
@@ -1140,19 +1264,73 @@ class TestMainEntryPoint(unittest.TestCase):
         # The renderer emitted at least one line of output.
         self.assertTrue(stdout.strip())
 
-    def test_main_recent_hits_history_movie(self) -> None:
-        # End-to-end check that the recent command hits
-        # /api/v3/history/movie (NOT /history like Sonarr).
+    def test_main_recent_hits_history_with_include_movie(self) -> None:
+        # End-to-end check that the recent command hits the
+        # activity-log endpoint (``/api/v3/history``) with
+        # ``includeMovie=true`` and the default ``pageSize=10``.
+        # The per-movie path (``/api/v3/history/movie``) is
+        # wrong: it only returns rows for a single ``movieId``
+        # and never populates the nested ``movie`` envelope, so
+        # it would always return ``[]`` and silently drop every
+        # activity-log event.
         with patch(
             "arr_cli.radarr.transport.get",
-            return_value={"events": []},
+            return_value={"records": []},
         ) as mock_get:
             exit_code = main(
                 ["--config", str(self.cfg_path), "recent"]
             )
         self.assertEqual(exit_code, 0)
         positional = mock_get.call_args.args
-        self.assertEqual(positional[1], "/api/v3/history/movie")
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(positional[1], "/api/v3/history")
+        self.assertEqual(
+            kwargs.get("params"),
+            {"includeMovie": "true", "pageSize": 10},
+        )
+
+    def test_main_recent_with_page_size_forwards_value(self) -> None:
+        # ``--page-size`` is forwarded as the upstream
+        # ``pageSize`` query parameter.
+        with patch(
+            "arr_cli.radarr.transport.get",
+            return_value=[],
+        ) as mock_get:
+            exit_code = main(
+                [
+                    "--config",
+                    str(self.cfg_path),
+                    "recent",
+                    "--page-size",
+                    "42",
+                ]
+            )
+        self.assertEqual(exit_code, 0)
+        kwargs = mock_get.call_args.kwargs
+        self.assertEqual(
+            kwargs.get("params"),
+            {"includeMovie": "true", "pageSize": 42},
+        )
+
+    def test_main_recent_with_invalid_page_size_exits_one(self) -> None:
+        # Out-of-range ``--page-size`` MUST raise ``ConfigError``
+        # and exit ``1`` so the operator sees a usage hint on
+        # stderr; the validator runs before the HTTP call so a
+        # bad value never reaches ``transport.get``.
+        with patch(
+            "arr_cli.radarr.transport.get",
+        ) as mock_get:
+            exit_code = main(
+                [
+                    "--config",
+                    str(self.cfg_path),
+                    "recent",
+                    "--page-size",
+                    "0",
+                ]
+            )
+        self.assertEqual(exit_code, 1)
+        mock_get.assert_not_called()
 
     def test_main_calendar_with_dates_forwards_params(self) -> None:
         with patch(

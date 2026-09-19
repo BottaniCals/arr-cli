@@ -9,6 +9,42 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `radarr recent` -- the curated summary is no longer silently
+  empty. The historical implementation hit
+  `GET /api/v3/history/movie` with no query parameters; that
+  endpoint is a per-movie lookup and returns `[]` unless a
+  `movieId` is supplied, so every invocation previously
+  projected `[]` regardless of the underlying Radarr activity
+  log. The endpoint switched to
+  `GET /api/v3/history?includeMovie=true&pageSize=<N>` (the
+  activity-log endpoint), which returns the full paginated
+  history and populates the nested `movie: {title, year}`
+  envelope when `includeMovie=true`. The upstream
+  `{totalRecords, records}` envelope is unwrapped to the bare
+  `records` list before rendering so the summary renderer and
+  the `--human` table iterate the rows directly. The default
+  page size is `10` (matching the project-wide "recent"
+  semantics) and is overridable via a new `--page-size <N>`
+  argparse flag, bounded to `[1, 1000]` so an operator cannot
+  accidentally request a million-row history page. The
+  renderer contract (nested `movie: {title, year}` shape) is
+  preserved unchanged -- this is the distinguishing difference
+  from the `sonarr recent` fix (commit `087c8bb`) which
+  flattened the identity fields because Sonarr's activity-log
+  rows never carry a nested envelope; Radarr's activity-log
+  rows **do** carry the nested envelope when `includeMovie=true`
+  and the project contract keeps that shape. `--verbose` is
+  unchanged (raw upstream rows still on the wire); `--human`
+  is unchanged (the columns literal `movie.title` /
+  `movie.year` / `eventType` / `date` still resolves via
+  dot-path traversal). Pin tests in
+  `TestCmdRecent.test_recent_hits_history_path_with_include_movie_and_page_size`,
+  `..._forwards_page_size_override`,
+  `..._unwraps_paginated_envelope`,
+  `TestMain.test_main_recent_hits_history_with_include_movie`,
+  `..._with_page_size_forwards_value`,
+  `..._with_invalid_page_size_exits_one`, and
+  `TestSummaryRadarrRecent.test_recent_pins_actual_history_row_shape`.
 - `jellyfin latest` -- the curated summary no longer projects
   `DateCreated`. The `GET /Users/{user_id}/Items/Latest` endpoint
   returns a slimmer DTO than `GET /Items/{id}`, and on the
