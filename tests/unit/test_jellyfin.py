@@ -552,27 +552,57 @@ class TestCmdSearch(unittest.TestCase):
             kwargs["params"], {"searchTerm": "matrix", "Recursive": True}
         )
 
-    def test_search_empty_query_still_calls_endpoint(self) -> None:
-        # REQ-6 AC6: empty query returns the service's empty-array
-        # response, NOT an error. The handler MUST still hit the
-        # endpoint with the empty search term.
+    def test_search_empty_query_short_circuits_to_empty_list(self) -> None:
+        # REQ-6 AC6 AC2 + jellyfin-search-empty-query: an explicit
+        # empty query must short-circuit to the canonical emit path
+        # with ``[]`` and must NOT touch the /Items endpoint.
+        # ``transport.get`` is patched to raise so any HTTP call
+        # surfaces immediately.
         cfg = _service_config()
         args = _namespace(query="")
-        with _patched_get_payload([]) as mock_get:
-            cmd_search(args, cfg)
-        kwargs = mock_get.call_args.kwargs
-        self.assertEqual(kwargs["params"], {"searchTerm": "", "Recursive": True})
+        with patch(
+            "arr_cli.jellyfin.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty query"
+            ),
+        ):
+            output = _capture_stdout(cmd_search, args, cfg)
+        self.assertEqual(json.loads(output), [])
 
     def test_search_missing_query_defaults_to_empty(self) -> None:
         # When the user runs ``jellyfin search`` with no positional
-        # argument the subparser defaults ``query`` to ""; the handler
-        # still forwards the empty search term.
+        # argument the subparser defaults ``query`` to ""; the
+        # handler treats the missing attribute the same as ``""``
+        # and short-circuits to the canonical emit path without
+        # touching /Items. Pins the argparse.OPTIONAL default of
+        # ``""`` and the handler guard in one test.
         cfg = _service_config()
         args = _namespace()  # no query field
-        with _patched_get_payload([]) as mock_get:
-            cmd_search(args, cfg)
-        kwargs = mock_get.call_args.kwargs
-        self.assertEqual(kwargs["params"], {"searchTerm": "", "Recursive": True})
+        self.assertFalse(hasattr(args, "query"))
+        with patch(
+            "arr_cli.jellyfin.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty query"
+            ),
+        ):
+            output = _capture_stdout(cmd_search, args, cfg)
+        self.assertEqual(json.loads(output), [])
+
+    def test_search_empty_query_human_renders_empty_list(self) -> None:
+        # AC2 --human branch: with ``--human`` an empty query must
+        # render the documented ``(empty list)`` literal, not the
+        # verbatim JSON ``[]``. Pairs the JSON pin above with the
+        # second priority-chain branch that ``output.emit`` uses.
+        cfg = _service_config()
+        args = _namespace(query="", human=True)
+        with patch(
+            "arr_cli.jellyfin.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty query"
+            ),
+        ):
+            output = _capture_stdout(cmd_search, args, cfg)
+        self.assertEqual(output.strip(), "(empty list)")
 
     def test_search_query_with_special_chars(self) -> None:
         # The transport layer percent-encodes the value; the handler

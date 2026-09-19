@@ -321,21 +321,31 @@ def cmd_latest(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Jellyfin ``search <query>`` — search across the library (REQ-6 AC6).
 
-    An empty query is forwarded verbatim; the service returns an
-    empty array result rather than a 4xx error, which matches the
-    requirement's "otherwise the service's empty-array response"
-    branch.
+    An empty query is intercepted before any HTTP call: it exits 0
+    with stdout ``[]`` (or the documented ``"(empty list)"``
+    rendering under ``--human``), matching README §4.1 and AC2 of
+    REQ-6 AC6. Skipping the ``/Items`` call avoids Jellyfin's
+    "``searchTerm=<empty>`` means no filter" semantics, which
+    combined with ``Recursive=true`` would otherwise walk and
+    return the entire library.
 
     The ``Recursive=true`` query parameter is REQUIRED on Jellyfin
     v10+/v12: ``GET /Items`` defaults to a non-recursive scan of
     the configured library-root view, so without ``Recursive=true``
     the server returns the library folders themselves (Anime,
-    collections, Movies, Playlists, Shows) for every query —
-    including no-match and empty queries — rather than walking the
-    full library graph and returning the actual matches (or
-    ``[]`` for misses). Do not strip this flag.
+    collections, Movies, Playlists, Shows) for every non-empty
+    query — rather than walking the full library graph and
+    returning the actual matches (or ``[]`` for misses). Do not
+    strip this flag.
     """
     query = getattr(args, "query", "") or ""
+    columns = ["Name", "Type", "ProductionYear", "SeriesName"]
+    if not query:
+        # AC2: empty query short-circuits to the canonical emit
+        # path with an empty list, skipping the /Items HTTP call
+        # entirely. See ``jellyfin-search-empty-query`` for the
+        # wire-layer rationale.
+        return _emit([], args, columns=columns)
     payload = _get(
         "/Items",
         args,
@@ -343,7 +353,6 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params={"searchTerm": query, "Recursive": True},
         op="search",
     )
-    columns = ["Name", "Type", "ProductionYear", "SeriesName"]
     return _emit(payload, args, columns=columns)
 
 

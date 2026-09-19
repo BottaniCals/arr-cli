@@ -9,6 +9,34 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `jellyfin search ""` -- the handler now short-circuits an empty
+  query to the canonical emit path with `[]`, exiting 0 without
+  touching `/Items`. The previous implementation forwarded
+  `searchTerm=` (empty) to `GET /Items?searchTerm=&Recursive=true`;
+  Jellyfin treats an empty `searchTerm` as "no filter applied", so
+  the `Recursive=true` walk that PR #54 (`jellyfin-search-recursive`,
+  commit `f8b5103`) explicitly requested resolved to "return the
+  entire library" (4 303 items on the operator's instance) instead
+  of the empty array README §4.1 and AC2 of REQ-6 AC6 advertise.
+  The short-circuit runs before any HTTP call: default JSON emits
+  verbatim `[]`; `--human` emits the documented `"(empty list)"`
+  rendering. The `cmd_search` docstring was rewritten so the stale
+  "service returns an empty array for empty queries" claim no
+  longer misdescribes the contract. Wire shape, params dict,
+  endpoint, and auth header are unchanged for the non-empty branch
+  (AC1 / AC3 stay pinned by the surviving
+  `test_search_forwards_query`,
+  `test_search_query_with_special_chars`, and
+  `test_search_forwards_recursive_true` cases). See
+  `.bugs/jellyfin-search-empty-query/bug-review.md` for the
+  wire-layer confirmation and rejected alternatives. Pin tests in
+  `TestCmdSearch.test_search_empty_query_short_circuits_to_empty_list`,
+  `..._missing_query_defaults_to_empty`, and
+  `..._empty_query_human_renders_empty_list`; the two prior
+  wrong-contract tests
+  (`test_search_empty_query_still_calls_endpoint` /
+  `test_search_missing_query_defaults_to_empty`'s outgoing-params
+  assertion) were retired.
 - `radarr recent` -- the curated summary is no longer silently
   empty. The historical implementation hit
   `GET /api/v3/history/movie` with no query parameters; that
