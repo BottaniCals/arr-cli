@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import logging
 import os
 import sys
 import tempfile
@@ -817,6 +818,194 @@ class TestMainWrapperSystemExit(unittest.TestCase):
             argv=["--retry", "not-an-int"],
         )
         self.assertEqual(exit_code, 1)
+
+
+# ---------------------------------------------------------------------------
+# main_wrapper: --debug logging configuration
+# ---------------------------------------------------------------------------
+
+
+class TestDebugLogging(unittest.TestCase):
+    """``--debug`` attaches a stderr ``DEBUG`` handler to the facade loggers.
+
+    The documented contract is that ``--debug`` surfaces the redacted
+    request/response pair on stderr. ``transport._record_debug`` writes
+    the record via ``logging.getLogger("arr_cli.facade.transport").debug(...)``
+    but Python's root logger defaults to ``WARNING`` and no facade module
+    attaches a handler -- so without intervention the ``debug()`` records
+    are silently dropped (ticket: debug-flag-silent-request-response-log).
+    """
+
+    def setUp(self) -> None:
+        # Each test must start with a clean logger state: strip any
+        # handler attached by a previous test (the handler is
+        # idempotent within a process so it stays attached across
+        # tests in the same run -- we deliberately exercise that
+        # behaviour but still want a known baseline per test).
+        for name in (
+            "arr_cli.facade.transport",
+            "arr_cli.facade.output",
+            "arr_cli.seerr",
+        ):
+            logger = logging.getLogger(name)
+            for handler in list(logger.handlers):
+                logger.removeHandler(handler)
+            if hasattr(logger, "_arr_cli_debug_handler_attached"):
+                delattr(logger, "_arr_cli_debug_handler_attached")
+        reset_warnings()
+
+    def tearDown(self) -> None:
+        # Restore the module-level logger state so the test-suite-wide
+        # assumption (no facade logger carries a StreamHandler by
+        # default) holds for downstream tests.
+        for name in (
+            "arr_cli.facade.transport",
+            "arr_cli.facade.output",
+            "arr_cli.seerr",
+        ):
+            logger = logging.getLogger(name)
+            for handler in list(logger.handlers):
+                logger.removeHandler(handler)
+            if hasattr(logger, "_arr_cli_debug_handler_attached"):
+                delattr(logger, "_arr_cli_debug_handler_attached")
+
+    def test_debug_off_does_not_attach_handler(self) -> None:
+        # Without ``--debug`` the facade loggers stay at their default
+        # level (NOTSET -> inherits root WARNING) and carry no handler
+        # -- the documented "quiet" default.
+        from arr_cli.facade.cli_common import (
+            _DEBUG_LOGGER_NAMES,
+            main_wrapper,
+        )
+
+        def handler(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+            return 0
+
+        self.parser = build_parser("jellyfin", "Jellyfin CLI")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = _write_toml_config(Path(tmp))
+            main_wrapper(
+                "jellyfin",
+                handler,
+                parser=self.parser,
+                argv=["--config", str(cfg_path)],
+            )
+
+        for name in _DEBUG_LOGGER_NAMES:
+            logger = logging.getLogger(name)
+            self.assertFalse(
+                getattr(logger, "_arr_cli_debug_handler_attached", False),
+                f"{name} should not have a debug handler when --debug is off",
+            )
+
+    def test_debug_on_attaches_stderr_handler(self) -> None:
+        # With ``--debug`` every facade logger gets a StreamHandler at
+        # DEBUG level and the level is lowered to DEBUG. The handler
+        # writes to ``sys.stderr`` so an operator running
+        # ``jellyfin recent --debug 2>/tmp/err.txt`` actually sees
+        # the redacted record land in ``/tmp/err.txt``.
+        from arr_cli.facade.cli_common import (
+            _DEBUG_LOGGER_NAMES,
+            main_wrapper,
+        )
+
+        def handler(args: argparse.Namespace, cfg: ServiceConfig) -> int:
+            return 0
+
+        self.parser = build_parser("jellyfin", "Jellyfin CLI")
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = _write_toml_config(Path(tmp))
+            main_wrapper(
+                "jellyfin",
+                handler,
+                parser=self.parser,
+                argv=["--config", str(cfg_path), "--debug"],
+            )
+
+        for name in _DEBUG_LOGGER_NAMES:
+            logger = logging.getLogger(name)
+            self.assertTrue(
+                getattr(logger, "_arr_cli_debug_handler_attached", False),
+                f"{name} should have a debug handler attached when --debug is on",
+            )
+            self.assertEqual(logger.level, logging.DEBUG)
+            stream_handlers = [
+                h for h in logger.handlers
+                if isinstance(h, logging.StreamHandler)
+            ]
+            self.assertTrue(
+                stream_handlers,
+                f"{name} should carry a StreamHandler for stderr",
+            )
+            self.assertIs(
+                stream_handlers[0].stream, sys.stderr,
+                f"{name} handler must target sys.stderr",
+            )
+
+    def test_debug_handler_emits_record_to_stderr(self) -> None:
+        # End-to-end: a ``debug()`` record emitted on the transport
+        # logger after configuration lands on the handler's stream
+        # with the redacted request/response fields. Without the fix
+        # this test would capture zero bytes (the handler never gets
+        # attached). We swap the handler's ``.stream`` for a
+        # ``StringIO`` rather than using ``contextlib.redirect_stderr``
+        # because the ``StreamHandler`` binds ``stream=sys.stderr`` at
+        # construction time -- a runtime redirect would miss writes
+        # to the captured reference. Swapping ``.stream`` directly
+        # mirrors what the CLI sees in production: the operator runs
+        # ``jellyfin recent --debug 2>/tmp/err.txt`` and the handler
+        # writes to whatever ``sys.stderr`` resolves to on emit.
+        from arr_cli.facade.cli_common import (
+            _configure_debug_logging,
+        )
+
+        _configure_debug_logging()
+        transport_logger = logging.getLogger(
+            "arr_cli.facade.transport"
+        )
+        stream_handlers = [
+            h for h in transport_logger.handlers
+            if isinstance(h, logging.StreamHandler)
+        ]
+        self.assertEqual(len(stream_handlers), 1)
+        handler = stream_handlers[0]
+        sink = io.StringIO()
+        original_stream = handler.stream
+        handler.stream = sink
+        try:
+            transport_logger.debug(
+                "arr-cli request service=jellyfin op=/Sessions url=http://example/ headers=%s status=200 body=[]",
+                {"Authorization": "***48"},
+            )
+        finally:
+            handler.stream = original_stream
+        output = sink.getvalue()
+        self.assertIn("arr-cli request", output)
+        self.assertIn("service=jellyfin", output)
+        self.assertIn("status=200", output)
+
+    def test_debug_handler_is_idempotent(self) -> None:
+        # The pytest suite runs many ``main_wrapper`` invocations
+        # within one process; a second call with ``--debug`` must NOT
+        # stack a duplicate handler on the same logger (otherwise
+        # every debug record would print N times after N invocations).
+        from arr_cli.facade.cli_common import (
+            _configure_debug_logging,
+        )
+
+        _configure_debug_logging()
+        _configure_debug_logging()
+        transport_logger = logging.getLogger(
+            "arr_cli.facade.transport"
+        )
+        stream_handlers = [
+            h for h in transport_logger.handlers
+            if isinstance(h, logging.StreamHandler)
+        ]
+        self.assertEqual(
+            len(stream_handlers), 1,
+            "repeated _configure_debug_logging() must not stack handlers",
+        )
 
 
 # ---------------------------------------------------------------------------
