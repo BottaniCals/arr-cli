@@ -289,6 +289,17 @@ GENRES_MOVIE_PATH = "/api/v1/genres/movie"
 GENRES_TV_PATH = "/api/v1/genres/tv"
 
 
+#: Characters that trigger Seer's openapi validator rejection of the
+#: ``query`` parameter on ``/api/v1/search`` even though ``requests``
+#: already percent-encodes the value on the wire. Conservative default:
+#: the two characters operators commonly type in search terms (literal
+#: space and ``+``). Mirrors the empirical repro for
+#: ``seerr-search-reserved-chars``; the live ``/api-docs/swagger-ui-init.js``
+#: OpenAPI spec on the operator's instance is the source of truth for
+#: the full set per AGENTS.md §1 "Seer note".
+_SEERR_RESERVED_QUERY_CHARS = frozenset({" ", "+"})
+
+
 # Module-level logger so the documented DEBUG probe records
 # (design.md "Pre-locking Verifications -- Seerr") surface through
 # the standard ``logging`` configuration without a private handler.
@@ -592,15 +603,17 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     historical Overseerr path ``/api/v1/search/multi`` is NOT
     exposed by Seer; the live ``/api-docs/swagger-ui-init.js``
     OpenAPI spec is the source of truth (AGENTS.md §1 "Seer note").
+
+    A query containing any character in
+    :data:`_SEERR_RESERVED_QUERY_CHARS` (e.g. a literal space)
+    short-circuits to an empty result set with a stderr diagnostic
+    rather than hitting the upstream endpoint, because Seer's
+    openapi validator rejects the request with HTTP 400 even
+    though ``requests`` already percent-encodes the value on the
+    wire. Fix for ``seerr-search-reserved-chars``; mirrors the
+    empty-query short-circuit in :func:`arr_cli.jellyfin.cmd_search`.
     """
     query = getattr(args, "query", "") or ""
-    payload = _get(
-        "/api/v1/search",
-        args,
-        cfg,
-        params={"query": query},
-        op="search",
-    )
     # Tabular columns match the summary-shape keys emitted by
     # ``_summary_seerr_search``: every field is top-level on each
     # row, so no dot-path traversal is needed (mirrors the
@@ -614,6 +627,30 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "mediaType",
         "releaseDate",
     ]
+    if query and any(c in query for c in _SEERR_RESERVED_QUERY_CHARS):
+        # Operator-facing diagnostic per AGENTS.md §1 ("diagnostics
+        # on stderr"); mirrors the ``cmd_available`` "substring
+        # filter ignored" tone. Short-circuit to the canonical emit
+        # path with ``[]`` so the result set is empty (not an
+        # ``HttpError`` → exit 4 from the upstream 400). The
+        # transport layer is intentionally NOT pre-encoded here:
+        # that would regress the ``transport-params-double-encoded``
+        # ticket (see ``arr_cli/facade/transport.py:_encode_params``).
+        print(
+            f"seerr search: query {query!r} contains a reserved "
+            "character (e.g. space); short-circuiting to empty "
+            "result set (upstream /api/v1/search rejects reserved "
+            "chars in `query`).",
+            file=sys.stderr,
+        )
+        return _emit([], args, columns=columns)
+    payload = _get(
+        "/api/v1/search",
+        args,
+        cfg,
+        params={"query": query},
+        op="search",
+    )
     return _emit(payload, args, columns=columns)
 
 
