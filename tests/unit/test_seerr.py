@@ -5888,5 +5888,235 @@ class TestCmdMovieRealShape(unittest.TestCase):
         self.assertNotIn("name", rendered)
 
 
+# ---------------------------------------------------------------------------
+# Test: subcommand-specific flags parse in either position
+# ---------------------------------------------------------------------------
+
+
+class TestSubcommandFlagPosition(unittest.TestCase):
+    """The five subcommand-specific flags parse before OR after the subcommand.
+
+    Regression for ticket
+    ``[media-cli] Subcommand-only flags fail when placed before subcommand``.
+    Argparse only recognises a flag on the parser that is currently
+    parsing, so a subparser-only registration breaks documented
+    invocations like ``seerr --ratings tv 1396`` and
+    ``seerr --language en movie 603`` (the flag's value would be
+    consumed as the COMMAND choice). The fix registers each flag on
+    the top-level parser AND on the relevant subparser so both
+    invocations parse and route the value through to the handler
+    unchanged.
+
+    The unrelated-subcommand guard (``seerr search --ratings foo``,
+    ``seerr discover-movies --ratings foo``, ...) is also locked in:
+    argparse MUST reject the flag when it appears AFTER a subcommand
+    that does not register it, so the operator sees a usage error
+    instead of a silent no-op under the wrong handler. (The
+    before-subcommand form is a silent no-op by design -- the
+    top-level parser consumes the flag, the unrelated subcommand
+    never sees it, and the handler ignores the attribute. This
+    mirrors the universal-flag pattern documented in
+    ``cli_common._build_universal_parent``.)
+    """
+
+    def setUp(self) -> None:
+        from arr_cli.seerr import build_seerr_parser
+        self.parser = build_seerr_parser()
+
+    # ---- ``--ratings`` -----------------------------------------------
+
+    def test_ratings_before_subcommand(self) -> None:
+        args = self.parser.parse_args(["--ratings", "tv", "1396"])
+        self.assertEqual(args.command, "tv")
+        self.assertTrue(args.ratings)
+
+    def test_ratings_after_subcommand(self) -> None:
+        args = self.parser.parse_args(["tv", "1396", "--ratings"])
+        self.assertEqual(args.command, "tv")
+        self.assertTrue(args.ratings)
+
+    def test_ratings_defaults_to_false_when_omitted(self) -> None:
+        # The natural default lives on the top-level registration
+        # only (``False``); a user that omits the flag still gets
+        # the documented default so ``cmd_tv`` / ``cmd_movie`` skip
+        # the ratings round trip.
+        for cmd, argv in (
+            ("tv", ["tv", "1396"]),
+            ("movie", ["movie", "603"]),
+        ):
+            with self.subTest(cmd=cmd):
+                args = self.parser.parse_args(argv)
+                self.assertEqual(args.command, cmd)
+                self.assertFalse(args.ratings)
+
+    def test_ratings_after_unrelated_subcommand_errors(self) -> None:
+        # ``search`` / ``discover-movies`` do not register
+        # ``--ratings``; argparse MUST reject the flag after the
+        # subcommand so the operator sees a usage error instead of
+        # silently no-op'ing. The before-subcommand form is a
+        # silent no-op by design (see class docstring).
+        for argv in (
+            ["search", "--ratings", "matrix"],
+            ["discover-movies", "--ratings"],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(SystemExit) as ctx:
+                    self.parser.parse_args(argv)
+                self.assertEqual(ctx.exception.code, 2)
+
+    # ---- ``--language`` ---------------------------------------------
+
+    def test_language_before_subcommand(self) -> None:
+        args = self.parser.parse_args(
+            ["--language", "en", "movie", "603"]
+        )
+        self.assertEqual(args.command, "movie")
+        self.assertEqual(args.language, "en")
+
+    def test_language_after_subcommand(self) -> None:
+        args = self.parser.parse_args(["movie", "603", "--language", "en"])
+        self.assertEqual(args.command, "movie")
+        self.assertEqual(args.language, "en")
+
+    def test_language_defaults_to_none_when_omitted(self) -> None:
+        # The natural default lives on the top-level registration
+        # only (``None``); a user that omits the flag still gets
+        # the documented default so the handler omits the
+        # ``?language=`` query parameter from the wire request.
+        for cmd, argv in (
+            ("movie", ["movie", "603"]),
+            ("trending", ["trending"]),
+            ("upcoming-movies", ["upcoming-movies"]),
+            ("discover-movies", ["discover-movies"]),
+            ("genres", ["genres", "tv"]),
+        ):
+            with self.subTest(cmd=cmd):
+                args = self.parser.parse_args(argv)
+                self.assertEqual(args.command, cmd)
+                self.assertIsNone(args.language)
+
+    def test_language_after_unrelated_subcommand_errors(self) -> None:
+        # ``requests`` does not register ``--language``; argparse
+        # MUST reject the flag after the subcommand so the
+        # operator sees a usage error instead of silently no-op'ing.
+        with self.assertRaises(SystemExit) as ctx:
+            self.parser.parse_args(["requests", "--language", "en"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    # ---- ``--page`` -------------------------------------------------
+
+    def test_page_before_subcommand(self) -> None:
+        args = self.parser.parse_args(["--page", "2", "discover-movies"])
+        self.assertEqual(args.command, "discover-movies")
+        self.assertEqual(args.page, 2)
+
+    def test_page_after_subcommand(self) -> None:
+        args = self.parser.parse_args(
+            ["discover-movies", "--page", "2"]
+        )
+        self.assertEqual(args.command, "discover-movies")
+        self.assertEqual(args.page, 2)
+
+    def test_page_defaults_to_none_when_omitted(self) -> None:
+        for cmd, argv in (
+            ("upcoming-movies", ["upcoming-movies"]),
+            ("upcoming-tv", ["upcoming-tv"]),
+            ("discover-movies", ["discover-movies"]),
+            ("discover-tv", ["discover-tv"]),
+        ):
+            with self.subTest(cmd=cmd):
+                args = self.parser.parse_args(argv)
+                self.assertEqual(args.command, cmd)
+                self.assertIsNone(args.page)
+
+    def test_page_after_unrelated_subcommand_errors(self) -> None:
+        # ``requests`` does not register ``--page``; argparse MUST
+        # reject the flag after the subcommand so the operator sees
+        # a usage error instead of silently no-op'ing.
+        with self.assertRaises(SystemExit) as ctx:
+            self.parser.parse_args(["requests", "--page", "2"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    # ---- ``--genre`` ------------------------------------------------
+
+    def test_genre_before_subcommand(self) -> None:
+        args = self.parser.parse_args(
+            ["--genre", "878", "discover-movies"]
+        )
+        self.assertEqual(args.command, "discover-movies")
+        self.assertEqual(args.genre, 878)
+
+    def test_genre_after_subcommand(self) -> None:
+        args = self.parser.parse_args(
+            ["discover-movies", "--genre", "878"]
+        )
+        self.assertEqual(args.command, "discover-movies")
+        self.assertEqual(args.genre, 878)
+
+    def test_genre_defaults_to_none_when_omitted(self) -> None:
+        args = self.parser.parse_args(["discover-movies"])
+        self.assertEqual(args.command, "discover-movies")
+        self.assertIsNone(args.genre)
+
+    def test_genre_after_unrelated_subcommand_errors(self) -> None:
+        # ``upcoming-movies`` does not register ``--genre``;
+        # argparse MUST reject the flag after the subcommand so
+        # the operator sees a usage error.
+        with self.assertRaises(SystemExit) as ctx:
+            self.parser.parse_args(["upcoming-movies", "--genre", "878"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    # ---- ``--sort`` -------------------------------------------------
+
+    def test_sort_before_subcommand(self) -> None:
+        args = self.parser.parse_args(
+            ["--sort", "vote_count.desc", "discover-tv"]
+        )
+        self.assertEqual(args.command, "discover-tv")
+        self.assertEqual(args.sort, "vote_count.desc")
+
+    def test_sort_after_subcommand(self) -> None:
+        args = self.parser.parse_args(
+            ["discover-tv", "--sort", "vote_count.desc"]
+        )
+        self.assertEqual(args.command, "discover-tv")
+        self.assertEqual(args.sort, "vote_count.desc")
+
+    def test_sort_defaults_to_none_when_omitted(self) -> None:
+        args = self.parser.parse_args(["discover-tv"])
+        self.assertEqual(args.command, "discover-tv")
+        self.assertIsNone(args.sort)
+
+    def test_sort_after_unrelated_subcommand_errors(self) -> None:
+        # ``trending`` does not register ``--sort``; argparse MUST
+        # reject the flag after the subcommand so the operator sees
+        # a usage error.
+        with self.assertRaises(SystemExit) as ctx:
+            self.parser.parse_args(
+                ["trending", "--sort", "vote_count.desc"]
+            )
+        self.assertEqual(ctx.exception.code, 2)
+
+    # ---- multiple flags combined -----------------------------------
+
+    def test_multiple_flags_before_subcommand(self) -> None:
+        # Confirms the SUPPRESS-default trick on each subparser
+        # registration survives when several top-level flags are
+        # supplied together: each value must round-trip without
+        # being clobbered by a sibling default-lookup.
+        args = self.parser.parse_args(
+            [
+                "--page",
+                "3",
+                "--language",
+                "fr-FR",
+                "upcoming-movies",
+            ]
+        )
+        self.assertEqual(args.command, "upcoming-movies")
+        self.assertEqual(args.page, 3)
+        self.assertEqual(args.language, "fr-FR")
+
+
 if __name__ == "__main__":
     unittest.main()

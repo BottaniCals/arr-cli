@@ -1048,6 +1048,62 @@ class TestBuildJellyfinParser(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Test: ``--start-index`` works in either position
+# ---------------------------------------------------------------------------
+
+
+class TestStartIndexFlagPosition(unittest.TestCase):
+    """``--start-index`` is registered at both parser levels so it parses in either position.
+
+    Regression for ticket
+    ``[media-cli] Subcommand-only flags fail when placed before subcommand``.
+    Argparse only recognises a flag on the parser that is currently
+    parsing, so a subparser-only registration breaks
+    ``jellyfin --start-index N nextup`` (the documented
+    ``StartIndex=N`` form would be consumed as the COMMAND choice).
+    The fix registers ``--start-index`` on the top-level parser AND
+    on the ``nextup`` subparser so both invocations parse and the
+    value flows through to ``cmd_nextup`` unchanged.
+    """
+
+    def setUp(self) -> None:
+        self.parser = build_jellyfin_parser()
+
+    def test_start_index_before_subcommand(self) -> None:
+        args = self.parser.parse_args(["--start-index", "5", "nextup"])
+        self.assertEqual(args.command, "nextup")
+        self.assertEqual(args.start_index, 5)
+
+    def test_start_index_after_subcommand(self) -> None:
+        args = self.parser.parse_args(["nextup", "--start-index", "5"])
+        self.assertEqual(args.command, "nextup")
+        self.assertEqual(args.start_index, 5)
+
+    def test_start_index_default_when_omitted(self) -> None:
+        # The natural default lives on the top-level registration
+        # only (``None`` = no pagination override); a user that
+        # omits the flag entirely still gets the documented default.
+        args = self.parser.parse_args(["nextup"])
+        self.assertEqual(args.command, "nextup")
+        self.assertIsNone(args.start_index)
+
+    def test_start_index_after_unrelated_subcommand_errors(self) -> None:
+        # ``now`` does not register ``--start-index``; argparse MUST
+        # reject the flag after the subcommand so the operator sees
+        # a usage error instead of silently no-op'ing under
+        # ``cmd_now``. (The before-subcommand form
+        # ``--start-index 5 now`` is a silent no-op by design --
+        # the top-level parser consumes the flag, the unrelated
+        # subcommand never sees it, and ``cmd_now`` ignores the
+        # ``start_index`` attribute on its args namespace. This
+        # mirrors the universal-flag pattern documented in
+        # ``cli_common._build_universal_parent``.)
+        with self.assertRaises(SystemExit) as ctx:
+            self.parser.parse_args(["now", "--start-index", "5"])
+        self.assertEqual(ctx.exception.code, 2)
+
+
+# ---------------------------------------------------------------------------
 # Test: main entry point
 # ---------------------------------------------------------------------------
 
