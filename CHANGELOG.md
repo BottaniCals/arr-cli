@@ -9,6 +9,22 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- `seerr available` README §4.5 doc drift -- the row for
+  `seerr available <query>` no longer promises a client-side
+  title-substring post-filter; that filter was retired in PR #39
+  (`seerr-available-no-title-filter`, commit `5bf3629`) because
+  upstream `GET /api/v1/media` records on the operator's Seer
+  instance do not carry a top-level `title` field, which made the
+  filter a guaranteed no-op. The "Notes" cell now describes the
+  actual post-PR #39 behaviour: positional `<query>` is accepted
+  for backwards compatibility but is ignored; a non-empty query
+  emits a stderr note; use `seerr search <query>` to match against
+  titles. No code change -- the handler, the curated summary, and
+  the stderr note were already correct in PR #39. Pin test in
+  `TestCmdAvailable.test_cmd_available_title_substring_filter_removed`
+  (upgraded to assert the captured upstream request is unchanged
+  regardless of `args.query`: no `query` / `title` / extra `filter`
+  on the wire).
 - `radarr recent` README drift -- the §4.2 Radarr table now
   documents the actual endpoint
   (`GET /api/v3/history?includeMovie=true&pageSize=<N>`) and

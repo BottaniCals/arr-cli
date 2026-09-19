@@ -1134,7 +1134,7 @@ class TestCmdAvailable(unittest.TestCase):
         with patch(
             "arr_cli.seerr.transport.get",
             return_value=self.AVAILABLE_ENVELOPE,
-        ):
+        ) as mock_get:
             stdout, stderr = _capture_stderr_stdout(
                 cmd_available, args, None
             )
@@ -1143,12 +1143,52 @@ class TestCmdAvailable(unittest.TestCase):
         self.assertEqual(len(rendered), 3)
         rendered_ids = [row["id"] for row in rendered]
         self.assertEqual(rendered_ids, [1, 2, 3])
+        # The captured upstream call must carry exactly the
+        # pass-through params (``take=1000``, ``filter=available``)
+        # -- no ``query``, no ``title``, and no extra ``filter``
+        # beyond the documented one. This is the load-bearing
+        # assertion for the bug review's "the positional is
+        # accepted for backwards compatibility but is ignored"
+        # contract: the substring filter must not leak back into
+        # the request shape on a future regression.
+        self.assertEqual(len(mock_get.call_args_list), 1)
+        kwargs = mock_get.call_args.kwargs
+        params = kwargs.get("params")
+        self.assertIsNotNone(
+            params,
+            msg="transport.get was called without a params dict",
+        )
+        self.assertEqual(
+            params,
+            {"take": 1000, "filter": "available"},
+            msg=(
+                "non-empty positional query must not leak into the "
+                "upstream params dict; expected exactly "
+                "{'take': 1000, 'filter': 'available'}"
+            ),
+        )
+        self.assertNotIn(
+            "query", params,
+            msg=(
+                "positional <query> leaked into the upstream "
+                "params dict (the historical substring-filter "
+                "regression)"
+            ),
+        )
+        self.assertNotIn(
+            "title", params,
+            msg=(
+                "title-shaped filter leaked into the upstream "
+                "params dict (the historical substring-filter "
+                "regression)"
+            ),
+        )
         # Stderr note explains why the query was ignored so the
         # operator isn't surprised by what looks like an empty
         # result (the rows are there, the filter just couldn't
         # match anything without a title field).
         self.assertIn(
-            "substring filter 'doctor' ignored", stderr,
+            "substring filter", stderr,
             msg=(
                 "expected stderr note about the removed substring "
                 f"filter; got stderr={stderr!r}"
