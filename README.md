@@ -176,6 +176,7 @@ shape (decoded).
 | `sonarr queue`                  | GET  | `/api/v3/queue`                            | Current download / import queue.                                                     |
 | `sonarr recent`                 | GET  | `/api/v3/history?includeSeries=true&includeEpisode=true` | TV history (NOT `/history/movie` like Radarr); include flags populate nested `series`/`episode` titles. |
 | `sonarr lookup <term>`          | GET  | `/api/v3/series/lookup?term=<term>`        | Percent-encoded by the facade.                                                       |
+| `sonarr series`                 | GET  | `/api/v3/series`                           | List every series in the library.                                                   |
 | `sonarr series <id>`            | GET  | `/api/v3/series/{id}`                      | 404 → exit code `4` with stderr naming the id.                                       |
 
 ### 4.4 Maintainerr (`maintainerr` — 3 commands)
