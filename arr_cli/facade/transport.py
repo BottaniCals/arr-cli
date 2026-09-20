@@ -39,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import sys
 from typing import Any, Iterable, Mapping
 from urllib.parse import quote, urljoin
 
@@ -69,14 +70,13 @@ __all__ = [
 # Module-level logger so debug records surface through the standard
 # ``logging`` configuration without a private handler.
 _logger = logging.getLogger("arr_cli.facade.transport")
-# WARNING+ emissions from this module must reach the operator's stderr
-# verbatim so the documented large-payload truncation warning is
-# captured by ``redirect_stderr`` (and any parent log handler attached
-# by a host test runner). Disabling propagation routes the record
-# through Python's ``lastResort`` handler (a ``_StderrHandler`` that
-# always resolves the current ``sys.stderr``) instead of letting a
-# parent handler swallow it.
-_logger.propagate = False
+# WARNING+ emissions from this module still flow through the standard
+# ``logging`` configuration for downstream consumers that want a
+# structured record, but the truncation warning that the operator is
+# contractually promised on stderr (REPerf / large-payload cap) is
+# also written directly to ``sys.stderr`` below so it is captured by
+# ``contextlib.redirect_stderr`` in tests and is visible regardless of
+# the host's logging handler chain.
 
 #: Canonical auth header names (REQ-2 AC1-3). Centralised so the
 #: redaction policy and any future header-name validation stay in sync.
@@ -592,6 +592,11 @@ def get(
                 "arr_cli.facade.transport: truncated payload from %d items to %d (max_items cap)",
                 upstream_count,
                 effective_cap,
+            )
+            print(
+                f"arr-cli: truncated payload from {upstream_count} items to "
+                f"{effective_cap} (max_items cap)",
+                file=sys.stderr,
             )
 
         return payload
