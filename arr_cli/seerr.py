@@ -611,6 +611,18 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     exposed by Seer; the live ``/api-docs/swagger-ui-init.js``
     OpenAPI spec is the source of truth (AGENTS.md §1 "Seer note").
 
+    An empty ``query`` (e.g. ``seerr search ""`` or ``seerr search``
+    with no positional) is intercepted before any HTTP call: it
+    exits 0 with stdout ``[]`` (or the documented ``"(empty list)"``
+    rendering under ``--human``). Skipping the ``/api/v1/search``
+    call avoids Seer's openapi-validator ``HTTP 400`` on the empty
+    ``query`` parameter (``Empty value found for query parameter
+    'query'``), which the operator would otherwise see as a noisy
+    exit 4 (``HttpError``) and matches the behaviour of
+    ``jellyfin search ""``, ``radarr lookup ""`` and
+    ``sonarr lookup ""`` documented in README §4. See
+    ``seerr-search-empty-query`` for the wire-layer rationale.
+
     Queries containing a character in
     :data:`_SEERR_RESERVED_QUERY_CHARS` (literal space or ``+``)
     are RFC 3986 percent-encoded at this call site with
@@ -644,6 +656,13 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "mediaType",
         "releaseDate",
     ]
+    if not query:
+        # Short-circuit on empty query to ``[]``; mirrors
+        # ``jellyfin search ""`` / ``radarr lookup ""`` /
+        # ``sonarr lookup ""`` (README §4) and avoids the noisy
+        # ``HTTP 400`` from Seer's openapi validator on
+        # ``query=``. See ``seerr-search-empty-query``.
+        return _emit([], args, columns=columns)
     # Pre-encode the query value only when a reserved char is
     # present. Single-word queries (``query="dune"``) skip this
     # branch so their wire format stays the documented single-word
