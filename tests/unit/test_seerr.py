@@ -6180,7 +6180,7 @@ class TestSubcommandFlagPosition(unittest.TestCase):
     """The five subcommand-specific flags parse before OR after the subcommand.
 
     Regression for ticket
-    ``[media-cli] Subcommand-only flags fail when placed before subcommand``.
+    ``[arr-cli] Subcommand-only flags fail when placed before subcommand``.
     Argparse only recognises a flag on the parser that is currently
     parsing, so a subparser-only registration breaks documented
     invocations like ``seerr --ratings tv 1396`` and

@@ -1257,7 +1257,7 @@ class TestPageSizeFlagPosition(unittest.TestCase):
     """``--page-size`` is registered at both parser levels so it parses in either position.
 
     Regression for ticket
-    ``[media-cli] Subcommand-only flags fail when placed before subcommand``.
+    ``[arr-cli] Subcommand-only flags fail when placed before subcommand``.
     Argparse only recognises a flag on the parser that is currently
     parsing, so a subparser-only registration breaks
     ``radarr --page-size N recent`` (the documented

@@ -104,7 +104,7 @@ MISSING_CONFIG_PATH: str = "/tmp/does-not-exist-arr-cli-argparse-test.conf"
 
 
 def _project_root() -> Path:
-    """Return the absolute path to ``/projects/media-cli``."""
+    """Return the absolute path to ``/projects/arr-cli``."""
     return _PROJ_ROOT
 
 

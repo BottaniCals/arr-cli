@@ -102,7 +102,7 @@ SUBPROCESS_TIMEOUT_SECONDS: int = 15
 
 
 def _project_root() -> Path:
-    """Return the absolute path to ``/projects/media-cli``."""
+    """Return the absolute path to ``/projects/arr-cli``."""
     return Path(__file__).resolve().parents[2]
 
 
