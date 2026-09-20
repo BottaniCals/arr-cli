@@ -8,7 +8,7 @@ REQ-1 AC4 mandates that the committed ``arr.conf.example`` ships with
 **only** documented placeholder values -- nothing real, no real URLs,
 no real API keys, no real user identifiers. The CI hook here is the
 defensive check that enforces that contract automatically; a stray
-``https://my-jellyfin.duckdns.org`` pasted into the example by an
+``https://my-jellyfin.example.org`` pasted into the example by an
 over-eager editor is caught before the file lands in the build.
 
 The validator is deliberately lightweight and stdlib-only:

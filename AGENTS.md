@@ -241,7 +241,7 @@ codes and shapes — do not rename the classes or reorganize the table.
 
 ## 8. Documentation
 
-This is a pubic project, when updating any documentation or adding comments, do not reference your personal environment or internal board tickets — no one else can access them.
+This is a public project, when updating any documentation or adding comments, do not reference your personal environment or internal board tickets — no one else can access them.
 
 **Do not** reference your personal environment.
 **Do not** reference your internal board tickets.

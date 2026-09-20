@@ -2876,7 +2876,7 @@ class TestSummarySeerrSearch(unittest.TestCase):
     expose a nested ``mediaInfo`` envelope. Mirrors the projection
     chosen for :func:`_summary_seerr_available` and matches the
     live-API artefact saved at
-    ``/home/renald/.openclaw/workspace/.tmp/arr-cli-qa-2026-09-18/seerr-search-matrix-verbose.json``.
+    ``.tmp/arr-cli-qa-2026-09-18/seerr-search-matrix-verbose.json``.
     """
 
     def test_search_shape(self) -> None:

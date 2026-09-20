@@ -236,14 +236,14 @@ class TestValidateExampleConfigViolations(unittest.TestCase):
         # A real-looking host MUST be reported as a violation.
         body = (
             "jellyfin:\n"
-            "  url: https://my-jellyfin.duckdns.org\n"
+            "  url: https://my-jellyfin.example.org\n"
             f"  {API_KEY_PLACEHOLDER.split('_')[0]}_key: {API_KEY_PLACEHOLDER}\n"
         )
         path = self._write(body)
         violations = validate_example_config(path)
         self.assertEqual(len(violations), 1)
         self._assert_has(
-            violations, substring="my-jellyfin.duckdns.org"
+            violations, substring="my-jellyfin.example.org"
         )
         self._assert_has(violations, substring="line 2")
 
@@ -331,7 +331,7 @@ class TestValidateExampleConfigViolations(unittest.TestCase):
         # comment must NOT trip the validator.
         body = (
             "# placeholder-only schema\n"
-            "# url = https://my-real-jellyfin.duckdns.org\n"
+            "# url = https://my-real-jellyfin.example.org\n"
             "jellyfin:\n"
             "  url: https://example.com\n"
             f"  {API_KEY_PLACEHOLDER.split('_')[0]}_key: {API_KEY_PLACEHOLDER}\n"
