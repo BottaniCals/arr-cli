@@ -1,0 +1,307 @@
+# arr-cli
+
+Read-only Python CLI wrappers around a self-hosted media server stack —
+Jellyfin, Radarr, Sonarr, Maintainerr, and Seer. The package ships
+five thin executables (`jellyfin`, `radarr`, `sonarr`, `maintainerr`, `seerr`)
+backed by a single shared facade (`arr_cli.facade`) that owns configuration,
+HTTP transport, authentication, error mapping, and output formatting. Together
+they expose **36 read-only commands** (every call is an HTTP `GET`).
+
+The CLIs are intended for two uses:
+
+- shell pipelines that consume the verbatim JSON on stdout (pass `--verbose` to see the full upstream payload),
+- ad-hoc terminal inspection with `--human` / `-h` to render the
+  response as a readable table.
+
+This is the **MVP** release. It is deliberately read-only, stateless per
+invocation (no daemon, no mandatory cache), and safe to leave lying around —
+a single broken service cannot break the others.
+
+---
+
+## 1. Purpose
+
+`arr-cli` exists so that agents can talk to the media server stack.
+Every service URL, API key, and user id lives in a single
+gitignored config file (`~/.config/arr/arr.conf`); every command emits a
+per-command output on stdout (the default JSON output is a curated summary
+for the 17 size-to-summary candidate commands; pass `--verbose` for the
+verbatim service payload) and a tabular readable view with `--human` / `-h`.
+There are no write endpoints in MVP: this package cannot mutate the media
+server state under any circumstance.
+
+---
+
+## 2. Canonical config path
+
+The CLIs read configuration from:
+
+```
+~/.config/arr/arr.conf
+```
+
+Per-invocation override:
+
+```
+jellyfin now --config /path/to/arr.local.yaml
+```
+
+Env-var overrides are also honored (see `arr.conf.example` for the full list
+of `ARR_*` keys). The CLI will:
+
+- Exit non-zero with a stderr message naming the canonical path if the config
+  is missing.
+- Exit non-zero with a permission-error message if the file is readable by
+  group or world (POSIX mode must be `0600` or stricter).
+- Exit non-zero with a `unknown format` error if neither the extension nor
+  the leading-byte sniff can pick YAML vs TOML.
+
+---
+
+## 3. Placeholder-only example
+
+A placeholder schema is committed as `arr.conf.example`. Copy it to your
+local config path and fill in real values. **Do not commit a real `arr.conf`.**
+Real keys go in a local file only; `arr.conf.example` ships with placeholders.
+
+```yaml
+# arr.conf.example - placeholder-only example.
+#
+# Copy this file to ~/.config/arr/arr.conf and fill in real values locally.
+# NEVER commit a real arr.conf. The real file is gitignored (see .gitignore).
+#
+# Both YAML and TOML are accepted (selected by file extension .yaml/.yml/.toml).
+# This file is YAML; a TOML-only equivalent appears at the bottom of this file.
+
+# --------------------------------------------------------------------
+# Top-level transport defaults. Override per invocation via CLI flags.
+# --------------------------------------------------------------------
+connect_timeout: 5.0 # seconds - connect timeout
+read_timeout: 30.0 # seconds - read timeout
+retry: 0 # 0 = no retries (default). Use --retry N on CLI to retry.
+deadline: null # absolute wall-clock cap for retries, in seconds
+
+# --------------------------------------------------------------------
+# Jellyfin (media playback server)
+# --------------------------------------------------------------------
+jellyfin:
+  url: https://example.com # replace with your instance URL
+  api_key: YOUR_API_KEY_HERE # Jellyfin -> Administration -> API Keys
+  user_id: <user-id> # Required for resume/recent/latest/favorites
+
+# --------------------------------------------------------------------
+# Radarr (movies)
+# --------------------------------------------------------------------
+radarr:
+  url: https://example.com # replace with your instance URL
+  api_key: YOUR_API_KEY_HERE # Radarr Settings -> General -> API Key
+
+# --------------------------------------------------------------------
+# Sonarr (TV)
+# --------------------------------------------------------------------
+sonarr:
+  url: https://example.com # replace with your instance URL
+  api_key: YOUR_API_KEY_HERE # Sonarr Settings -> General -> API Key
+
+# --------------------------------------------------------------------
+# Maintainerr (collection cleanup)
+# Defaults to NO AUTH. The CLI emits a stderr warning on each run
+# reminding the operator that this endpoint must be reachable only on
+# a trusted/private network. Set auth_enabled: true and fill in extra
+# headers below to enable auth (for example via a reverse proxy).
+# --------------------------------------------------------------------
+maintainerr:
+  url: https://example.com # replace with your instance URL
+  auth_enabled: false # set to true if behind an auth proxy
+  extra: # only used when auth_enabled is true
+    # Authorization: "Bearer YOUR_API_KEY_HERE"
+    # X-Custom-Header: YOUR_API_KEY_HERE
+
+# --------------------------------------------------------------------
+# Seer (media requests)
+# --------------------------------------------------------------------
+seerr:
+  url: https://example.com # replace with your instance URL
+  api_key: YOUR_API_KEY_HERE # Seerr Settings -> General -> API Key
+```
+
+The committed `arr.conf.example` contains a TOML-only equivalent at the
+bottom of the file. Both formats are accepted at runtime.
+
+> **Do not commit a real arr.conf. Real keys go in a local file only;
+> `arr.conf.example` ships with placeholders.**
+
+---
+
+## 4. Per-service command tables
+
+All commands are HTTP `GET`. Search terms, ids, dates, and tmdb ids are
+percent-encoded by the facade; the tables below show the canonical path
+shape (decoded).
+
+### 4.1 Jellyfin (`jellyfin` — 8 commands)
+
+| Command                   | HTTP | Path                                                                                       | Notes                                                                                                                                                                                                                                                                                                           |
+| ------------------------- | :--: | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jellyfin now`            | GET  | `/Sessions`                                                                                | All active sessions across users.                                                                                                                                                                                                                                                                               |
+| `jellyfin resume`         | GET  | `/Users/{user_id}/Items/Resume`                                                            | Requires `jellyfin.user_id`.                                                                                                                                                                                                                                                                                    |
+| `jellyfin recent`         | GET  | `/Users/{user_id}/Items?SortBy=DatePlayed&Filters=IsPlayed&includeItemTypes=Movie,Episode` | Requires `jellyfin.user_id`. `includeItemTypes=Movie,Episode` is required on Jellyfin v12 (without it the server returns a single episode instead of the rolled-up recent set).                                                                                                                                 |
+| `jellyfin nextup`         | GET  | `/Shows/NextUp`                                                                            | `--limit` is client-side only (caps the renderer, never sent on the wire). `UserId` is always sent from `jellyfin.user_id` (required on v12+). Accepts `--start-index N` for wire-side pagination (forwarded as `StartIndex`).                                                                                  |
+| `jellyfin latest`         | GET  | `/Users/{user_id}/Items/Latest`                                                            | Requires `jellyfin.user_id`.                                                                                                                                                                                                                                                                                    |
+| `jellyfin search <query>` | GET  | `/Items?searchTerm=<query>&Recursive=true`                                                 | `Recursive=true` is required on Jellyfin v10+/v12 — without it `/Items` returns the five library-root folders rather than matches. An empty query short-circuits client-side (returns `[]` without calling `/Items`), since `searchTerm=` combined with `Recursive=true` would otherwise walk the full library. |
+| `jellyfin item <id>`      | GET  | `/Items/{id}`                                                                              | 404 → exit code `4` with stderr naming the id.                                                                                                                                                                                                                                                                  |
+| `jellyfin favorites`      | GET  | `/Users/{user_id}/Items?Filters=IsFavorite`                                                | Requires `jellyfin.user_id`. `--limit` is client-side only (caps the renderer, never sent on the wire).                                                                                                                                                                                                         |
+
+### 4.2 Radarr (`radarr` — 6 commands)
+
+| Command                         | HTTP | Path                                             | Notes                                                                                                                                                                                                                                                |
+| ------------------------------- | :--: | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `radarr calendar`               | GET  | `/api/v3/calendar`                               | No date range.                                                                                                                                                                                                                                       |
+| `radarr calendar <start> [end]` | GET  | `/api/v3/calendar?start=<start>&end=<end>`       | Accepts ISO-8601 dates or datetimes; malformed input → exit `1` + stderr usage hint.                                                                                                                                                                 |
+| `radarr wanted`                 | GET  | `/api/v3/wanted/missing`                         | Missing movies.                                                                                                                                                                                                                                      |
+| `radarr queue`                  | GET  | `/api/v3/queue`                                  | Current download / import queue.                                                                                                                                                                                                                     |
+| `radarr recent`                 | GET  | `/api/v3/history?includeMovie=true&pageSize=<N>` | Movie history via generic `/history`; include flag populates nested `movie.title` / `movie.year`. Uses `--page-size` (default `10`, bounds `[1, 1000]`).                                                                                             |
+| `radarr lookup <term>`          | GET  | `/api/v3/movie/lookup?term=<term>`               | Percent-encoded by the facade. An empty `<term>` short-circuits client-side to `[]` (exit 0); forwarding `term=` to RadarrAPI returns `HTTP 503 Value cannot be null.` (exit 4) -- mirroring the `jellyfin search ""` / `seerr search ""` contracts. |
+| `radarr movie <id>`             | GET  | `/api/v3/movie/{id}`                             | 404 → exit code `4` with stderr naming the id.                                                                                                                                                                                                       |
+
+### 4.3 Sonarr (`sonarr` — 6 commands)
+
+| Command                         | HTTP | Path                                                     | Notes                                                                                                                                                                                                                                                                              |
+| ------------------------------- | :--: | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sonarr calendar`               | GET  | `/api/v3/calendar`                                       | No date range.                                                                                                                                                                                                                                                                     |
+| `sonarr calendar <start> [end]` | GET  | `/api/v3/calendar?start=<start>&end=<end>`               | Accepts ISO-8601 dates or datetimes; malformed input → exit `1` + stderr usage hint.                                                                                                                                                                                               |
+| `sonarr wanted`                 | GET  | `/api/v3/wanted/missing`                                 | Missing episodes.                                                                                                                                                                                                                                                                  |
+| `sonarr queue`                  | GET  | `/api/v3/queue`                                          | Current download / import queue.                                                                                                                                                                                                                                                   |
+| `sonarr recent`                 | GET  | `/api/v3/history?includeSeries=true&includeEpisode=true` | TV history (NOT `/history/movie` like Radarr); include flags populate nested `series`/`episode` titles.                                                                                                                                                                            |
+| `sonarr lookup <term>`          | GET  | `/api/v3/series/lookup?term=<term>`                      | Percent-encoded by the facade. An empty `<term>` short-circuits client-side to `[]` (exit 0); forwarding `term=` to SkyHook returns `HTTP 503 Object reference not set to an instance of an object.` (exit 4) -- mirroring the `jellyfin search ""` / `seerr search ""` contracts. |
+| `sonarr series`                 | GET  | `/api/v3/series`                                         | List every series in the library.                                                                                                                                                                                                                                                  |
+| `sonarr series <id>`            | GET  | `/api/v3/series/{id}`                                    | 404 → exit code `4` with stderr naming the id.                                                                                                                                                                                                                                     |
+
+### 4.4 Maintainerr (`maintainerr` — 3 commands)
+
+Maintainerr ships with **no auth** by default. The facade logs a one-line
+stderr warning on each invocation reminding the operator that the endpoint
+must be reachable only on a trusted / private network, unless `--quiet` is
+passed.
+
+| Command               | HTTP | Path                            | Notes                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------- | :--: | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `maintainerr pending` | GET  | `/api/collections/overlay-data` | Pending collection overlays.                                                                                                                                                                                                                                                                                                                                                                |
+| `maintainerr storage` | GET  | `/api/storage-metrics`          | Storage metrics.                                                                                                                                                                                                                                                                                                                                                                            |
+| `maintainerr health`  | GET  | `/api/health/ready`             | Readiness probe; passes the upstream object through verbatim in default, `--verbose`, and `--human` modes. Shape: `{"status": "ok"\|..., "uptimeSeconds": <int>, "database": "ok"\|..., "timestamp": "<ISO-8601>"}`. Exit `0` when the upstream returns `status == "ok"`; non-`ok` payloads still exit `0` (the operator reads the value). `--human` renders the object indented, no crash. |
+
+### 4.5 Seer (`seerr` — 13 commands)
+
+| Command                                     | HTTP | Path                                                                          | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------- | :--: | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seerr requests`                            | GET  | `/api/v1/request`                                                             | All requests.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `seerr request-count`                       | GET  | `/api/v1/request/count`                                                       | Aggregate request counts.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `seerr search <query>`                      | GET  | `/api/v1/search?query=<query>`                                                | Percent-encoded by the facade.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `seerr available <query>`                   | GET  | `/api/v1/media?filter=available&take=1000`                                    | Positional `<query>` is accepted for backwards compatibility but is ignored -- upstream `/api/v1/media` records do not carry a title field. A non-empty query emits a stderr note; use `seerr search <query>` to match against titles.                                                                                                                                                                                                                                                                                                                                                                           |
+| `seerr user`                                | GET  | `/api/v1/auth/me`                                                             | Auth self-check (the bare `/auth/me` resolves to the Next.js frontend SPA and returns HTML, not the API).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `seerr tv <id>`                             | GET  | `/api/v1/tv/<id>?language=<LANG>`                                             | Size-to-summary command. Default output is a curated 8-key summary (`name`, `originalName`, `firstAirDate`, `genres` (comma-joined names), `networks` (comma-joined names), `numberOfSeasons`, `status`, `ratings`); pass `--verbose` for the verbatim service payload. `ratings` is always present (JSON `null` without `--ratings`; populated as `{"criticsScore": <int>, "audienceScore": <int>}` when `--ratings` is set, after merging the upstream `/ratings` sub-resource).                                                                                                                               |
+| `seerr movie <id>`                          | GET  | `/api/v1/movie/<id>?language=<LANG>`                                          | Size-to-summary command. Default output is a curated 7-key summary (`title`, `originalTitle`, `releaseDate`, `runtime` (formatted as `"<X>h <Y>m"`), `genres` (comma-joined names), `tagline`, `ratings`); pass `--verbose` for the verbatim service payload. `ratings` is always present (JSON `null` without `--ratings`; populated as `{"criticsScore": <int>, "audienceScore": <int>}` when `--ratings` is set, after merging the upstream `/ratings` sub-resource). Structural twin of `seerr tv <id>` (same flag surface, same ratings merge contract).                                                    |
+| `seerr trending [MEDIA_TYPE] [TIME_WINDOW]` | GET  | `/api/v1/discover/trending?mediaType=<…>&timeWindow=<…>&language=<…>`         | `MEDIA_TYPE ∈ {movie, tv} (omit = all); TIME_WINDOW ∈ {day, week}, default week. Accepts optional `--language`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `seerr upcoming-movies`                     | GET  | `/api/v1/discover/movies/upcoming?page=<…>&language=<…>`                      | Paginated upcoming movie releases. Universal flags only; no positional media type (fixed at command level).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `seerr upcoming-tv`                         | GET  | `/api/v1/discover/tv/upcoming?page=<…>&language=<…>`                          | Paginated upcoming TV premieres. Universal flags only; no positional media type (fixed at command level).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `seerr discover-movies`                     | GET  | `/api/v1/discover/movies?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>` | Filterable movie discover; no CLI defaults ride the wire (the `sortBy=popularity.desc` / `language=en-US` / `page=1` triple shown above is the upstream's default behaviour, not what the CLI sends). Optional `--genre <id>` (int), `--sort <sortBy>`, `--language <code>`, `--page <n>` are forwarded only when set. `--limit` is client-side only (caps the renderer, never sent on the wire).                                                                                                                                                                                                                |
+| `seerr discover-tv`                         | GET  | `/api/v1/discover/tv?genre=<id>&sortBy=<sortBy>&language=<LANG>&page=<N>`     | Filterable TV discover; same flag surface as `discover-movies`. Structural twin; same "no CLI defaults ride the wire" contract. `--limit` is client-side only.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `seerr genres [MEDIA_TYPE]`                 | GET  | `/api/v1/genres/<movie\|tv>`                                                  | TMDB genre list as `[{id, name}, ...]`. `MEDIA_TYPE ∈ {movie, tv}`, default `movie` (matches `seerr trending`'s positional-with-default pattern); any other value is rejected by argparse and surfaces as a `ConfigError` with exit code `1` (the CLI's documented `ConfigError` exit; argparse's internal exit `2` is mentioned in the stderr message but is not the CLI exit). Optional `--language <LANG>` forwards as `?language=<LANG>` when set. Pair with `seerr discover-movies --genre` / `seerr discover-tv --genre` to map a friendly genre name (e.g. `Sci-Fi`) to its TMDB integer id (e.g. `878`). |
+
+---
+
+## 5. Auth matrix
+
+The facade injects exactly one auth header per request — no per-command
+threading of credentials.
+
+| Service       | Header                                  | Value source                                                                                                                                                    |
+| ------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jellyfin`    | `Authorization` (MediaBrowser envelope) | `jellyfin.api_key` in `arr.conf`, sent as `Token="…"` inside the `MediaBrowser Client="arr-cli", Device="arr-cli", DeviceId="<host>", Version="0.1.0"` envelope |
+| `radarr`      | `X-Api-Key`                             | `radarr.api_key` in `arr.conf`                                                                                                                                  |
+| `sonarr`      | `X-Api-Key`                             | `sonarr.api_key` in `arr.conf`                                                                                                                                  |
+| `seerr`       | `X-Api-Key`                             | `seerr.api_key` in `arr.conf`                                                                                                                                   |
+| `maintainerr` | (none by default)                       | When `maintainerr.auth_enabled = true`, every `maintainerr.extra` key/value pair is added as a header. Otherwise no `Authorization`-style header is sent.       |
+
+Missing credentials for any service raise `AuthError` (exit code `2`) with a
+stderr message naming the missing key. HTTP 401 / 403 from any service also
+maps to `AuthError` (exit code `2`); `--debug` redacts header values to
+`***<length>` so secrets never reach stderr even with full tracing on.
+
+---
+
+## 6. Install / invoke
+
+Install in editable mode for development:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+Each console script is invokable from any shell with a working `PATH` once
+the package is installed:
+
+```bash
+jellyfin now --human
+radarr wanted
+sonarr calendar 2026-01-01 2026-01-31
+maintainerr health
+seerr user
+```
+
+Run `scripts/smoke.sh --dry-run` for a no-network grammar check across all
+five CLIs; `scripts/smoke.sh --live` (gated behind `RUN_LIVE=1`) hits the
+operator's instance with one command per service.
+
+Integration tests under `tests/integration/` exercise the CLIs against a
+live service instance. They are **skipped by default** and only run when
+the test runner is invoked with `--run-integration` (pytest) or when
+`ARR_RUN_INTEGRATION=1` is exported (unittest). To run them against your
+own instance, export `ARR_LIVE_URL` and the per-service credentials
+first:
+
+```bash
+export ARR_LIVE_URL=https://jellyfin.example.com
+export ARR_LIVE_API_KEY=...
+export ARR_LIVE_USER_ID=...   # jellyfin endpoints that need user_id
+pytest tests/integration/ --run-integration
+# or, with the Makefile:
+make integration-test
+```
+
+Universal flags (every CLI):
+
+| Flag                     | Description                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `--config <path>`        | Override the canonical config path for this invocation only.                                                  |
+| `--debug` / `--no-debug` | Enable / disable the full traceback + redacted request/response log.                                          |
+| `--quiet` / `--no-quiet` | Suppress informational stderr lines (e.g. the Maintainerr auth-disabled warning). Errors still surface.       |
+| `--human` / `-h`         | Render tabular readable text instead of raw JSON on stdout.                                                   |
+| `--verbose`              | Emit the verbatim service JSON payload instead of the curated summary (default for size-to-summary commands). |
+| `--limit <int>`          | Page size for `--human` lists (default `20`).                                                                 |
+| `--connect-timeout <s>`  | Override the config's `connect_timeout` (default `5.0`).                                                      |
+| `--read-timeout <s>`     | Override the config's `read_timeout` (default `30.0`).                                                        |
+| `--retry <int>`          | Number of retry attempts on `NetworkError` (default `0`).                                                     |
+| `--deadline <s>`         | Absolute wall-clock cap for `--retry`, in seconds.                                                            |
+
+Run any subcommand with `--help` for the per-service synopsis and flags.
+
+---
+
+## 7. Exit codes
+
+Every CLI returns one of five stable exit codes.
+
+| Code | Class          | Trigger                                                              | Example stderr                                                             |
+| ---: | -------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+|  `1` | `ConfigError`  | Missing config, bad perms, unknown format, malformed CLI date input. | `radarr: calendar — invalid date 'next-tuesday'; expected ISO-8601`        |
+|  `2` | `AuthError`    | HTTP 401 / 403 from the service, or missing required credential.     | `jellyfin: op=now — 401 Unauthorized; check jellyfin.api_key in arr.conf`  |
+|  `3` | `NetworkError` | DNS failure, connection refused, TLS error, or timeout.              | `radarr: op=calendar url=https://radarr.example/api/v3/calendar — Timeout` |
+|  `4` | `HttpError`    | HTTP 4xx (non-auth) or 5xx from the service.                         | `sonarr: op=series id=42 status=404 message=Series not found`              |
+|  `5` | `ParseError`   | Response body is not valid JSON.                                     | `seerr: op=user — invalid JSON at byte offset 17`                          |
+
+Diagnostics always flow through stderr; a consumer redirecting only stdout
+receives a clean JSON document with no interspersed log lines. Python
+tracebacks are printed only when `--debug` is set.
