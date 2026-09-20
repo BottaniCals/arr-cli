@@ -5,13 +5,11 @@ Jellyfin, Radarr, Sonarr, Maintainerr, and Seer. The package ships
 five thin executables (`jellyfin`, `radarr`, `sonarr`, `maintainerr`, `seerr`)
 backed by a single shared facade (`arr_cli.facade`) that owns configuration,
 HTTP transport, authentication, error mapping, and output formatting. Together
-they expose **30 read-only commands** (every call is an HTTP `GET`).
+they expose **36 read-only commands** (every call is an HTTP `GET`).
 
 The CLIs are intended for two uses:
 
-- shell pipelines that consume the verbatim JSON on stdout (pass `--verbose`
-  for the 17 size-to-summary candidate commands; the remaining 13 commands
-  emit verbatim by default),
+- shell pipelines that consume the verbatim JSON on stdout (pass `--verbose` to see the full upstream payload),
 - ad-hoc terminal inspection with `--human` / `-h` to render the
   response as a readable table.
 
