@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arr-cli"
+version = "0.1.0"
+description = "Read-only Python CLI wrappers around Jellyfin, Radarr, Sonarr, Maintainerr, and Seerr."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Cedar" },
+]
+keywords = ["jellyfin", "radarr", "sonarr", "maintainerr", "seerr", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "requests>=2.28",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "responses>=0.23",
+]
+
+[project.scripts]
+jellyfin = "arr_cli.jellyfin:main"
+radarr = "arr_cli.radarr:main"
+sonarr = "arr_cli.sonarr:main"
+maintainerr = "arr_cli.maintainerr:main"
+seerr = "arr_cli.seerr:main"
+
+[project.urls]
+Homepage = "https://example.com/arr-cli"
+
+[tool.setuptools]
+packages = [
+    "arr_cli",
+    "arr_cli.facade",
+]
+
+[tool.setuptools.package-data]
+arr_cli = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-ra -q"

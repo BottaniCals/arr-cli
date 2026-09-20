@@ -1,0 +1,91 @@
+# arr.conf.example - placeholder-only example.
+#
+# Copy this file to ~/.config/arr/arr.conf and fill in real values locally.
+# NEVER commit a real arr.conf. The real file is gitignored (see .gitignore).
+#
+# Both YAML and TOML are accepted (selected by file extension .yaml/.yml/.toml).
+# This file is YAML; a TOML-only equivalent appears at the bottom of this file.
+
+# --------------------------------------------------------------------
+# Top-level transport defaults. Override per invocation via CLI flags.
+# --------------------------------------------------------------------
+connect_timeout: 5.0       # seconds - connect timeout
+read_timeout:    30.0      # seconds - read timeout
+retry:          0          # 0 = no retries (default). Use --retry N on CLI to retry.
+deadline:        null      # absolute wall-clock cap for retries, in seconds
+
+# --------------------------------------------------------------------
+# Jellyfin (media playback server)
+# --------------------------------------------------------------------
+jellyfin:
+  url:     https://example.com          # replace with your instance URL
+  api_key: YOUR_API_KEY_HERE            # Jellyfin -> Administration -> API Keys
+  user_id: <user-id>                    # Required for resume/recent/latest/favorites
+
+# --------------------------------------------------------------------
+# Radarr (movies)
+# --------------------------------------------------------------------
+radarr:
+  url:     https://example.com          # replace with your instance URL
+  api_key: YOUR_API_KEY_HERE            # Radarr Settings -> General -> API Key
+
+# --------------------------------------------------------------------
+# Sonarr (TV)
+# --------------------------------------------------------------------
+sonarr:
+  url:     https://example.com          # replace with your instance URL
+  api_key: YOUR_API_KEY_HERE            # Sonarr Settings -> General -> API Key
+
+# --------------------------------------------------------------------
+# Maintainerr (collection cleanup)
+# Defaults to NO AUTH. The CLI emits a stderr warning on each run
+# reminding the operator that this endpoint must be reachable only on
+# a trusted/private network. Set auth_enabled: true and fill in extra
+# headers below to enable auth (for example via a reverse proxy).
+# --------------------------------------------------------------------
+maintainerr:
+  url:          https://example.com     # replace with your instance URL
+  auth_enabled: false                   # set to true if behind an auth proxy
+  extra:                                # only used when auth_enabled is true
+    # Authorization: "YOUR_API_KEY_HERE"
+    # X-Custom-Header: YOUR_API_KEY_HERE
+
+# --------------------------------------------------------------------
+# Seer (media requests)
+# --------------------------------------------------------------------
+seerr:
+  url:     https://example.com          # replace with your instance URL
+  api_key: YOUR_API_KEY_HERE            # Seer Settings -> General -> API Key
+
+# ====================================================================
+# TOML-only equivalent (save as arr.local.toml if you prefer TOML).
+# Comment out the YAML block above or use a different file extension.
+# NOTE: the CI placeholder linter (task 15.1) requires every `api_key`
+# value to equal YOUR_API_KEY_HERE verbatim, so the TOML block below
+# uses the same placeholder. Replace them after copying to a real file.
+# ====================================================================
+#
+# [jellyfin]
+# url     = "https://example.com"
+# api_key = "YOUR_API_KEY_HERE"
+# user_id = "<user-id>"
+#
+# [radarr]
+# url     = "https://example.com"
+# api_key = "YOUR_API_KEY_HERE"
+#
+# [sonarr]
+# url     = "https://example.com"
+# api_key = "YOUR_API_KEY_HERE"
+#
+# [maintainerr]
+# url          = "https://example.com"
+# auth_enabled = false
+#
+# [seerr]
+# url     = "https://example.com"
+# api_key = "YOUR_API_KEY_HERE"
+#
+# connect_timeout = 5.0
+# read_timeout    = 30.0
+# retry           = 0
