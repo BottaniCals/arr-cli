@@ -307,23 +307,3 @@ Every CLI returns one of five stable exit codes.
 Diagnostics always flow through stderr; a consumer redirecting only stdout
 receives a clean JSON document with no interspersed log lines. Python
 tracebacks are printed only when `--debug` is set.
-
----
-
-## 8. Out of scope (tier-2)
-
-The MVP is intentionally read-only. The following are **deliberately not
-implemented** and will be the focus of a tier-2 follow-up:
-
-- **Maintainerr `veto`** (`POST /api/collections/media/handle`).
-- **Seer `create-request`** (`POST /api/v1/request`). If added, it MUST be
-  guarded by a `--confirm` flag and MUST NOT appear in MVP help output.
-- **Any write / mutate endpoint** on any service (Radarr, Sonarr, Jellyfin,
-  Maintainerr, Seer).
-- **Webhook receivers** (no inbound HTTP in MVP).
-- **Long-running daemon** or **persistent cache layer**. Each invocation is
-  fully stateless; no cache file is written unless explicitly configured,
-  and the MVP ships with no cache configured.
-- **Maintainerr `/api/rules`** is **not in MVP scope** because the endpoint
-  is not documented in the Maintainerr public API reference; it will be
-  re-evaluated against the operator's live `/api/swagger` at tier-2 time.
