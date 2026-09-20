@@ -725,24 +725,71 @@ class TestCmdSearch(unittest.TestCase):
             # left the mock unmatched and surfaced a connection error.
             self.assertEqual(len(rsps.calls), 1)
 
-    def test_cmd_search_empty_query_still_hits_endpoint(self) -> None:
-        """An absent positional query still hits ``/api/v1/search`` with ``query=\"\"``."""
-        with responses.RequestsMock() as rsps:
-            rsps.add(
-                responses.GET,
-                "https://seerr.example/api/v1/search",
-                json=[],
-                match=[
-                    responses.matchers.query_param_matcher({"query": ""})
-                ],
-            )
-            import arr_cli.seerr as seerr
+    def test_cmd_search_empty_query_short_circuits_to_empty_list(self) -> None:
+        """An absent positional query short-circuits to ``[]`` without hitting ``/api/v1/search``.
 
-            exit_code = seerr.main(
-                ["--config", str(self.cfg_path), "search"]
+        ``seerr-search-empty-query`` regression pin: Seer's openapi
+        validator rejects an empty ``query`` parameter with
+        ``HTTP 400`` (``Empty value found for query parameter
+        'query'``), which would otherwise surface to the operator as
+        exit 4 (``HttpError``). Mirrors ``jellyfin search ""`` /
+        ``radarr lookup ""`` / ``sonarr lookup ""`` -- the
+        project-wide contract that ``search-with-empty-query`` is a
+        client-side short-circuit to ``[]`` with exit 0. ``transport.get``
+        is patched to raise if called so any accidental HTTP attempt
+        surfaces as an AssertionError, not a ``ConnectionError`` from
+        responses.
+        """
+        import arr_cli.seerr as seerr
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty query"
+            ),
+        ):
+            stdout = _capture_stdout(
+                seerr.main,
+                ["--config", str(self.cfg_path), "search"],
             )
-            self.assertEqual(exit_code, 0)
-            self.assertEqual(len(rsps.calls), 1)
+        self.assertEqual(json.loads(stdout), [])
+
+    def test_cmd_search_explicit_empty_string_short_circuits(self) -> None:
+        """An explicit empty-string positional (``seerr search ""``) takes the same short-circuit path."""
+        import arr_cli.seerr as seerr
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty query"
+            ),
+        ):
+            stdout = _capture_stdout(
+                seerr.main,
+                ["--config", str(self.cfg_path), "search", ""],
+            )
+        self.assertEqual(json.loads(stdout), [])
+
+    def test_cmd_search_empty_query_human_renders_empty_list(self) -> None:
+        """``--human`` on an empty query renders the documented ``(empty list)`` literal.
+
+        Pairs the default-mode JSON pin above with the second
+        priority-chain branch (``--human``) of :func:`output.emit`.
+        Under ``--human`` an empty payload must print the documented
+        ``"(empty list)"`` literal -- not the verbatim JSON ``[]``.
+        Without the short-circuit, the empty query would 400 on the
+        wire and never reach the human renderer.
+        """
+        import arr_cli.seerr as seerr
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=AssertionError(
+                "transport.get must not be called for empty query"
+            ),
+        ):
+            stdout = _capture_stdout(
+                seerr.main,
+                ["--config", str(self.cfg_path), "--human", "search"],
+            )
+        self.assertEqual(stdout.strip(), "(empty list)")
 
     def test_cmd_search_special_chars_forwarded_raw(self) -> None:
         """Special characters in the query are forwarded raw.
