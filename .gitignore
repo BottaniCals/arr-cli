@@ -33,6 +33,7 @@ htmlcov/
 *.swo
 .DS_Store
 Thumbs.db
+.kilo
 
 # --- User-local config files (keep arr.conf.example committed) ---
 # REQ-1 AC5: never commit a user's real config. Either extension is supported.
