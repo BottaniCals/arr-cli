@@ -668,6 +668,19 @@ def _summary_jellyfin_now(payload: Any) -> list[dict[str, Any]]:
                 play_state, "IsPaused", default=False
             ),
         }
+        # Per US-1: surface last-activity timestamp, queue length, and
+        # an active-transcoding boolean so the --human table can tell
+        # live vs stalled sessions at a glance.
+        last_activity = session.get("LastActivityDate")
+        queue = session.get("NowPlayingQueue")
+        queue_length = len(queue) if isinstance(queue, list) else 0
+        transcode_info = session.get("TranscodingInfo")
+        if isinstance(transcode_info, Mapping):
+            transcoding = _safe_get(
+                transcode_info, "IsVideoDirect", default=True
+            ) is False
+        else:
+            transcoding = False
         sessions.append(
             {
                 "user": _safe_get(session, "UserName", default=None),
@@ -675,6 +688,9 @@ def _summary_jellyfin_now(payload: Any) -> list[dict[str, Any]]:
                 "client": _safe_get(session, "Client", default=None),
                 "playing": playing,
                 "progress": progress,
+                "LastActivityDate": last_activity,
+                "NowPlayingQueue.length": queue_length,
+                "transcoding": transcoding,
             }
         )
     return sessions
@@ -718,6 +734,9 @@ def _summary_jellyfin_recent(payload: Any) -> list[dict[str, Any]]:
             "UserData.LastPlayedDate": _safe_get(
                 item, "UserData", "LastPlayedDate", default=None
             ),
+            "UserData.PlayedPercentage": _safe_get(
+                item, "UserData", "PlayedPercentage", default=0
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -744,6 +763,12 @@ def _summary_jellyfin_favorites(payload: Any) -> list[dict[str, Any]]:
             "Type": _safe_get(item, "Type", default=None),
             "ProductionYear": _safe_get(item, "ProductionYear", default=0),
             "SeriesName": _safe_get(item, "SeriesName", default=None),
+            "RunTimeTicks": _format_runtime_minutes(
+                item.get("RunTimeTicks")
+            ),
+            "UserData.LastPlayedDate": _safe_get(
+                item, "UserData", "LastPlayedDate", default=None
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -793,6 +818,12 @@ def _summary_jellyfin_resume(payload: Any) -> list[dict[str, Any]]:
             "UserData.PlayCount": _safe_get(
                 item, "UserData", "PlayCount", default=0
             ),
+            "UserData.PlayedPercentage": _safe_get(
+                item, "UserData", "PlayedPercentage", default=0
+            ),
+            "RunTimeTicks": _format_runtime_minutes(
+                item.get("RunTimeTicks")
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -825,6 +856,13 @@ def _summary_jellyfin_latest(payload: Any) -> list[dict[str, Any]]:
             "Type": _safe_get(item, "Type", default=None),
             "ProductionYear": _safe_get(item, "ProductionYear", default=0),
             "SeriesName": _safe_get(item, "SeriesName", default=None),
+            "RunTimeTicks": _format_runtime_minutes(
+                item.get("RunTimeTicks")
+            ),
+            "PremiereDate": _safe_get(
+                item, "PremiereDate", default=None
+            ),
+            "Genres": _join_names(item.get("Genres")),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -894,6 +932,10 @@ def _summary_jellyfin_nextup(payload: Any) -> list[dict[str, Any]]:
             ),
             "IndexNumber": _safe_get(item, "IndexNumber", default=0),
             "PremiereDate": _safe_get(item, "PremiereDate", default=None),
+            "RunTimeTicks": _format_runtime_minutes(
+                item.get("RunTimeTicks")
+            ),
+            "Overview": _safe_get(item, "Overview", default=None),
         }
         for item in payload
         if isinstance(item, Mapping)

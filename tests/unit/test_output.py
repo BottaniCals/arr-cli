@@ -1486,6 +1486,7 @@ class TestSummaryJellyfinRecent(unittest.TestCase):
                 "ProductionYear": 2024,
                 "SeriesName": None,
                 "UserData.LastPlayedDate": "2024-01-01",
+                "UserData.PlayedPercentage": 0,
             },
         )
 
@@ -1622,6 +1623,8 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
                 "Type": "Movie",
                 "ProductionYear": 2020,
                 "SeriesName": None,
+                "RunTimeTicks": None,
+                "UserData.LastPlayedDate": None,
             },
         )
 
@@ -1655,6 +1658,8 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
                     "Type": "Movie",
                     "ProductionYear": 2011,
                     "SeriesName": None,
+                    "RunTimeTicks": None,
+                    "UserData.LastPlayedDate": None,
                 }
             ],
         )
@@ -1938,6 +1943,8 @@ class TestSummaryJellyfinNextup(unittest.TestCase):
                     "ParentIndexNumber": 4,
                     "IndexNumber": 12,
                     "PremiereDate": "2002-01-10T00:00:00.0000000Z",
+                    "RunTimeTicks": None,
+                    "Overview": None,
                 }
             ],
         )
@@ -1962,6 +1969,8 @@ class TestSummaryJellyfinNextup(unittest.TestCase):
                     "ParentIndexNumber": 4,
                     "IndexNumber": 12,
                     "PremiereDate": "2002-01-10T00:00:00.0000000Z",
+                    "RunTimeTicks": None,
+                    "Overview": None,
                 }
             ],
         )
@@ -2007,6 +2016,8 @@ class TestSummaryJellyfinNextup(unittest.TestCase):
                     "ParentIndexNumber": 0,
                     "IndexNumber": 0,
                     "PremiereDate": None,
+                    "RunTimeTicks": None,
+                    "Overview": None,
                 }
             ],
         )
@@ -2035,6 +2046,8 @@ class TestSummaryJellyfinResume(unittest.TestCase):
                 "SeriesName": "Show",
                 "UserData.PlaybackPositionTicks": 100,
                 "UserData.PlayCount": 2,
+                "UserData.PlayedPercentage": 0,
+                "RunTimeTicks": None,
             },
         )
 
@@ -2218,6 +2231,9 @@ class TestSummaryJellyfinLatest(unittest.TestCase):
                 "Type": "Movie",
                 "ProductionYear": 2025,
                 "SeriesName": None,
+                "RunTimeTicks": None,
+                "PremiereDate": None,
+                "Genres": None,
             },
         )
 
@@ -3995,6 +4011,7 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "ProductionYear": 2024,
                     "SeriesName": None,
                     "UserData.LastPlayedDate": "2024-01-01",
+                    "UserData.PlayedPercentage": 0,
                 }
             ],
         )
@@ -4027,6 +4044,8 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "SeriesName": "Show",
                     "UserData.PlaybackPositionTicks": 100,
                     "UserData.PlayCount": 2,
+                    "UserData.PlayedPercentage": 0,
+                    "RunTimeTicks": None,
                 }
             ],
         )
@@ -4140,6 +4159,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "ProductionYear": 2024,
                 "SeriesName": None,
                 "UserData.LastPlayedDate": "2024-01-01",
+                "UserData.PlayedPercentage": 0,
             },
         )
 
@@ -4163,6 +4183,8 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "SeriesName": "Show",
                 "UserData.PlaybackPositionTicks": 100,
                 "UserData.PlayCount": 2,
+                "UserData.PlayedPercentage": 0,
+                "RunTimeTicks": None,
             },
         )
 
