@@ -1932,6 +1932,45 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
     }
 
 
+def _summary_radarr_lookup(payload: Any) -> list[dict[str, Any]]:
+    """Render a Radarr ``lookup`` payload as the curated summary.
+
+    ``GET /api/v3/movie/lookup?term=<urlencoded term>`` returns a
+    list of candidate movie records (TMDB-sourced defaults,
+    not the operator's library rows). The per-row projection
+    surfaces ``hasFile`` (always ``False`` for candidates -- the
+    audit asks for it so the operator can scan a lookup result
+    and immediately tell which candidates already exist in the
+    library), ``genres`` (via :func:`_join_names`), a truncated
+    ``overview`` (via :func:`_truncate_overview` with the
+    documented 80-character budget; keeps the cell readable
+    inside the 120-char NFR-Usability width cap when joined with
+    the other nine columns), ``status``, and the existing
+    ``tmdbId`` / ``imdbId`` / ``id`` / ``monitored`` identity
+    fields. Missing fields default to ``None`` / ``0`` / ``False``
+    per the per-type contract so the renderer stays well-formed
+    even when upstream omits a field.
+    """
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "genres": _join_names(item.get("genres")),
+            "overview": _truncate_overview(item.get("overview")),
+            "status": _safe_get(item, "status", default=None),
+            "tmdbId": _safe_get(item, "tmdbId", default=0),
+            "imdbId": _safe_get(item, "imdbId", default=None),
+            "id": _safe_get(item, "id", default=None),
+            "monitored": _safe_get(item, "monitored", default=False),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
 def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
     """Render a Maintainerr ``pending`` payload as the curated summary."""
     if not isinstance(payload, list):
@@ -1978,6 +2017,7 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("radarr", "queue"): _summary_radarr_queue,
     ("radarr", "recent"): _summary_radarr_recent,
     ("radarr", "calendar"): _summary_radarr_calendar,
+    ("radarr", "lookup"): _summary_radarr_lookup,
     ("sonarr", "wanted"): _summary_sonarr_wanted,
     ("sonarr", "queue"): _summary_sonarr_queue,
     ("sonarr", "recent"): _summary_sonarr_recent,

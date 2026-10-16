@@ -374,6 +374,10 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     columns = [
         "title",
         "year",
+        "hasFile",
+        "genres",
+        "overview",
+        "status",
         "tmdbId",
         "imdbId",
         "id",
