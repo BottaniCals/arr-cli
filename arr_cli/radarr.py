@@ -163,19 +163,28 @@ def _emit(
     args: argparse.Namespace,
     *,
     columns: Sequence[str] | None = None,
+    command: str | None = None,
 ) -> int:
     """Render ``payload`` via :func:`output.emit` and return exit code 0.
 
     Centralised so every command handler has the same JSON-vs-tabular
     decision point; the per-command handler only decides which columns
     to surface when ``--human`` is requested.
+
+    The ``command`` kwarg overrides ``args.command`` for the dispatch
+    table lookup -- used by ``cmd_movie`` to distinguish the no-id
+    branch (dispatches on ``("radarr", "movie")``) from the with-id
+    branch (dispatches on ``("radarr", "movie_id")``); the
+    argparse subcommand is the same ``"movie"`` for both branches.
     """
     output.emit(
         payload,
         human_mode=bool(getattr(args, "human", False)),
         verbose_mode=bool(getattr(args, "verbose", False)),
         service=SERVICE_NAME,
-        command=str(getattr(args, "command", "") or ""),
+        command=command if command is not None else str(
+            getattr(args, "command", "") or ""
+        ),
         columns=columns,
         limit=int(getattr(args, "limit", 20) or 20),
     )
@@ -239,6 +248,11 @@ def cmd_calendar(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     columns = [
         "title",
         "year",
+        "monitored",
+        "hasFile",
+        "genres",
+        "runtime",
+        "collection.name",
         "inCinemas",
         "physicalRelease",
         "digitalRelease",
@@ -255,14 +269,14 @@ def cmd_wanted(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="wanted",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_radarr_wanted`` (flat top-level keys); the summary
-    # renderer does not emit ``movieFile`` so it is intentionally
-    # absent from the column list.
+    # ``_summary_radarr_wanted`` (flat top-level keys).
     columns = [
         "title",
         "year",
-        "tmdbId",
-        "monitored",
+        "hasFile",
+        "genres",
+        "physicalRelease",
+        "releaseDate",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -279,10 +293,10 @@ def cmd_queue(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # ``_summary_radarr_queue`` (flat top-level keys).
     columns = [
         "title",
+        "year",
+        "quality",
         "status",
-        "trackedDownloadStatus",
-        "size",
-        "sizeleft",
+        "timeLeft",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -324,12 +338,16 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="recent",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_radarr_recent``: nested ``movie.title`` /
-    # ``movie.year`` are resolved via dot-path traversal in
-    # ``_row_from_mapping``.
+    # ``_summary_radarr_recent``: ``movie.title`` / ``movie.year``
+    # are also lifted to the top-level ``title`` / ``year`` keys
+    # so the audit-asked column set is reachable.
     columns = [
-        "movie.title",
-        "movie.year",
+        "title",
+        "year",
+        "sourceTitle",
+        "quality",
+        "language",
+        "client",
         "eventType",
         "date",
     ]
@@ -365,6 +383,10 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     columns = [
         "title",
         "year",
+        "hasFile",
+        "genres",
+        "overview",
+        "status",
         "tmdbId",
         "imdbId",
         "id",
@@ -399,7 +421,27 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     naming the id.
     """
     raw_id = getattr(args, "movie_id", None)
-    if raw_id:
+    if raw_id is None:
+        payload = _get(
+            "/api/v3/movie",
+            args,
+            cfg,
+            op="movie",
+        )
+        # Library-list columns match _summary_radarr_movie (the
+        # US-6 audit-asked shape). Listed first so the dispatch
+        # lookup ``_columns_for("radarr", "movie")`` (which takes
+        # the first literal) resolves to the no-id branch shape.
+        columns = [
+            "title",
+            "year",
+            "hasFile",
+            "genres",
+            "added",
+            "collection.name",
+            "studio",
+        ]
+    else:
         encoded_id = transport.encode_path_segment(raw_id)
         payload = _get(
             f"/api/v3/movie/{encoded_id}",
@@ -408,35 +450,28 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             op=f"movie id={raw_id}",
         )
         # Single-id row is the operator's library row; columns match
-        # the original REQ-7 AC7 contract and stay unchanged here
-        # (REQ-4 only renames the column on the lookup endpoint).
+        # the US-7 audit-asked shape (see _summary_radarr_movie_id).
+        # The ``command="movie_id"`` kwarg overrides ``args.command``
+        # so the dispatcher routes to ``("radarr", "movie_id")``
+        # rather than ``("radarr", "movie")``; both branches share
+        # the same argparse subcommand name.
         columns = [
             "title",
             "year",
-            "runtime",
-            "genres",
-            "monitored",
-        ]
-    else:
-        payload = _get(
-            "/api/v3/movie",
-            args,
-            cfg,
-            op="movie",
-        )
-        # Library-list columns are pinned by REQ-2 AC2: the rendered
-        # table MUST show exactly these six columns in this order.
-        # ``monitored`` here is the operator's library flag on a
-        # library row, not the source default that REQ-4 renames.
-        columns = [
-            "title",
-            "year",
-            "monitored",
             "status",
-            "tmdbId",
-            "imdbId",
+            "monitored",
+            "hasFile",
+            "genres",
+            "overview",
+            "added",
+            "studio",
         ]
-    return _emit(payload, args, columns=columns)
+    return _emit(
+        payload,
+        args,
+        columns=columns,
+        command="movie_id" if raw_id is not None else None,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,22 @@ within the pre-1.0 contract documented in `README.md`.
   curated single-record table (`Name`, `Type`, `ProductionYear`,
   `PremiereDate`, `RunTimeTicks`, `Genres`, `Overview`, `Status`)
   instead of dumping the raw Jellyfin JSON.
+- `radarr --human`: every size-to-summary table now carries the
+  audit-requested fields. `radarr movie` adds `hasFile`, `genres`,
+  `added`, `collection.name`, and `studio`; `radarr calendar`
+  (dated and open-ended) adds `monitored`, `hasFile`, `genres`,
+  `runtime`, and `collection.name`; `radarr wanted` adds `hasFile`,
+  `genres`, `physicalRelease`, and `releaseDate`; `radarr queue`
+  adds `title`, `year`, `quality`, `status`, and `timeLeft`;
+  `radarr recent` adds `sourceTitle`, `quality`, `language`, and
+  `client`; `radarr lookup` adds `hasFile`, `genres`, a truncated
+  `overview`, and `status`. Long `overview` strings are truncated
+  via a shared `_format_overview` helper.
+- `radarr movie <id>`: registered a new `_summary_radarr_movie_id`
+  renderer in `_SUMMARY_RENDERERS`, so the command now returns a
+  curated single-record table (`title`, `year`, `status`,
+  `monitored`, `hasFile`, `genres`, `overview`, `added`, `studio`)
+  instead of dumping the raw Radarr JSON.
 
 ## [0.1.0]
 

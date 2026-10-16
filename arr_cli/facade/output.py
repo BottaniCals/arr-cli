@@ -169,6 +169,29 @@ def _truncate(value: str, width: int) -> str:
     return value[: width - 1] + "…"
 
 
+def _truncate_overview(value: Any, *, max_chars: int = 80) -> str | None:
+    """Truncate a free-text ``overview`` to a fixed character budget.
+
+    Used by the two ``overview`` projections on Radarr (``lookup`` and
+    ``movie <id>``) so the cell stays readable inside the 120-char
+    NFR-Usability width cap when joined with the surrounding columns.
+    The truncation marker matches :func:`_truncate` (U+2026
+    HORIZONTAL ELLIPSIS) for visual consistency across the table.
+
+    Returns ``None`` for non-string / missing / empty inputs so the
+    human renderer prints ``<null>`` instead of the literal ``""`` or
+    a stack trace — the documented safe-default contract for missing
+    summary fields.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    if len(value) <= max_chars:
+        return value
+    if max_chars <= 1:
+        return "…"
+    return value[: max_chars - 1] + "…"
+
+
 def _column_widths(
     headers: Sequence[str],
     rows: Sequence[Sequence[str]],
@@ -618,6 +641,10 @@ def _format_runtime_minutes(value: Any) -> str | None:
     Shared across US-2 (resume), US-4 (nextup), US-5 (latest),
     US-6 (favorites), and US-8 (item); lifted out of the per-renderer
     duplication so all five runtimes format identically.
+
+    Do **not** feed Radarr whole-minute ``runtime`` into this helper;
+    use :func:`_format_runtime_minutes_whole` instead — see that
+    function's docstring for the rationale.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -627,6 +654,41 @@ def _format_runtime_minutes(value: Any) -> str | None:
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
     return f"{hours}h {minutes}m"
+
+
+def _format_runtime_minutes_whole(value: Any) -> str | None:
+    """Format a whole-minute runtime as ``"<X>h <Y>m"``.
+
+    Used for the Radarr ``calendar`` ``runtime`` projection (US-1):
+    Radarr's upstream ``/api/v3/calendar`` rows carry ``runtime``
+    as a whole-minute integer (e.g. ``120`` for a 2-hour movie),
+    not as Jellyfin-style 100-ns ``RunTimeTicks``. Feeding such a
+    value into the sibling :func:`_format_runtime_minutes` helper
+    would yield ``None`` for any runtime under ~120 minutes (the
+    helper divides by ``10_000_000`` to convert ticks into seconds)
+    and ``0h <low>m``-class garbage for normal runtimes.
+
+    The body mirrors the inline ``_format_runtime`` helper inside
+    :func:`_summary_seerr_movie` (which has identical semantics on
+    Seer's whole-minute ``runtime`` field); lifting it into a
+    module-level helper makes the contract explicit and prevents a
+    future reader from confusing the two formatters. Both
+    definitions carry a code-comment cross-reference naming the
+    other.
+
+    Returns ``None`` for missing / zero / negative / non-numeric /
+    ``bool`` inputs (matching the safety contract of
+    :func:`_format_runtime_minutes`); the human renderer then prints
+    ``<null>`` instead of the misleading ``"0h 0m"``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value <= 0:
+        return None
+    total = int(value)
+    hours = total // 60
+    mins = total % 60
+    return f"{hours}h {mins}m"
 
 
 # ---------------------------------------------------------------------------
@@ -869,6 +931,59 @@ def _summary_jellyfin_latest(payload: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _summary_radarr_calendar(payload: Any) -> list[dict[str, Any]]:
+    """Render a Radarr ``calendar`` payload as the curated summary.
+
+    ``GET /api/v3/calendar`` returns the upcoming-releases rows; on
+    modern Radarr versions the endpoint wraps the rows in the
+    paginated ``{page, pageSize, sortKey, sortDirection, totalRecords,
+    records: [...]}`` envelope, so the renderer unwraps it via
+    :func:`_unwrap_envelope` (defensive against envelope-drift across
+    Radarr versions; mirrors :func:`_summary_radarr_recent`). A bare
+    list is unchanged behaviour.
+
+    The per-row projection surfaces ``monitored``, ``hasFile``,
+    ``genres``, ``runtime`` (formatted as ``"<X>h <Y>m"`` via
+    :func:`_format_runtime_minutes_whole`; Radarr's whole-minute
+    ``runtime`` must not be fed into the Jellyfin-ticks formatter
+    -- see the cross-reference in that function's docstring), the
+    literal flat-with-dots ``collection.name`` key (so the
+    ``_row_from_mapping`` dot-path walker resolves the nested
+    collection envelope), and the three ISO-8601 release dates
+    (``inCinemas``, ``physicalRelease``, ``digitalRelease``). Missing
+    fields default to ``None`` so the human renderer prints ``<null>``
+    rather than crashing on an upstream payload that omits any of
+    them.
+    """
+    payload = _unwrap_envelope(payload)
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "monitored": _safe_get(item, "monitored", default=False),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "genres": _join_names(item.get("genres")),
+            "runtime": _format_runtime_minutes_whole(
+                item.get("runtime")
+            ),
+            "collection.name": _safe_get(
+                item, "collection", "name", default=None
+            ),
+            "inCinemas": _safe_get(item, "inCinemas", default=None),
+            "physicalRelease": _safe_get(
+                item, "physicalRelease", default=None
+            ),
+            "digitalRelease": _safe_get(
+                item, "digitalRelease", default=None
+            ),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
 def _summary_radarr_wanted(payload: Any) -> list[dict[str, Any]]:
     """Render a Radarr ``wanted`` payload as the curated summary."""
     payload = _unwrap_envelope(payload)
@@ -880,6 +995,14 @@ def _summary_radarr_wanted(payload: Any) -> list[dict[str, Any]]:
             "year": _safe_get(item, "year", default=0),
             "tmdbId": _safe_get(item, "tmdbId", default=0),
             "monitored": _safe_get(item, "monitored", default=False),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "genres": _join_names(item.get("genres")),
+            "physicalRelease": _safe_get(
+                item, "physicalRelease", default=None
+            ),
+            "releaseDate": _safe_get(
+                item, "releaseDate", default=None
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -989,19 +1112,33 @@ def _summary_jellyfin_item(payload: Any) -> dict[str, Any]:
 
 
 def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
-    """Render a Radarr ``queue`` payload as the curated summary."""
+    """Render a Radarr ``queue`` payload as the curated summary.
+
+    The Radarr ``/api/v3/queue`` rows carry ``title``, ``year``,
+    ``quality`` (a nested ``{quality: {name}}`` envelope in modern
+    Radarr versions -- the renderer surfaces the flat ``quality``
+    key the upstream payload also exposes), ``status``, and
+    ``timeLeft``. The audit reshaped the column set to surface
+    ``year``, ``quality``, and ``timeLeft`` instead of the
+    pre-change ``trackedDownloadStatus`` / ``size`` / ``sizeleft``
+    fields; the renderer mirrors that change.
+
+    ``timeLeft`` defaults to ``None`` so the human renderer prints
+    the verbatim upstream string (typically ``"00:00:00"`` when
+    Radarr has not yet started the download) rather than the
+    misleading ``<null>`` placeholder -- the field stays visible
+    even when the operator has not yet waited on the download.
+    """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     return [
         {
             "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "quality": _safe_get(item, "quality", default=None),
             "status": _safe_get(item, "status", default=None),
-            "trackedDownloadStatus": _safe_get(
-                item, "trackedDownloadStatus", default=None
-            ),
-            "size": _safe_get(item, "size", default=0),
-            "sizeleft": _safe_get(item, "sizeleft", default=0),
+            "timeLeft": _safe_get(item, "timeleft", default=None),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -1023,6 +1160,15 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
     consumers). Mirrors the same pattern in
     :func:`_summary_sonarr_recent` and the Jellyfin paginated
     renderers.
+
+    The per-row projection lifts ``movie.title`` and ``movie.year``
+    to the top-level ``title`` / ``year`` keys (matching the audit's
+    column-set ask) and adds ``sourceTitle``, ``quality``,
+    ``language``, and ``client`` (Radarr's ``downloadClient`` is
+    mapped to the ``client`` summary key for the audit's column
+    name). The original ``movie`` envelope is preserved in the row
+    so ``--verbose`` consumers chaining on the original nested
+    ``movie.title`` / ``movie.year`` shape keep working.
     """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
@@ -1037,11 +1183,25 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
                 "title": _safe_get(movie, "title", default=None),
                 "year": _safe_get(movie, "year", default=0),
             }
+            top_title: Any = movie_obj["title"]
+            top_year: Any = movie_obj["year"]
         else:
             movie_obj = {"title": None, "year": 0}
+            top_title = None
+            top_year = 0
         summaries.append(
             {
+                "title": top_title,
+                "year": top_year,
                 "movie": movie_obj,
+                "sourceTitle": _safe_get(
+                    item, "sourceTitle", default=None
+                ),
+                "quality": _safe_get(item, "quality", default=None),
+                "language": _safe_get(item, "language", default=None),
+                "client": _safe_get(
+                    item, "downloadClient", default=None
+                ),
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
             }
@@ -1772,6 +1932,127 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
     }
 
 
+def _summary_radarr_movie_id(payload: Any) -> dict[str, Any]:
+    """Render a Radarr ``movie <id>`` single-record payload as the curated summary.
+
+    ``GET /api/v3/movie/{id}`` returns a single object with the
+    movie's full library metadata. The curated shape surfaces
+    ``status``, ``monitored``, ``hasFile``, ``genres`` (via
+    :func:`_join_names`), a truncated ``overview`` (via
+    :func:`_truncate_overview` with the documented 80-character
+    budget; same helper as :func:`_summary_radarr_lookup` so the
+    two ``overview`` projections stay byte-identical), ``added``,
+    and ``studio``.
+
+    Two input shapes are accepted (mirroring the
+    size-to-summary-renderer convention):
+
+    * A single ``Mapping`` (the canonical ``/api/v3/movie/{id}``
+      shape).
+    * A list containing a single ``Mapping`` (the test fixture
+      convention; mirrors :func:`_summary_seerr_movie` /
+      :func:`_summary_jellyfin_item`).
+
+    Empty list maps to ``{}`` and ``None`` / scalar payloads map
+    to ``{}`` so neither crashes. The renderer is invoked via the
+    dedicated dispatch key ``("radarr", "movie_id")`` so the
+    ``cmd_movie`` handler can pick the right renderer per branch
+    (no-id list vs with-id single).
+    """
+    if isinstance(payload, list):
+        if not payload:
+            return {}
+        payload = payload[0]
+    if not isinstance(payload, Mapping):
+        return {}
+
+    return {
+        "title": _safe_get(payload, "title", default=None),
+        "year": _safe_get(payload, "year", default=0),
+        "status": _safe_get(payload, "status", default=None),
+        "monitored": _safe_get(payload, "monitored", default=False),
+        "hasFile": _safe_get(payload, "hasFile", default=False),
+        "genres": _join_names(payload.get("genres")),
+        "overview": _truncate_overview(payload.get("overview")),
+        "added": _safe_get(payload, "added", default=None),
+        "studio": _safe_get(payload, "studio", default=None),
+    }
+
+
+def _summary_radarr_movie(payload: Any) -> list[dict[str, Any]]:
+    """Render a Radarr ``movie`` (no id) library-list payload as the curated summary.
+
+    ``GET /api/v3/movie`` returns a bare list of library movie
+    records (every movie the operator has added to Radarr, not
+    the candidates from ``/api/v3/movie/lookup``). The per-row
+    projection surfaces ``hasFile`` (so the operator can see at a
+    glance which library movies already have a file), ``genres``
+    (via :func:`_join_names`), ``added`` (the ISO-8601 timestamp
+    the movie was added to the library), ``collection.name`` (a
+    literal flat-with-dots key so :func:`_row_from_mapping`'s
+    nested-walk fallback resolves the nested ``collection``
+    envelope), and ``studio``. Missing fields default to ``None``
+    so the human renderer prints ``<null>`` rather than crashing
+    on an upstream payload that omits any of them.
+    """
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "genres": _join_names(item.get("genres")),
+            "added": _safe_get(item, "added", default=None),
+            "collection.name": _safe_get(
+                item, "collection", "name", default=None
+            ),
+            "studio": _safe_get(item, "studio", default=None),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_radarr_lookup(payload: Any) -> list[dict[str, Any]]:
+    """Render a Radarr ``lookup`` payload as the curated summary.
+
+    ``GET /api/v3/movie/lookup?term=<urlencoded term>`` returns a
+    list of candidate movie records (TMDB-sourced defaults,
+    not the operator's library rows). The per-row projection
+    surfaces ``hasFile`` (always ``False`` for candidates -- the
+    audit asks for it so the operator can scan a lookup result
+    and immediately tell which candidates already exist in the
+    library), ``genres`` (via :func:`_join_names`), a truncated
+    ``overview`` (via :func:`_truncate_overview` with the
+    documented 80-character budget; keeps the cell readable
+    inside the 120-char NFR-Usability width cap when joined with
+    the other nine columns), ``status``, and the existing
+    ``tmdbId`` / ``imdbId`` / ``id`` / ``monitored`` identity
+    fields. Missing fields default to ``None`` / ``0`` / ``False``
+    per the per-type contract so the renderer stays well-formed
+    even when upstream omits a field.
+    """
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "genres": _join_names(item.get("genres")),
+            "overview": _truncate_overview(item.get("overview")),
+            "status": _safe_get(item, "status", default=None),
+            "tmdbId": _safe_get(item, "tmdbId", default=0),
+            "imdbId": _safe_get(item, "imdbId", default=None),
+            "id": _safe_get(item, "id", default=None),
+            "monitored": _safe_get(item, "monitored", default=False),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
 def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
     """Render a Maintainerr ``pending`` payload as the curated summary."""
     if not isinstance(payload, list):
@@ -1817,6 +2098,10 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("radarr", "wanted"): _summary_radarr_wanted,
     ("radarr", "queue"): _summary_radarr_queue,
     ("radarr", "recent"): _summary_radarr_recent,
+    ("radarr", "calendar"): _summary_radarr_calendar,
+    ("radarr", "lookup"): _summary_radarr_lookup,
+    ("radarr", "movie"): _summary_radarr_movie,
+    ("radarr", "movie_id"): _summary_radarr_movie_id,
     ("sonarr", "wanted"): _summary_sonarr_wanted,
     ("sonarr", "queue"): _summary_sonarr_queue,
     ("sonarr", "recent"): _summary_sonarr_recent,
