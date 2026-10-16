@@ -936,6 +936,234 @@ class TestHumanMode(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Per-handler column assertions (jellyfin-human-fields plan task 6.3).
+#
+# Each handler is invoked with ``--human``, stdout is captured, and
+# the rendered header line MUST contain every new column token and
+# MUST NOT contain any column that has been removed (per US-7 for
+# ``search``). One assertion per affected command so a regression
+# trips the right test.
+# ---------------------------------------------------------------------------
+
+
+class TestHumanModeColumnsPerCommand(unittest.TestCase):
+    """Each handler's ``--human`` column literal matches the new shape."""
+
+    def _columns(self, handler: Any, payload: Any, *,
+                 args_kwargs: dict[str, Any] | None = None
+                 ) -> list[str]:
+        """Invoke ``handler`` with ``--human`` and return the ``columns`` literal.
+
+        The columns literal is the contract between the handler and the
+        renderer; pinning its value (not the rendered header) avoids
+        the ``_truncate`` width-budget truncation that the renderer
+        applies for display.
+        """
+        cfg = _service_config()
+        args = _namespace(human=True, **(args_kwargs or {}))
+        with _patched_get_payload(payload), \
+                patch("arr_cli.jellyfin.output.emit") as mock_emit:
+            handler(args, cfg)
+        kwargs = mock_emit.call_args.kwargs
+        return list(kwargs["columns"])
+
+    def test_now_columns_include_new_fields(self) -> None:
+        columns = self._columns(cmd_now, [])
+        for token in (
+            "user",
+            "device",
+            "client",
+            "playing.type",
+            "LastActivityDate",
+            "NowPlayingQueue.length",
+            "transcoding",
+        ):
+            self.assertIn(token, columns, msg=(
+                f"jellyfin now columns missing {token!r}; "
+                f"got columns={columns!r}"
+            ))
+
+    def test_resume_columns_include_new_fields(self) -> None:
+        columns = self._columns(
+            cmd_resume, [], args_kwargs={"user_id": "jf-user-1"}
+        )
+        for token in (
+            "Name",
+            "Type",
+            "UserData.PlaybackPositionTicks",
+            "UserData.PlayCount",
+            "UserData.PlayedPercentage",
+            "RunTimeTicks",
+        ):
+            self.assertIn(token, columns, msg=(
+                f"jellyfin resume columns missing {token!r}; "
+                f"got columns={columns!r}"
+            ))
+
+    def test_recent_columns_include_new_fields(self) -> None:
+        columns = self._columns(
+            cmd_recent, [], args_kwargs={"user_id": "jf-user-1"}
+        )
+        for token in (
+            "Name",
+            "Type",
+            "UserData.LastPlayedDate",
+            "UserData.PlayedPercentage",
+        ):
+            self.assertIn(token, columns, msg=(
+                f"jellyfin recent columns missing {token!r}; "
+                f"got columns={columns!r}"
+            ))
+
+    def test_nextup_columns_include_new_fields(self) -> None:
+        columns = self._columns(
+            cmd_nextup, [], args_kwargs={"user_id": "jf-user-1"}
+        )
+        for token in (
+            "Name",
+            "SeriesName",
+            "ParentIndexNumber",
+            "IndexNumber",
+            "PremiereDate",
+            "RunTimeTicks",
+            "Overview",
+        ):
+            self.assertIn(token, columns, msg=(
+                f"jellyfin nextup columns missing {token!r}; "
+                f"got columns={columns!r}"
+            ))
+
+    def test_latest_columns_include_new_fields(self) -> None:
+        columns = self._columns(
+            cmd_latest, [], args_kwargs={"user_id": "jf-user-1"}
+        )
+        for token in (
+            "Name",
+            "Type",
+            "ProductionYear",
+            "SeriesName",
+            "RunTimeTicks",
+            "PremiereDate",
+            "Genres",
+        ):
+            self.assertIn(token, columns, msg=(
+                f"jellyfin latest columns missing {token!r}; "
+                f"got columns={columns!r}"
+            ))
+
+    def test_favorites_columns_include_new_fields(self) -> None:
+        columns = self._columns(
+            cmd_favorites, [], args_kwargs={"user_id": "jf-user-1"}
+        )
+        for token in (
+            "Id",
+            "Name",
+            "Type",
+            "ProductionYear",
+            "SeriesName",
+            "RunTimeTicks",
+            "UserData.LastPlayedDate",
+        ):
+            self.assertIn(token, columns, msg=(
+                f"jellyfin favorites columns missing {token!r}; "
+                f"got columns={columns!r}"
+            ))
+
+    def test_search_columns_drop_seriesname(self) -> None:
+        columns = self._columns(cmd_search, [], args_kwargs={"query": "x"})
+        for token in ("Name", "Type", "ProductionYear"):
+            self.assertIn(token, columns, msg=(
+                f"jellyfin search columns missing {token!r}; "
+                f"got columns={columns!r}"
+            ))
+        # US-7: ``SeriesName`` is removed from the default column set.
+        self.assertNotIn(
+            "SeriesName",
+            columns,
+            msg=(
+                f"jellyfin search columns still contains 'SeriesName' "
+                f"(US-7); got columns={columns!r}"
+            ),
+        )
+
+    def test_item_columns_use_eight_field_shape(self) -> None:
+        columns = self._columns(
+            cmd_item,
+            {"Name": "Foo", "Type": "Movie"},
+            args_kwargs={"item_id": "42"},
+        )
+        for token in (
+            "Name",
+            "Type",
+            "ProductionYear",
+            "PremiereDate",
+            "RunTimeTicks",
+            "Genres",
+            "Overview",
+            "Status",
+        ):
+            self.assertIn(token, columns, msg=(
+                f"jellyfin item columns missing {token!r}; "
+                f"got columns={columns!r}"
+            ))
+        # The old five-column literal included ``UserData`` which the
+        # new eight-field summary does not populate.
+        self.assertNotIn(
+            "UserData",
+            columns,
+            msg=(
+                f"jellyfin item columns still contains 'UserData' "
+                f"(the post-US-8 summary shape has no UserData); "
+                f"got columns={columns!r}"
+            ),
+        )
+
+
+class TestItemUsesSummaryRenderer(unittest.TestCase):
+    """``jellyfin item`` --human routes through the new single-record renderer."""
+
+    def test_item_human_contains_documented_keys(self) -> None:
+        # Task 6.4: ``--human`` output for a representative payload
+        # contains the documented eight keys when routed through
+        # ``_summary_jellyfin_item``.
+        cfg = _service_config()
+        args = _namespace(human=True, item_id="42")
+        payload = {
+            "Name": "The Matrix",
+            "Type": "Movie",
+            "ProductionYear": 1999,
+            "PremiereDate": "1999-03-31T00:00:00Z",
+            "RunTimeTicks": 82_800_000_000,
+            "Genres": ["Action", "Sci-Fi"],
+            "Overview": "A computer hacker learns...",
+            "Status": "Released",
+        }
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_item, args, cfg)
+        # ``human()`` on a dict renders via ``_render_object`` which
+        # writes ``key: value`` pairs per line. Every documented key
+        # must surface on its own line.
+        for key in (
+            "Name",
+            "Type",
+            "ProductionYear",
+            "PremiereDate",
+            "RunTimeTicks",
+            "Genres",
+            "Overview",
+            "Status",
+        ):
+            self.assertIn(
+                f"{key}:",
+                output,
+                msg=(
+                    f"jellyfin --human item output missing key {key!r}; "
+                    f"got:\n{output!r}"
+                ),
+            )
+
+
+# ---------------------------------------------------------------------------
 # Test: parser
 # ---------------------------------------------------------------------------
 

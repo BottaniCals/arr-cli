@@ -50,6 +50,7 @@ from arr_cli.facade.output import (  # noqa: E402 - sys.path tweak above
     resolve_width,
     summarize,
     _column_widths,
+    _format_runtime_minutes,
     _safe_get,
     _SUMMARY_RENDERERS,
     _truncate,
@@ -2298,6 +2299,137 @@ class TestSummaryJellyfinLatest(unittest.TestCase):
             _SUMMARY_RENDERERS[("jellyfin", "latest")](None),
             [],
         )
+
+
+class TestFormatRuntimeMinutes(unittest.TestCase):
+    """``_format_runtime_minutes`` formats Jellyfin ``RunTimeTicks``."""
+
+    def test_positive_input_formats_minutes(self) -> None:
+        # 1h 36m = 96 minutes = 5760 seconds = 57_600_000_000 ticks
+        # (Jellyfin's RunTimeTicks is 100-ns ticks, so 1s = 10^7).
+        self.assertEqual(
+            _format_runtime_minutes(57_600_000_000),
+            "1h 36m",
+        )
+        # Sub-hour: 45 minutes = 2700 seconds = 27_000_000_000 ticks.
+        self.assertEqual(
+            _format_runtime_minutes(27_000_000_000),
+            "0h 45m",
+        )
+
+    def test_zero_returns_none(self) -> None:
+        self.assertIsNone(_format_runtime_minutes(0))
+
+    def test_negative_returns_none(self) -> None:
+        self.assertIsNone(_format_runtime_minutes(-1))
+        self.assertIsNone(_format_runtime_minutes(-5_760_000_000))
+
+    def test_none_returns_none(self) -> None:
+        self.assertIsNone(_format_runtime_minutes(None))
+
+    def test_non_numeric_returns_none(self) -> None:
+        self.assertIsNone(_format_runtime_minutes("1h 30m"))
+        self.assertIsNone(_format_runtime_minutes([1, 2, 3]))
+        self.assertIsNone(_format_runtime_minutes({"ticks": 1}))
+
+    def test_bool_returns_none(self) -> None:
+        # ``bool`` is a subclass of ``int``; without the explicit
+        # guard ``True`` would render as ``"0h 0m"``.
+        self.assertIsNone(_format_runtime_minutes(True))
+        self.assertIsNone(_format_runtime_minutes(False))
+
+
+class TestSummaryJellyfinItem(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("jellyfin", "item")]`` matches the spec."""
+
+    def _renderer(self) -> Any:
+        return _SUMMARY_RENDERERS[("jellyfin", "item")]
+
+    def test_bare_mapping_input_returns_eight_keys(self) -> None:
+        # Canonical input shape (the live ``GET /Items/{id}`` payload).
+        # RunTimeTicks: 2h 18m = 138 min = 8280s = 82_800_000_000 ticks.
+        payload = {
+            "Name": "The Matrix",
+            "Type": "Movie",
+            "ProductionYear": 1999,
+            "PremiereDate": "1999-03-31T00:00:00Z",
+            "RunTimeTicks": 82_800_000_000,
+            "Genres": ["Action", "Sci-Fi"],
+            "Overview": "A computer hacker learns...",
+            "Status": "Released",
+        }
+        rendered = self._renderer()(payload)
+        self.assertEqual(
+            rendered,
+            {
+                "Name": "The Matrix",
+                "Type": "Movie",
+                "ProductionYear": 1999,
+                "PremiereDate": "1999-03-31T00:00:00Z",
+                "RunTimeTicks": "2h 18m",
+                "Genres": "Action, Sci-Fi",
+                "Overview": "A computer hacker learns...",
+                "Status": "Released",
+            },
+        )
+
+    def test_one_element_list_input_unwrapped(self) -> None:
+        # Test fixture convention (mirrors ``_summary_seerr_tv`` /
+        # ``_summary_seerr_movie``).
+        payload = [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2020,
+            }
+        ]
+        rendered = self._renderer()(payload)
+        self.assertEqual(rendered["Name"], "Foo")
+        self.assertEqual(rendered["ProductionYear"], 2020)
+        self.assertEqual(len(rendered), 8)
+
+    def test_empty_list_returns_empty_dict(self) -> None:
+        self.assertEqual(self._renderer()([]), {})
+
+    def test_none_returns_empty_dict(self) -> None:
+        self.assertEqual(self._renderer()(None), {})
+
+    def test_scalar_returns_empty_dict(self) -> None:
+        self.assertEqual(self._renderer()(42), {})
+        self.assertEqual(self._renderer()("foo"), {})
+
+    def test_missing_fields_default_to_none(self) -> None:
+        # Per US-8: every documented field defaults to ``None`` so the
+        # ``--human`` table stays well-formed on a sparse payload.
+        rendered = self._renderer()({"Name": "Foo"})
+        self.assertEqual(
+            rendered,
+            {
+                "Name": "Foo",
+                "Type": None,
+                "ProductionYear": 0,
+                "PremiereDate": None,
+                "RunTimeTicks": None,
+                "Genres": None,
+                "Overview": None,
+                "Status": None,
+            },
+        )
+
+    def test_genres_as_mappings_joins_names(self) -> None:
+        rendered = self._renderer()(
+            {"Genres": [{"name": "Action"}, {"name": "Drama"}]}
+        )
+        self.assertEqual(rendered["Genres"], "Action, Drama")
+
+    def test_run_time_ticks_zero_returns_none(self) -> None:
+        rendered = self._renderer()({"RunTimeTicks": 0})
+        self.assertIsNone(rendered["RunTimeTicks"])
+
+    def test_run_time_ticks_positive_format(self) -> None:
+        # 1h 0m = 60 minutes = 3600 seconds = 36_000_000_000 ticks.
+        rendered = self._renderer()({"RunTimeTicks": 36_000_000_000})
+        self.assertEqual(rendered["RunTimeTicks"], "1h 0m")
 
 
 class TestSummaryRadarrWanted(unittest.TestCase):
@@ -4638,7 +4770,7 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Movie",
                 "ProductionYear": 2024,
                 "SeriesName": "Bar",
-                "RunTimeTicks": 7_200_000_000,
+                "RunTimeTicks": 72_000_000_000,
                 "UserData": {"LastPlayedDate": "2024-06-01T00:00:00Z"},
             }
         ],
@@ -4648,7 +4780,7 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Episode",
                 "ProductionYear": 2020,
                 "SeriesName": "Bar",
-                "RunTimeTicks": 4_200_000_000,
+                "RunTimeTicks": 42_000_000_000,
                 "UserData": {
                     "PlaybackPositionTicks": 12345,
                     "PlayCount": 2,
@@ -4662,7 +4794,7 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Movie",
                 "ProductionYear": 2025,
                 "SeriesName": "Bar",
-                "RunTimeTicks": 6_300_000_000,
+                "RunTimeTicks": 63_000_000_000,
                 "PremiereDate": "2024-12-01T00:00:00Z",
                 "Genres": ["Action", "Drama"],
                 "DateCreated": "2025-06-01T00:00:00Z",
@@ -4683,7 +4815,7 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "ParentIndexNumber": 4,
                 "IndexNumber": 12,
                 "PremiereDate": "2002-01-10T00:00:00Z",
-                "RunTimeTicks": 2_700_000_000,
+                "RunTimeTicks": 27_000_000_000,
                 "Overview": "An episode.",
             }
         ],
@@ -4692,7 +4824,7 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
             "Type": "Movie",
             "ProductionYear": 1999,
             "PremiereDate": "1999-03-31T00:00:00Z",
-            "RunTimeTicks": 7_200_000_000,
+            "RunTimeTicks": 72_000_000_000,
             "Genres": ["Action", "Sci-Fi"],
             "Overview": "A computer hacker learns...",
             "Status": "Released",
