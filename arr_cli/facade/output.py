@@ -1932,6 +1932,88 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
     }
 
 
+def _summary_radarr_movie_id(payload: Any) -> dict[str, Any]:
+    """Render a Radarr ``movie <id>`` single-record payload as the curated summary.
+
+    ``GET /api/v3/movie/{id}`` returns a single object with the
+    movie's full library metadata. The curated shape surfaces
+    ``status``, ``monitored``, ``hasFile``, ``genres`` (via
+    :func:`_join_names`), a truncated ``overview`` (via
+    :func:`_truncate_overview` with the documented 80-character
+    budget; same helper as :func:`_summary_radarr_lookup` so the
+    two ``overview`` projections stay byte-identical), ``added``,
+    and ``studio``.
+
+    Two input shapes are accepted (mirroring the
+    size-to-summary-renderer convention):
+
+    * A single ``Mapping`` (the canonical ``/api/v3/movie/{id}``
+      shape).
+    * A list containing a single ``Mapping`` (the test fixture
+      convention; mirrors :func:`_summary_seerr_movie` /
+      :func:`_summary_jellyfin_item`).
+
+    Empty list maps to ``{}`` and ``None`` / scalar payloads map
+    to ``{}`` so neither crashes. The renderer is invoked via the
+    dedicated dispatch key ``("radarr", "movie_id")`` so the
+    ``cmd_movie`` handler can pick the right renderer per branch
+    (no-id list vs with-id single).
+    """
+    if isinstance(payload, list):
+        if not payload:
+            return {}
+        payload = payload[0]
+    if not isinstance(payload, Mapping):
+        return {}
+
+    return {
+        "title": _safe_get(payload, "title", default=None),
+        "year": _safe_get(payload, "year", default=0),
+        "status": _safe_get(payload, "status", default=None),
+        "monitored": _safe_get(payload, "monitored", default=False),
+        "hasFile": _safe_get(payload, "hasFile", default=False),
+        "genres": _join_names(payload.get("genres")),
+        "overview": _truncate_overview(payload.get("overview")),
+        "added": _safe_get(payload, "added", default=None),
+        "studio": _safe_get(payload, "studio", default=None),
+    }
+
+
+def _summary_radarr_movie(payload: Any) -> list[dict[str, Any]]:
+    """Render a Radarr ``movie`` (no id) library-list payload as the curated summary.
+
+    ``GET /api/v3/movie`` returns a bare list of library movie
+    records (every movie the operator has added to Radarr, not
+    the candidates from ``/api/v3/movie/lookup``). The per-row
+    projection surfaces ``hasFile`` (so the operator can see at a
+    glance which library movies already have a file), ``genres``
+    (via :func:`_join_names`), ``added`` (the ISO-8601 timestamp
+    the movie was added to the library), ``collection.name`` (a
+    literal flat-with-dots key so :func:`_row_from_mapping`'s
+    nested-walk fallback resolves the nested ``collection``
+    envelope), and ``studio``. Missing fields default to ``None``
+    so the human renderer prints ``<null>`` rather than crashing
+    on an upstream payload that omits any of them.
+    """
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "genres": _join_names(item.get("genres")),
+            "added": _safe_get(item, "added", default=None),
+            "collection.name": _safe_get(
+                item, "collection", "name", default=None
+            ),
+            "studio": _safe_get(item, "studio", default=None),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
 def _summary_radarr_lookup(payload: Any) -> list[dict[str, Any]]:
     """Render a Radarr ``lookup`` payload as the curated summary.
 
@@ -2018,6 +2100,8 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("radarr", "recent"): _summary_radarr_recent,
     ("radarr", "calendar"): _summary_radarr_calendar,
     ("radarr", "lookup"): _summary_radarr_lookup,
+    ("radarr", "movie"): _summary_radarr_movie,
+    ("radarr", "movie_id"): _summary_radarr_movie_id,
     ("sonarr", "wanted"): _summary_sonarr_wanted,
     ("sonarr", "queue"): _summary_sonarr_queue,
     ("sonarr", "recent"): _summary_sonarr_recent,

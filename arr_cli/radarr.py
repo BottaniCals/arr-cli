@@ -163,19 +163,28 @@ def _emit(
     args: argparse.Namespace,
     *,
     columns: Sequence[str] | None = None,
+    command: str | None = None,
 ) -> int:
     """Render ``payload`` via :func:`output.emit` and return exit code 0.
 
     Centralised so every command handler has the same JSON-vs-tabular
     decision point; the per-command handler only decides which columns
     to surface when ``--human`` is requested.
+
+    The ``command`` kwarg overrides ``args.command`` for the dispatch
+    table lookup -- used by ``cmd_movie`` to distinguish the no-id
+    branch (dispatches on ``("radarr", "movie")``) from the with-id
+    branch (dispatches on ``("radarr", "movie_id")``); the
+    argparse subcommand is the same ``"movie"`` for both branches.
     """
     output.emit(
         payload,
         human_mode=bool(getattr(args, "human", False)),
         verbose_mode=bool(getattr(args, "verbose", False)),
         service=SERVICE_NAME,
-        command=str(getattr(args, "command", "") or ""),
+        command=command if command is not None else str(
+            getattr(args, "command", "") or ""
+        ),
         columns=columns,
         limit=int(getattr(args, "limit", 20) or 20),
     )
@@ -421,14 +430,21 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             op=f"movie id={raw_id}",
         )
         # Single-id row is the operator's library row; columns match
-        # the original REQ-7 AC7 contract and stay unchanged here
-        # (REQ-4 only renames the column on the lookup endpoint).
+        # the US-7 audit-asked shape (see _summary_radarr_movie_id).
+        # The ``command="movie_id"`` kwarg overrides ``args.command``
+        # so the dispatcher routes to ``("radarr", "movie_id")``
+        # rather than ``("radarr", "movie")``; both branches share
+        # the same argparse subcommand name.
         columns = [
             "title",
             "year",
-            "runtime",
-            "genres",
+            "status",
             "monitored",
+            "hasFile",
+            "genres",
+            "overview",
+            "added",
+            "studio",
         ]
     else:
         payload = _get(
@@ -437,19 +453,23 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             cfg,
             op="movie",
         )
-        # Library-list columns are pinned by REQ-2 AC2: the rendered
-        # table MUST show exactly these six columns in this order.
-        # ``monitored`` here is the operator's library flag on a
-        # library row, not the source default that REQ-4 renames.
+        # Library-list columns match _summary_radarr_movie (the
+        # US-6 audit-asked shape).
         columns = [
             "title",
             "year",
-            "monitored",
-            "status",
-            "tmdbId",
-            "imdbId",
+            "hasFile",
+            "genres",
+            "added",
+            "collection.name",
+            "studio",
         ]
-    return _emit(payload, args, columns=columns)
+    return _emit(
+        payload,
+        args,
+        columns=columns,
+        command="movie_id" if raw_id else None,
+    )
 
 
 # ---------------------------------------------------------------------------
