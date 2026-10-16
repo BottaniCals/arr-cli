@@ -415,6 +415,9 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "client": "Jellyfin Web",
             "playing": {"type": "Episode", "name": "Foo"},
             "progress": {"position_ticks": 100, "is_paused": False},
+            "LastActivityDate": "12:34",
+            "NowPlayingQueue.length": 3,
+            "transcoding": False,
             "NowPlayingItem": {"Name": "Foo", "SeriesName": "Show"},
             "PlayState": {"PositionTicks": 100, "IsPaused": False},
         }
@@ -426,6 +429,7 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "ProductionYear": 2024,
             "SeriesName": None,
             "UserData.LastPlayedDate": "2024-01-01",
+            "UserData.PlayedPercentage": 60,
             "Overview": "Lorem ipsum",
         }
     ],
@@ -436,6 +440,8 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "Type": "Movie",
             "ProductionYear": 2020,
             "SeriesName": None,
+            "RunTimeTicks": "2h 0m",
+            "UserData.LastPlayedDate": "2024-01-01",
             "Overview": "Lorem ipsum",
         }
     ],
@@ -447,6 +453,8 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "SeriesName": "Show",
             "UserData.PlaybackPositionTicks": 100,
             "UserData.PlayCount": 2,
+            "UserData.PlayedPercentage": 25,
+            "RunTimeTicks": "1h 45m",
             "Overview": "Lorem ipsum",
         }
     ],
@@ -456,7 +464,24 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "Type": "Movie",
             "ProductionYear": 2025,
             "SeriesName": None,
+            "RunTimeTicks": "1h 45m",
+            "PremiereDate": "2024-12-01T00:00:00Z",
+            "Genres": "Action, Drama",
             "DateCreated": "2025-06-01T00:00:00Z",
+            "Overview": "Lorem ipsum",
+        }
+    ],
+    # ``jellyfin search`` is not listed in ``_SUMMARY_RENDERERS``'s
+    # dict but is still exercised by the columns-token sweep via
+    # ``_synthetic_payload`` -- see ``TestColumnsBlockMatchesSummaryShape``.
+    ("jellyfin", "nextup"): [
+        {
+            "Name": "Foo",
+            "SeriesName": "Bar",
+            "ParentIndexNumber": 4,
+            "IndexNumber": 12,
+            "PremiereDate": "2002-01-10T00:00:00Z",
+            "RunTimeTicks": "0h 45m",
             "Overview": "Lorem ipsum",
         }
     ],
