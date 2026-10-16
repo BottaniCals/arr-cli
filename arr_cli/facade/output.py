@@ -1160,6 +1160,15 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
     consumers). Mirrors the same pattern in
     :func:`_summary_sonarr_recent` and the Jellyfin paginated
     renderers.
+
+    The per-row projection lifts ``movie.title`` and ``movie.year``
+    to the top-level ``title`` / ``year`` keys (matching the audit's
+    column-set ask) and adds ``sourceTitle``, ``quality``,
+    ``language``, and ``client`` (Radarr's ``downloadClient`` is
+    mapped to the ``client`` summary key for the audit's column
+    name). The original ``movie`` envelope is preserved in the row
+    so ``--verbose`` consumers chaining on the original nested
+    ``movie.title`` / ``movie.year`` shape keep working.
     """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
@@ -1174,11 +1183,25 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
                 "title": _safe_get(movie, "title", default=None),
                 "year": _safe_get(movie, "year", default=0),
             }
+            top_title: Any = movie_obj["title"]
+            top_year: Any = movie_obj["year"]
         else:
             movie_obj = {"title": None, "year": 0}
+            top_title = None
+            top_year = 0
         summaries.append(
             {
+                "title": top_title,
+                "year": top_year,
                 "movie": movie_obj,
+                "sourceTitle": _safe_get(
+                    item, "sourceTitle", default=None
+                ),
+                "quality": _safe_get(item, "quality", default=None),
+                "language": _safe_get(item, "language", default=None),
+                "client": _safe_get(
+                    item, "downloadClient", default=None
+                ),
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
             }

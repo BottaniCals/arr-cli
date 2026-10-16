@@ -329,12 +329,16 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="recent",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_radarr_recent``: nested ``movie.title`` /
-    # ``movie.year`` are resolved via dot-path traversal in
-    # ``_row_from_mapping``.
+    # ``_summary_radarr_recent``: ``movie.title`` / ``movie.year``
+    # are also lifted to the top-level ``title`` / ``year`` keys
+    # so the audit-asked column set is reachable.
     columns = [
-        "movie.title",
-        "movie.year",
+        "title",
+        "year",
+        "sourceTitle",
+        "quality",
+        "language",
+        "client",
         "eventType",
         "date",
     ]
