@@ -1260,15 +1260,16 @@ class TestEmitPriorityChain(unittest.TestCase):
 
     def test_default_verbatim_on_non_candidate(self) -> None:
         # REQ-3 AC4: a non-candidate command without flags stays on
-        # verbatim JSON.
+        # verbatim JSON. ``calendar`` is the canonical non-candidate
+        # example (a Radarr command absent from ``_SUMMARY_RENDERERS``).
         payload = {"foo": "bar"}
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="jellyfin",
-            command="item",
+            service="radarr",
+            command="calendar",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -1356,17 +1357,19 @@ class TestServiceCommandThreading(unittest.TestCase):
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
     def test_emit_with_non_candidate_key_emits_verbatim(self) -> None:
-        # A non-candidate command (e.g. ``jellyfin item``) falls
+        # A non-candidate command (e.g. ``radarr calendar``) falls
         # through to verbatim even though ``service`` / ``command``
-        # are non-empty.
+        # are non-empty. ``jellyfin item`` is now a registered
+        # candidate (per the jellyfin-human-fields plan), so this
+        # test pins a different command instead.
         payload = {"Name": "Foo"}
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="jellyfin",
-            command="item",
+            service="radarr",
+            command="calendar",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -4644,6 +4647,16 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "PremiereDate": "2002-01-10T00:00:00Z",
             }
         ],
+        ("jellyfin", "item"): {
+            "Name": "Foo",
+            "Type": "Movie",
+            "ProductionYear": 1999,
+            "PremiereDate": "1999-03-31T00:00:00Z",
+            "RunTimeTicks": 7_200_000_000,
+            "Genres": ["Action", "Sci-Fi"],
+            "Overview": "A computer hacker learns...",
+            "Status": "Released",
+        },
         ("radarr", "wanted"): [
             {
                 "title": "Foo",

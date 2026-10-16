@@ -942,6 +942,52 @@ def _summary_jellyfin_nextup(payload: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _summary_jellyfin_item(payload: Any) -> dict[str, Any]:
+    """Render a Jellyfin ``item <id>`` payload as the curated summary.
+
+    ``GET /Items/{id}`` returns a single object with the item's full
+    metadata (name, type, production year, premiere date, runtime in
+    100-ns ticks, ``Genres[]``, ``Overview``, ``Status``). The
+    curated shape flattens the runtime to ``"<X>h <Y>m"`` and the
+    nested ``Genres`` array to a single ``", "-joined`` string so the
+    default ``--human`` rendering stays a readable block per key
+    (otherwise each cell would render as ``<N items>`` /
+    ``<N keys>``).
+
+    Two input shapes are accepted (mirroring the
+    size-to-summary-renderer convention):
+
+    * A single ``Mapping`` (the canonical shape for ``cmd_item``).
+    * A list containing a single ``Mapping`` (the test fixture
+      convention; mirrors :func:`_summary_seerr_tv` /
+      :func:`_summary_seerr_movie`). Empty list maps to ``{}`` and
+      ``None`` / scalar payloads map to ``{}`` so neither crashes.
+    """
+    if isinstance(payload, list):
+        if not payload:
+            return {}
+        payload = payload[0]
+    if not isinstance(payload, Mapping):
+        return {}
+
+    return {
+        "Name": _safe_get(payload, "Name", default=None),
+        "Type": _safe_get(payload, "Type", default=None),
+        "ProductionYear": _safe_get(
+            payload, "ProductionYear", default=0
+        ),
+        "PremiereDate": _safe_get(
+            payload, "PremiereDate", default=None
+        ),
+        "RunTimeTicks": _format_runtime_minutes(
+            payload.get("RunTimeTicks")
+        ),
+        "Genres": _join_names(payload.get("Genres")),
+        "Overview": _safe_get(payload, "Overview", default=None),
+        "Status": _safe_get(payload, "Status", default=None),
+    }
+
+
 def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
     """Render a Radarr ``queue`` payload as the curated summary."""
     payload = _unwrap_envelope(payload)
@@ -1767,6 +1813,7 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("jellyfin", "latest"): _summary_jellyfin_latest,
     ("jellyfin", "search"): _summary_jellyfin_search,
     ("jellyfin", "nextup"): _summary_jellyfin_nextup,
+    ("jellyfin", "item"): _summary_jellyfin_item,
     ("radarr", "wanted"): _summary_radarr_wanted,
     ("radarr", "queue"): _summary_radarr_queue,
     ("radarr", "recent"): _summary_radarr_recent,
