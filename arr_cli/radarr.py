@@ -239,6 +239,11 @@ def cmd_calendar(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     columns = [
         "title",
         "year",
+        "monitored",
+        "hasFile",
+        "genres",
+        "runtime",
+        "collection.name",
         "inCinemas",
         "physicalRelease",
         "digitalRelease",

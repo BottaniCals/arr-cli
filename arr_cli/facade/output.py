@@ -931,6 +931,59 @@ def _summary_jellyfin_latest(payload: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _summary_radarr_calendar(payload: Any) -> list[dict[str, Any]]:
+    """Render a Radarr ``calendar`` payload as the curated summary.
+
+    ``GET /api/v3/calendar`` returns the upcoming-releases rows; on
+    modern Radarr versions the endpoint wraps the rows in the
+    paginated ``{page, pageSize, sortKey, sortDirection, totalRecords,
+    records: [...]}`` envelope, so the renderer unwraps it via
+    :func:`_unwrap_envelope` (defensive against envelope-drift across
+    Radarr versions; mirrors :func:`_summary_radarr_recent`). A bare
+    list is unchanged behaviour.
+
+    The per-row projection surfaces ``monitored``, ``hasFile``,
+    ``genres``, ``runtime`` (formatted as ``"<X>h <Y>m"`` via
+    :func:`_format_runtime_minutes_whole`; Radarr's whole-minute
+    ``runtime`` must not be fed into the Jellyfin-ticks formatter
+    -- see the cross-reference in that function's docstring), the
+    literal flat-with-dots ``collection.name`` key (so the
+    ``_row_from_mapping`` dot-path walker resolves the nested
+    collection envelope), and the three ISO-8601 release dates
+    (``inCinemas``, ``physicalRelease``, ``digitalRelease``). Missing
+    fields default to ``None`` so the human renderer prints ``<null>``
+    rather than crashing on an upstream payload that omits any of
+    them.
+    """
+    payload = _unwrap_envelope(payload)
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "monitored": _safe_get(item, "monitored", default=False),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "genres": _join_names(item.get("genres")),
+            "runtime": _format_runtime_minutes_whole(
+                item.get("runtime")
+            ),
+            "collection.name": _safe_get(
+                item, "collection", "name", default=None
+            ),
+            "inCinemas": _safe_get(item, "inCinemas", default=None),
+            "physicalRelease": _safe_get(
+                item, "physicalRelease", default=None
+            ),
+            "digitalRelease": _safe_get(
+                item, "digitalRelease", default=None
+            ),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
 def _summary_radarr_wanted(payload: Any) -> list[dict[str, Any]]:
     """Render a Radarr ``wanted`` payload as the curated summary."""
     payload = _unwrap_envelope(payload)
@@ -1879,6 +1932,7 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("radarr", "wanted"): _summary_radarr_wanted,
     ("radarr", "queue"): _summary_radarr_queue,
     ("radarr", "recent"): _summary_radarr_recent,
+    ("radarr", "calendar"): _summary_radarr_calendar,
     ("sonarr", "wanted"): _summary_sonarr_wanted,
     ("sonarr", "queue"): _summary_sonarr_queue,
     ("sonarr", "recent"): _summary_sonarr_recent,
