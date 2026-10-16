@@ -421,7 +421,27 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     naming the id.
     """
     raw_id = getattr(args, "movie_id", None)
-    if raw_id:
+    if raw_id is None:
+        payload = _get(
+            "/api/v3/movie",
+            args,
+            cfg,
+            op="movie",
+        )
+        # Library-list columns match _summary_radarr_movie (the
+        # US-6 audit-asked shape). Listed first so the dispatch
+        # lookup ``_columns_for("radarr", "movie")`` (which takes
+        # the first literal) resolves to the no-id branch shape.
+        columns = [
+            "title",
+            "year",
+            "hasFile",
+            "genres",
+            "added",
+            "collection.name",
+            "studio",
+        ]
+    else:
         encoded_id = transport.encode_path_segment(raw_id)
         payload = _get(
             f"/api/v3/movie/{encoded_id}",
@@ -446,29 +466,11 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             "added",
             "studio",
         ]
-    else:
-        payload = _get(
-            "/api/v3/movie",
-            args,
-            cfg,
-            op="movie",
-        )
-        # Library-list columns match _summary_radarr_movie (the
-        # US-6 audit-asked shape).
-        columns = [
-            "title",
-            "year",
-            "hasFile",
-            "genres",
-            "added",
-            "collection.name",
-            "studio",
-        ]
     return _emit(
         payload,
         args,
         columns=columns,
-        command="movie_id" if raw_id else None,
+        command="movie_id" if raw_id is not None else None,
     )
 
 

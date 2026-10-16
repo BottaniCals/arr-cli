@@ -690,32 +690,35 @@ class TestCmdRecent(unittest.TestCase):
     def test_recent_bare_list_payload_unchanged(self) -> None:
         # Defensive: if the upstream ever returned a bare list (the
         # pre-pagination contract), ``_unwrap_envelope`` passes it
-        # through unchanged. The renderer then projects each row
-        # to the curated ``{movie, eventType, date}`` summary
-        # shape (the ``id`` field is intentionally not projected
-        # -- the curated summary surfaces the human-readable
-        # columns only; ``--verbose`` is the path for the raw
-        # record).
+        # through unchanged. The renderer then projects each row to
+        # the curated summary shape (the ``id`` field is intentionally
+        # not projected; the curated summary surfaces the
+        # audit-asked columns only and ``--verbose`` is the path
+        # for the raw record).
         cfg = _service_config()
         args = _namespace(page_size=10, command="recent")
         payload = [
             {
                 "id": 1,
                 "movie": {"title": "Foo", "year": 2024},
-                "eventType": "downloadFolderImported",
-                "date": "2024-06-01",
-            }
-        ]
-        expected = [
-            {
-                "movie": {"title": "Foo", "year": 2024},
+                "sourceTitle": "Foo.2024.mkv",
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
             }
         ]
         with _patched_get_payload(payload):
-            rendered = _capture_stdout(cmd_recent, args, cfg)
-        self.assertEqual(json.loads(rendered), expected)
+            rendered = json.loads(_capture_stdout(cmd_recent, args, cfg))
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(rendered[0]["year"], 2024)
+        self.assertEqual(rendered[0]["movie"], {"title": "Foo", "year": 2024})
+        self.assertEqual(rendered[0]["sourceTitle"], "Foo.2024.mkv")
+        self.assertEqual(rendered[0]["client"], "qbit")
+        self.assertEqual(rendered[0]["eventType"], "downloadFolderImported")
+        self.assertEqual(rendered[0]["date"], "2024-06-01")
 
     def test_recent_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
@@ -723,17 +726,29 @@ class TestCmdRecent(unittest.TestCase):
         payload = [
             {
                 "movie": {"title": "The Matrix", "year": 1999},
+                "sourceTitle": "The.Matrix.1999.mkv",
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
                 "eventType": "downloadFolderImported",
                 "date": "2026-09-18T01:59:01Z",
             }
         ]
         with _patched_get_payload(payload):
             rendered = _capture_stdout(cmd_recent, args, cfg)
-        # The curated summary has the same shape as the input here
-        # because the input carries only the columns the renderer
-        # projects -- the renderer is a near-verbatim forward of
-        # the bare envelope rows.
-        self.assertEqual(json.loads(rendered), payload)
+        summary = json.loads(rendered)
+        self.assertEqual(len(summary), 1)
+        # Top-level identity fields lifted from the nested envelope
+        # and the audit-asked columns.
+        self.assertEqual(summary[0]["title"], "The Matrix")
+        self.assertEqual(summary[0]["year"], 1999)
+        self.assertEqual(summary[0]["sourceTitle"], "The.Matrix.1999.mkv")
+        self.assertEqual(summary[0]["client"], "qbit")
+        # Nested ``movie`` envelope preserved so ``--verbose``
+        # consumers that chain on the original shape keep working.
+        self.assertEqual(
+            summary[0]["movie"], {"title": "The Matrix", "year": 1999}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -852,7 +867,18 @@ class TestCmdLookup(unittest.TestCase):
         columns = mock_emit.call_args.kwargs["columns"]
         self.assertEqual(
             columns,
-            ["title", "year", "tmdbId", "imdbId", "id", "monitored"],
+            [
+                "title",
+                "year",
+                "hasFile",
+                "genres",
+                "overview",
+                "status",
+                "tmdbId",
+                "imdbId",
+                "id",
+                "monitored",
+            ],
         )
         # Regression net: the buggy ``defaultMonitored`` rename from
         # PR #7 must not be reintroduced because no upstream API
@@ -1004,9 +1030,39 @@ class TestCmdMovie(unittest.TestCase):
         self.assertEqual(positional[1], "/api/v3/movie/42%2Fx")
 
     def test_movie_emits_json_when_not_human(self) -> None:
+        # With the single-record renderer registered as
+        # ``("radarr", "movie_id")``, the default (no ``--human``,
+        # no ``--verbose``) JSON path emits the curated summary,
+        # not the verbatim upstream payload. Mirrors the existing
+        # ``jellyfin item`` behaviour. Operators who need the raw
+        # upstream record use ``--verbose`` (which bypasses the
+        # summary shape per the documented dispatch chain).
         cfg = _service_config()
-        args = _namespace(movie_id="42", human=False)
-        payload = {"title": "The Matrix", "year": 1999}
+        args = _namespace(movie_id="42", human=False, verbose=False)
+        payload = {
+            "title": "The Matrix",
+            "year": 1999,
+            "genres": [{"name": "Action"}],
+        }
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_movie, args, cfg)
+        rendered = json.loads(output)
+        self.assertEqual(rendered["title"], "The Matrix")
+        self.assertEqual(rendered["year"], 1999)
+        self.assertEqual(rendered["genres"], "Action")
+
+    def test_movie_verbose_emits_verbatim(self) -> None:
+        # ``--verbose`` bypasses the single-record renderer and
+        # emits the verbatim ``/api/v3/movie/{id}`` payload
+        # (US-7 AC4 contract: ``--verbose`` keeps the raw record).
+        cfg = _service_config()
+        args = _namespace(movie_id="42", verbose=True)
+        payload = {
+            "title": "The Matrix",
+            "year": 1999,
+            "genres": [{"name": "Action"}],
+            "extra": "preserved",
+        }
         with _patched_get_payload(payload):
             output = _capture_stdout(cmd_movie, args, cfg)
         self.assertEqual(json.loads(output), payload)
@@ -1039,10 +1095,11 @@ class TestCmdMovie(unittest.TestCase):
         self.assertEqual(json.loads(output), payload)
 
     def test_movie_no_id_human_renders_table(self) -> None:
-        # REQ-2 AC2: the --human column list for the no-id branch
-        # is exactly these six columns in this order. ``monitored``
-        # here is the operator's library flag (NOT the source-default
-        # column that REQ-4 renames on lookup).
+        # US-6 AC1: the --human column list for the no-id branch
+        # is exactly these seven columns in this order. ``status`` /
+        # ``tmdbId`` / ``imdbId`` (the pre-change columns) are
+        # replaced by the audit-asked ``hasFile`` / ``genres`` /
+        # ``added`` / ``collection.name`` / ``studio`` set.
         cfg = _service_config()
         args = _namespace(movie_id=None, human=True)
         payload = [{"title": "A", "year": 1999}]
@@ -1052,24 +1109,32 @@ class TestCmdMovie(unittest.TestCase):
         kwargs = mock_emit.call_args.kwargs
         self.assertEqual(
             kwargs["columns"],
-            ["title", "year", "monitored", "status", "tmdbId", "imdbId"],
+            [
+                "title",
+                "year",
+                "hasFile",
+                "genres",
+                "added",
+                "collection.name",
+                "studio",
+            ],
         )
 
     def test_movie_no_id_row_count_matches_payload(self) -> None:
-        # REQ-2 AC3: a canned payload of N items renders N data rows.
-        # The ``human`` renderer emits a header row, a separator row,
-        # then one row per item; counting non-empty lines and
-        # subtracting the two header lines gives the row count.
+        # US-6 AC1: a canned payload of N items renders N data
+        # rows. The ``human`` renderer emits a header row, a
+        # separator row, then one row per item.
         cfg = _service_config()
         n = 5
         payload = [
             {
                 "title": f"Movie {i}",
                 "year": 1990 + i,
-                "monitored": True,
-                "status": "released",
-                "tmdbId": 1000 + i,
-                "imdbId": f"tt{1000 + i:07d}",
+                "hasFile": (i % 2 == 0),
+                "genres": [{"name": "Action"}],
+                "added": f"2024-01-{i + 1:02d}T00:00:00Z",
+                "collection": {"name": f"Collection {i}"},
+                "studio": "Studio A",
             }
             for i in range(n)
         ]
@@ -1079,17 +1144,235 @@ class TestCmdMovie(unittest.TestCase):
         lines = [line for line in output.splitlines() if line.strip()]
         # Header + separator + N data rows.
         self.assertEqual(len(lines), n + 2)
-        # The header carries the six required column names.
+        # The header carries the seven required column names.
         header = lines[0]
         for column in (
             "title",
             "year",
-            "monitored",
-            "status",
-            "tmdbId",
-            "imdbId",
+            "hasFile",
+            "genres",
+            "added",
+            "collection.name",
+            "studio",
         ):
             self.assertIn(column, header)
+
+    def test_calendar_human_renders_table(self) -> None:
+        # US-1 AC1: the --human column list on calendar is the
+        # 10-column audit-asked shape (US-1).
+        cfg = _service_config()
+        args = _namespace(human=True, start=None, end=None)
+        payload = [
+            {
+                "title": "The Matrix",
+                "year": 1999,
+                "monitored": True,
+                "hasFile": True,
+                "genres": [{"name": "Action"}],
+                "runtime": 136,
+                "collection": {"name": "Matrix Collection"},
+                "inCinemas": "1999-03-31",
+                "physicalRelease": "1999-09-21",
+                "digitalRelease": "1999-09-21",
+            }
+        ]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.radarr.output.emit") as mock_emit:
+            cmd_calendar(args, cfg)
+        columns = mock_emit.call_args.kwargs["columns"]
+        self.assertEqual(
+            columns,
+            [
+                "title",
+                "year",
+                "monitored",
+                "hasFile",
+                "genres",
+                "runtime",
+                "collection.name",
+                "inCinemas",
+                "physicalRelease",
+                "digitalRelease",
+            ],
+        )
+
+    def test_calendar_runtime_cell_renders_formatted(self) -> None:
+        # US-1 AC4: the ``runtime`` cell renders as ``"<X>h <Y>m"``
+        # via ``_format_runtime_minutes_whole`` (not the Jellyfin-
+        # ticks formatter, which would yield ``None`` for short
+        # movies and ``0h <low>m`` garbage for normal runtimes).
+        cfg = _service_config()
+        args = _namespace(human=True, start=None, end=None, command="calendar")
+        payload = [{"title": "X", "year": 2024, "runtime": 136}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_calendar, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["runtime"], "2h 16m")
+
+    def test_wanted_human_renders_table(self) -> None:
+        # US-2 AC1: the --human column list on wanted is the
+        # 6-column audit-asked shape.
+        cfg = _service_config()
+        args = _namespace(human=True)
+        payload = [
+            {
+                "title": "Inception",
+                "year": 2010,
+                "tmdbId": 27205,
+                "monitored": True,
+            }
+        ]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.radarr.output.emit") as mock_emit:
+            cmd_wanted(args, cfg)
+        columns = mock_emit.call_args.kwargs["columns"]
+        self.assertEqual(
+            columns,
+            [
+                "title",
+                "year",
+                "hasFile",
+                "genres",
+                "physicalRelease",
+                "releaseDate",
+            ],
+        )
+
+    def test_queue_human_renders_table(self) -> None:
+        # US-3 AC1: the --human column list on queue is the
+        # 5-column audit-asked shape.
+        cfg = _service_config()
+        args = _namespace(human=True)
+        payload = [
+            {
+                "title": "Dune",
+                "year": 2021,
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "status": "downloading",
+                "timeleft": "01:00:00",
+            }
+        ]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.radarr.output.emit") as mock_emit:
+            cmd_queue(args, cfg)
+        columns = mock_emit.call_args.kwargs["columns"]
+        self.assertEqual(
+            columns,
+            ["title", "year", "quality", "status", "timeLeft"],
+        )
+
+    def test_recent_human_renders_table(self) -> None:
+        # US-4 AC1: the --human column list on recent is the
+        # 8-column audit-asked shape.
+        cfg = _service_config()
+        args = _namespace(page_size=10, human=True)
+        payload = [
+            {
+                "movie": {"title": "Dune", "year": 2021},
+                "eventType": "downloadFolderImported",
+                "date": "2024-01-01",
+            }
+        ]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.radarr.output.emit") as mock_emit:
+            cmd_recent(args, cfg)
+        columns = mock_emit.call_args.kwargs["columns"]
+        self.assertEqual(
+            columns,
+            [
+                "title",
+                "year",
+                "sourceTitle",
+                "quality",
+                "language",
+                "client",
+                "eventType",
+                "date",
+            ],
+        )
+
+    def test_lookup_human_renders_table(self) -> None:
+        # US-5 AC1: the --human column list on lookup is the
+        # 10-column audit-asked shape, including the truncated
+        # ``overview`` cell. The rendered overview cell is itself
+        # truncated to fit the per-column width budget by
+        # ``human()``; the renderer-level truncation to 80 chars
+        # is covered by the ``TestTruncateOverview`` tests.
+        cfg = _service_config()
+        args = _namespace(term="dune", human=True, command="lookup")
+        payload = [
+            {
+                "title": "Dune",
+                "year": 2021,
+                "hasFile": False,
+                "genres": [{"name": "Sci-Fi"}],
+                "overview": "Overview text.",
+                "status": "released",
+                "tmdbId": 693134,
+                "imdbId": "tt15239600",
+                "monitored": True,
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["title"], "Dune")
+        self.assertEqual(cells["tmdbId"], "693134")
+        # ``overview`` cell renders the value (truncation budget
+        # covered in test_output.TestTruncateOverview).
+        self.assertIn("Overview", cells["overview"])
+
+    def test_movie_id_human_renders_table(self) -> None:
+        # US-7 AC1 AC2: the with-id --human branch emits the new
+        # 9-key shape (single-record summary). The dispatch routes
+        # on ``("radarr", "movie_id")`` via the ``command=`` kwarg
+        # on ``_emit``. The ``human`` renderer projects the
+        # single-mapping shape as vertical ``key: value`` pairs
+        # (mirrors ``jellyfin item`` / ``seerr tv`` /
+        # ``seerr movie``); the renderer-level 80-char overview
+        # truncation is covered by
+        # ``test_output.TestTruncateOverview``.
+        cfg = _service_config()
+        args = _namespace(movie_id="42", human=True, command="movie")
+        payload = {
+            "title": "The Matrix",
+            "year": 1999,
+            "status": "released",
+            "monitored": True,
+            "hasFile": True,
+            "genres": [{"name": "Action"}],
+            "overview": "Overview text.",
+            "added": "2019-01-01T00:00:00Z",
+            "studio": "Warner Bros.",
+        }
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_movie, args, cfg)
+        # ``human()`` on a single-mapping summary renders
+        # ``key: value`` lines; every documented key must surface.
+        for key in (
+            "title",
+            "year",
+            "status",
+            "monitored",
+            "hasFile",
+            "genres",
+            "overview",
+            "added",
+            "studio",
+        ):
+            self.assertIn(
+                f"{key}:",
+                output,
+                msg=(
+                    f"radarr --human movie_id output missing key "
+                    f"{key!r}; got:\n{output!r}"
+                ),
+            )
+        # Specific values surface verbatim.
+        self.assertIn("The Matrix", output)
+        self.assertIn("Action", output)
+        self.assertIn("released", output)
+        self.assertIn("Warner Bros.", output)
 
 
 # ---------------------------------------------------------------------------
@@ -1112,6 +1395,8 @@ class TestHumanMode(unittest.TestCase):
         self.assertTrue(kwargs["human_mode"])
 
     def test_human_mode_columns_for_calendar(self) -> None:
+        # US-1 AC1: the --human column list on calendar is the
+        # 10-column audit-asked shape.
         cfg = _service_config()
         args = _namespace(human=True, start=None, end=None)
         payload = [{"title": "Movie A", "year": 2024}]
@@ -1124,6 +1409,11 @@ class TestHumanMode(unittest.TestCase):
             [
                 "title",
                 "year",
+                "monitored",
+                "hasFile",
+                "genres",
+                "runtime",
+                "collection.name",
                 "inCinemas",
                 "physicalRelease",
                 "digitalRelease",
@@ -1387,7 +1677,24 @@ class TestMainEntryPoint(unittest.TestCase):
         mock_get.assert_not_called()
 
     def test_main_lookup_emits_payload(self) -> None:
-        payload = [{"title": "The Matrix", "year": 1999}]
+        # With the lookup renderer registered, the default JSON
+        # path emits the curated summary (which projects the
+        # audit-asked fields). Mirrors the ``jellyfin item`` /
+        # ``sonarr recent`` pattern. ``--verbose`` keeps the raw
+        # upstream record for downstream consumers.
+        payload = [
+            {
+                "title": "The Matrix",
+                "year": 1999,
+                "hasFile": False,
+                "genres": [{"name": "Action"}],
+                "overview": "A hacker learns reality.",
+                "status": "released",
+                "tmdbId": 603,
+                "imdbId": "tt0133093",
+                "monitored": True,
+            }
+        ]
         with patch(
             "arr_cli.radarr.transport.get",
             return_value=payload,
@@ -1401,7 +1708,13 @@ class TestMainEntryPoint(unittest.TestCase):
                     "the matrix",
                 ],
             )
-        self.assertEqual(json.loads(stdout), payload)
+        rendered = json.loads(stdout)
+        self.assertEqual(rendered[0]["title"], "The Matrix")
+        self.assertEqual(rendered[0]["year"], 1999)
+        self.assertEqual(rendered[0]["genres"], "Action")
+        self.assertEqual(rendered[0]["overview"], "A hacker learns reality.")
+        self.assertEqual(rendered[0]["tmdbId"], 603)
+        self.assertEqual(rendered[0]["monitored"], True)
 
     def test_main_human_renders_table(self) -> None:
         # ``--human`` switches from JSON pass-through to tabular

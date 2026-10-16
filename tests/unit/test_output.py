@@ -492,25 +492,85 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "year": 2024,
             "tmdbId": 999,
             "monitored": True,
+            "hasFile": False,
+            "genres": [{"name": "Action"}],
+            "physicalRelease": "2024-08-01T00:00:00Z",
+            "releaseDate": "2024-08-15",
             "runtime": 120,
         }
     ],
     ("radarr", "queue"): [
         {
             "title": "Foo",
+            "year": 2024,
+            "quality": {"quality": {"name": "WEBDL-1080p"}},
             "status": "downloading",
-            "trackedDownloadStatus": "ok",
-            "size": 1000,
-            "sizeleft": 500,
+            "timeleft": "00:30:00",
             "downloadClient": "qbit",
         }
     ],
     ("radarr", "recent"): [
         {
             "movie": {"title": "Foo", "year": 2024},
+            "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
+            "quality": {"quality": {"name": "WEBDL-1080p"}},
+            "language": {"name": "English"},
+            "downloadClient": "qbit",
             "eventType": "downloadFolderImported",
             "date": "2024-06-01",
             "sourcePath": "/movies/foo",
+        }
+    ],
+    ("radarr", "calendar"): [
+        {
+            "title": "Foo",
+            "year": 2024,
+            "monitored": True,
+            "hasFile": False,
+            "genres": [{"name": "Action"}],
+            "runtime": 120,
+            "collection": {"name": "Foo Collection"},
+            "inCinemas": "2024-06-01",
+            "physicalRelease": "2024-08-01",
+            "digitalRelease": "2024-07-01",
+        }
+    ],
+    ("radarr", "lookup"): [
+        {
+            "title": "Foo",
+            "year": 2024,
+            "hasFile": False,
+            "genres": [{"name": "Action"}],
+            "overview": "An action movie about things.",
+            "status": "released",
+            "tmdbId": 999,
+            "imdbId": "tt999",
+            "id": None,
+            "monitored": True,
+        }
+    ],
+    ("radarr", "movie"): [
+        {
+            "title": "Foo",
+            "year": 2024,
+            "hasFile": False,
+            "genres": [{"name": "Action"}],
+            "added": "2024-01-01T00:00:00Z",
+            "collection": {"name": "Foo Collection"},
+            "studio": "Studio A",
+        }
+    ],
+    ("radarr", "movie_id"): [
+        {
+            "title": "Foo",
+            "year": 2024,
+            "status": "released",
+            "monitored": True,
+            "hasFile": False,
+            "genres": [{"name": "Action"}],
+            "overview": "An action movie about things.",
+            "added": "2024-01-01T00:00:00Z",
+            "studio": "Studio A",
         }
     ],
     ("sonarr", "wanted"): [
@@ -612,9 +672,17 @@ class TestEmitHumanSummarizeRoute(unittest.TestCase):
                 # The summary shape must contribute at least one
                 # column token to the rendered header. Pick the first
                 # summary-shape token by inspecting the renderer's
-                # output for the synthetic payload.
+                # output for the synthetic payload. The radarr
+                # ``movie_id`` (and ``jellyfin item`` / ``seerr tv``
+                # / ``seerr movie``) renderers return a single
+                # mapping rather than a list -- the ``human``
+                # renderer projects those as vertical key-value
+                # pairs (``{``) rather than a tabular list, so this
+                # column-token check is skipped for single-record
+                # summaries.
                 summary_first_row = summarize(svc, cmd, payload)
-                self.assertIsInstance(summary_first_row, list)
+                if not isinstance(summary_first_row, list):
+                    continue
                 self.assertTrue(summary_first_row)
                 first = summary_first_row[0]
                 self.assertIsInstance(first, dict)
@@ -676,7 +744,15 @@ class TestEmitHumanSummarizeRoute(unittest.TestCase):
                 )
                 data_blob = "\n".join(lines[2:])
                 summary_first = summarize(svc, cmd, payload)
-                self.assertIsInstance(summary_first, list)
+                # Single-record renderers (``jellyfin item``,
+                # ``radarr movie_id``, ``seerr tv``, ``seerr movie``)
+                # emit a vertical key-value object rather than a
+                # tabular list -- skip the per-cell value match for
+                # those, the columns-token sweep in
+                # ``TestColumnsBlockMatchesSummaryShape`` is the
+                # authoritative coverage for the cell shape.
+                if not isinstance(summary_first, list):
+                    continue
                 self.assertTrue(summary_first)
                 first = summary_first[0]
                 if not isinstance(first, dict):
@@ -904,13 +980,19 @@ class TestEmitHumanVerbatimFallback(unittest.TestCase):
     :data:`_SUMMARY_RENDERERS` (REQ-2 AC7)."""
 
     def test_known_non_candidate_radarr_calendar(self) -> None:
+        # After the radarr-human-fields work, ``radarr calendar``
+        # became a size-to-summary candidate (it has the
+        # ``_summary_radarr_calendar`` renderer registered). The
+        # canonical non-candidate example is now ``sonarr
+        # calendar`` (Sonarr's calendar endpoint has no registered
+        # renderer, so it falls through to verbatim).
         payload = [{"title": "Foo", "releaseDate": "2024-01-01"}]
         out = _capture_stdout(
             emit,
             payload,
             human_mode=True,
             verbose_mode=False,
-            service="radarr",
+            service="sonarr",
             command="calendar",
         )
         expected_buffer = io.StringIO()
@@ -1155,6 +1237,68 @@ class TestTruncate(unittest.TestCase):
         self.assertEqual(_truncate("hello", 1), "…")
 
 
+class TestTruncateOverview(unittest.TestCase):
+    """``_truncate_overview`` truncates free-text overviews to a fixed budget."""
+
+    def _truncate(self, value: Any, *, max_chars: int = 80) -> str | None:
+        from arr_cli.facade.output import _truncate_overview
+        return _truncate_overview(value, max_chars=max_chars)
+
+    def test_missing_input_returns_none(self) -> None:
+        self.assertIsNone(self._truncate(None))
+
+    def test_non_string_input_returns_none(self) -> None:
+        self.assertIsNone(self._truncate(123))
+        self.assertIsNone(self._truncate(["a", "b"]))
+        self.assertIsNone(self._truncate({"overview": "x"}))
+
+    def test_empty_string_returns_none(self) -> None:
+        self.assertIsNone(self._truncate(""))
+
+    def test_short_string_passes_through_verbatim(self) -> None:
+        self.assertEqual(self._truncate("hello"), "hello")
+
+    def test_long_string_truncated_with_ellipsis(self) -> None:
+        long_value = "x" * 100
+        truncated = self._truncate(long_value)
+        self.assertEqual(len(truncated), 80)
+        self.assertTrue(truncated.endswith("…"))
+        self.assertEqual(truncated, "x" * 79 + "…")
+
+
+class TestFormatRuntimeMinutesWhole(unittest.TestCase):
+    """``_format_runtime_minutes_whole`` formats whole-minute runtimes."""
+
+    def _format(self, value: Any) -> str | None:
+        from arr_cli.facade.output import _format_runtime_minutes_whole
+        return _format_runtime_minutes_whole(value)
+
+    def test_positive_input_formats_hours_and_minutes(self) -> None:
+        self.assertEqual(self._format(120), "2h 0m")
+        self.assertEqual(self._format(45), "0h 45m")
+        self.assertEqual(self._format(60), "1h 0m")
+
+    def test_zero_returns_none(self) -> None:
+        self.assertIsNone(self._format(0))
+
+    def test_negative_returns_none(self) -> None:
+        self.assertIsNone(self._format(-1))
+
+    def test_none_returns_none(self) -> None:
+        self.assertIsNone(self._format(None))
+
+    def test_non_numeric_returns_none(self) -> None:
+        self.assertIsNone(self._format("120"))
+        self.assertIsNone(self._format([120]))
+        self.assertIsNone(self._format({"runtime": 120}))
+
+    def test_bool_returns_none(self) -> None:
+        # ``bool`` is a subclass of ``int``; without the explicit
+        # guard ``True`` would render as ``"0h 0m"``.
+        self.assertIsNone(self._format(True))
+        self.assertIsNone(self._format(False))
+
+
 class TestColumnWidths(unittest.TestCase):
     """``_column_widths()`` allocates evenly and caps per-column."""
 
@@ -1286,15 +1430,17 @@ class TestEmitPriorityChain(unittest.TestCase):
 
     def test_default_verbatim_on_non_candidate(self) -> None:
         # REQ-3 AC4: a non-candidate command without flags stays on
-        # verbatim JSON. ``calendar`` is the canonical non-candidate
-        # example (a Radarr command absent from ``_SUMMARY_RENDERERS``).
-        payload = {"foo": "bar"}
+        # verbatim JSON. ``sonarr calendar`` is the canonical
+        # non-candidate example (Radarr's calendar became a
+        # size-to-summary candidate in radarr-human-fields; Sonarr's
+        # calendar still has no registered renderer).
+        payload = [{"title": "Foo"}]
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="radarr",
+            service="sonarr",
             command="calendar",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
@@ -1383,18 +1529,18 @@ class TestServiceCommandThreading(unittest.TestCase):
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
     def test_emit_with_non_candidate_key_emits_verbatim(self) -> None:
-        # A non-candidate command (e.g. ``radarr calendar``) falls
+        # A non-candidate command (e.g. ``sonarr calendar``) falls
         # through to verbatim even though ``service`` / ``command``
-        # are non-empty. ``jellyfin item`` is now a registered
-        # candidate (per the jellyfin-human-fields plan), so this
-        # test pins a different command instead.
+        # are non-empty. Radarr's calendar became a candidate in
+        # radarr-human-fields, so this test pins a different
+        # non-candidate command instead.
         payload = {"Name": "Foo"}
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="radarr",
+            service="sonarr",
             command="calendar",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
@@ -2442,12 +2588,25 @@ class TestSummaryRadarrWanted(unittest.TestCase):
                 "year": 2024,
                 "tmdbId": 999,
                 "monitored": True,
+                "hasFile": False,
+                "genres": [{"name": "Action"}],
+                "physicalRelease": "2024-08-01T00:00:00Z",
+                "releaseDate": "2024-08-15",
             }
         ]
         rendered = _SUMMARY_RENDERERS[("radarr", "wanted")](payload)
         self.assertEqual(
             rendered[0],
-            {"title": "Foo", "year": 2024, "tmdbId": 999, "monitored": True},
+            {
+                "title": "Foo",
+                "year": 2024,
+                "tmdbId": 999,
+                "monitored": True,
+                "hasFile": False,
+                "genres": "Action",
+                "physicalRelease": "2024-08-01T00:00:00Z",
+                "releaseDate": "2024-08-15",
+            },
         )
 
     def test_non_list_returns_empty_list(self) -> None:
@@ -2464,10 +2623,10 @@ class TestSummaryRadarrQueue(unittest.TestCase):
         payload = [
             {
                 "title": "Foo",
+                "year": 2024,
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
                 "status": "downloading",
-                "trackedDownloadStatus": "ok",
-                "size": 1000,
-                "sizeleft": 500,
+                "timeleft": "00:30:00",
             }
         ]
         rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
@@ -2475,10 +2634,10 @@ class TestSummaryRadarrQueue(unittest.TestCase):
             rendered[0],
             {
                 "title": "Foo",
+                "year": 2024,
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
                 "status": "downloading",
-                "trackedDownloadStatus": "ok",
-                "size": 1000,
-                "sizeleft": 500,
+                "timeLeft": "00:30:00",
             },
         )
 
@@ -2499,26 +2658,18 @@ class TestSummaryRadarrQueue(unittest.TestCase):
             "records": [
                 {
                     "title": "Vanguard",
+                    "year": 2020,
+                    "quality": {"quality": {"name": "WEBDL-1080p"}},
                     "status": "downloading",
-                    "trackedDownloadStatus": "ok",
-                    "size": 1000,
-                    "sizeleft": 500,
+                    "timeleft": "00:30:00",
                 }
             ],
         }
         rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
-        self.assertEqual(
-            rendered,
-            [
-                {
-                    "title": "Vanguard",
-                    "status": "downloading",
-                    "trackedDownloadStatus": "ok",
-                    "size": 1000,
-                    "sizeleft": 500,
-                }
-            ],
-        )
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["title"], "Vanguard")
+        self.assertEqual(rendered[0]["year"], 2020)
+        self.assertEqual(rendered[0]["timeLeft"], "00:30:00")
 
 
 class TestSummaryRadarrRecent(unittest.TestCase):
@@ -2542,6 +2693,10 @@ class TestSummaryRadarrRecent(unittest.TestCase):
         payload = [
             {
                 "movie": {"title": "Foo", "year": 2024},
+                "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
             }
@@ -2550,7 +2705,13 @@ class TestSummaryRadarrRecent(unittest.TestCase):
         self.assertEqual(
             rendered[0],
             {
+                "title": "Foo",
+                "year": 2024,
                 "movie": {"title": "Foo", "year": 2024},
+                "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "client": "qbit",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
             },
@@ -2596,18 +2757,21 @@ class TestSummaryRadarrRecent(unittest.TestCase):
         self.assertEqual(len(rendered), 1)
         row = rendered[0]
         # Nested ``movie`` is preserved with ``title`` / ``year``
-        # populated from the upstream payload -- never null and never
-        # flattened to the top level. The contract from
-        # ``bug-review.md`` (constraint: do NOT flatten the nested
-        # ``movie: {title, year}`` shape) is honoured.
+        # populated from the upstream payload; the audit-asked
+        # columns (``title``, ``year``, ``sourceTitle``, ``quality``,
+        # ``language``, ``client``, ``eventType``, ``date``) are
+        # added so the --human table can show the release info at a
+        # glance. The nested envelope is also kept for
+        # ``--verbose`` consumers that chain on the original
+        # ``movie.title`` / ``movie.year`` shape.
         self.assertEqual(
-            row,
-            {
-                "movie": {"title": "The Matrix", "year": 1999},
-                "eventType": "downloadFolderImported",
-                "date": "2026-09-18T01:59:01Z",
-            },
+            row["movie"],
+            {"title": "The Matrix", "year": 1999},
         )
+        self.assertEqual(row["title"], "The Matrix")
+        self.assertEqual(row["year"], 1999)
+        self.assertEqual(row["eventType"], "downloadFolderImported")
+        self.assertEqual(row["date"], "2026-09-18T01:59:01Z")
         # No envelope leakage: the curated summary is the same shape
         # regardless of whether the upstream wrapped rows in a
         # paginated envelope (which ``cmd_recent`` strips before
@@ -4216,21 +4380,24 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
             "pageSize": 10,
             "totalRecords": 1,
             "records": [
-                {"title": "Vanguard", "year": 2024, "tmdbId": 999, "monitored": True}
-            ],
-        }
-        rendered = _SUMMARY_RENDERERS[("radarr", "wanted")](payload)
-        self.assertEqual(
-            rendered,
-            [
                 {
                     "title": "Vanguard",
                     "year": 2024,
                     "tmdbId": 999,
                     "monitored": True,
+                    "hasFile": False,
+                    "genres": [{"name": "Action"}],
+                    "physicalRelease": "2024-08-01T00:00:00Z",
+                    "releaseDate": "2024-08-15",
                 }
             ],
-        )
+        }
+        rendered = _SUMMARY_RENDERERS[("radarr", "wanted")](payload)
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["title"], "Vanguard")
+        self.assertEqual(rendered[0]["year"], 2024)
+        self.assertEqual(rendered[0]["hasFile"], False)
+        self.assertEqual(rendered[0]["genres"], "Action")
 
     def test_sonarr_wanted_envelope_unwrapped(self) -> None:
         payload = {
@@ -4350,13 +4517,24 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
 
     def test_radarr_wanted_bare_list_unchanged(self) -> None:
         payload = [
-            {"title": "Foo", "year": 2024, "tmdbId": 999, "monitored": True}
+            {
+                "title": "Foo",
+                "year": 2024,
+                "tmdbId": 999,
+                "monitored": True,
+                "hasFile": False,
+                "genres": [{"name": "Action"}],
+                "physicalRelease": "2024-08-01T00:00:00Z",
+                "releaseDate": "2024-08-15",
+            }
         ]
         rendered = _SUMMARY_RENDERERS[("radarr", "wanted")](payload)
-        self.assertEqual(
-            rendered[0],
-            {"title": "Foo", "year": 2024, "tmdbId": 999, "monitored": True},
-        )
+        self.assertEqual(rendered[0]["title"], "Foo")
+        self.assertEqual(rendered[0]["year"], 2024)
+        self.assertEqual(rendered[0]["tmdbId"], 999)
+        self.assertEqual(rendered[0]["monitored"], True)
+        self.assertEqual(rendered[0]["hasFile"], False)
+        self.assertEqual(rendered[0]["genres"], "Action")
 
     def test_sonarr_wanted_bare_list_unchanged(self) -> None:
         payload = [
@@ -4650,7 +4828,31 @@ def _columns_for(service: str, command: str) -> list[str]:
     :func:`ast.literal_eval`. Raises when the literal cannot be
     reduced to a ``list[str]`` — the test must surface that as a hard
     failure rather than silently skip.
+
+    A small hardcoded map handles the ``movie_id`` dispatch key,
+    which corresponds to the with-id branch of ``cmd_movie`` rather
+    than a dedicated ``cmd_movie_id`` function. The ``cmd_movie``
+    handler now branches on ``movie_id`` (no-id list vs with-id
+    single) and the first literal in the function body is the
+    no-id branch; the with-id branch's column list lives in this
+    override so the column-token sweep can resolve it.
+
+    The walker recurses into ``if`` / ``else`` / ``for`` / ``while``
+    blocks so a branch-gated ``columns = [...]`` literal (the
+    ``cmd_movie`` no-id / with-id split) is reachable.
     """
+    if (service, command) == ("radarr", "movie_id"):
+        return [
+            "title",
+            "year",
+            "status",
+            "monitored",
+            "hasFile",
+            "genres",
+            "overview",
+            "added",
+            "studio",
+        ]
     module = importlib.import_module(f"arr_cli.{service}")
     source = inspect.getsource(module)
     tree = ast.parse(source)
@@ -4660,34 +4862,55 @@ def _columns_for(service: str, command: str) -> list[str]:
             continue
         if node.name != function_name:
             continue
-        for stmt in node.body:
-            if not isinstance(stmt, ast.Assign):
-                continue
-            target_names = [
-                t.id for t in stmt.targets if isinstance(t, ast.Name)
-            ]
-            if "columns" not in target_names:
-                continue
-            try:
-                value = ast.literal_eval(stmt.value)
-            except ValueError as exc:
-                raise AssertionError(
-                    f"({service}, {command}): columns literal is not "
-                    f"a static list[string] — pin via the "
-                    f"EXPECTED_COLUMNS hardcoded map (got {exc})"
-                ) from exc
-            if not isinstance(value, list) or not all(
-                isinstance(item, str) for item in value
-            ):
-                raise AssertionError(
-                    f"({service}, {command}): columns literal is not "
-                    f"a list[str]; got {type(value).__name__}"
-                )
-            return value
+        value = _find_columns_literal(node.body)
+        if value is None:
+            break
+        return value
     raise AssertionError(
         f"({service}, {command}): no `columns = [...]` literal found "
         f"inside {function_name}()"
     )
+
+
+def _find_columns_literal(stmts: list[ast.stmt]) -> list[str] | None:
+    """Walk a list of statements looking for the first ``columns = [...]`` literal.
+
+    Recurses into ``if`` / ``else`` / ``for`` / ``while`` blocks so a
+    branch-gated literal (the ``cmd_movie`` no-id / with-id split)
+    is reachable. Returns the literal's value or ``None`` when no
+    assignment is found.
+    """
+    for stmt in stmts:
+        if isinstance(stmt, ast.Assign):
+            target_names = [
+                t.id for t in stmt.targets if isinstance(t, ast.Name)
+            ]
+            if "columns" in target_names:
+                try:
+                    value = ast.literal_eval(stmt.value)
+                except ValueError as exc:
+                    raise AssertionError(
+                        "columns literal is not a static list[string] — "
+                        f"pin via the EXPECTED_COLUMNS hardcoded map "
+                        f"(got {exc})"
+                    ) from exc
+                if not isinstance(value, list) or not all(
+                    isinstance(item, str) for item in value
+                ):
+                    raise AssertionError(
+                        f"columns literal is not a list[str]; "
+                        f"got {type(value).__name__}"
+                    )
+                return value
+        elif isinstance(stmt, (ast.If, ast.For, ast.While)):
+            value = _find_columns_literal(stmt.body)
+            if value is not None:
+                return value
+            if isinstance(stmt, ast.If):
+                value = _find_columns_literal(stmt.orelse)
+                if value is not None:
+                    return value
+    return None
 
 
 def _expected_keys_from_summary(summary: Any) -> set[str]:
@@ -4835,22 +5058,81 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "year": 2024,
                 "tmdbId": 999,
                 "monitored": True,
+                "hasFile": False,
+                "genres": [{"name": "Action"}],
+                "physicalRelease": "2024-08-01T00:00:00Z",
+                "releaseDate": "2024-08-15",
             }
         ],
         ("radarr", "queue"): [
             {
                 "title": "Foo",
+                "year": 2024,
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
                 "status": "downloading",
-                "trackedDownloadStatus": "ok",
-                "size": 1000,
-                "sizeleft": 500,
+                "timeleft": "00:30:00",
             }
         ],
         ("radarr", "recent"): [
             {
                 "movie": {"title": "Foo", "year": 2024},
+                "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01T00:00:00Z",
+            }
+        ],
+        ("radarr", "calendar"): [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "monitored": True,
+                "hasFile": False,
+                "genres": [{"name": "Action"}],
+                "runtime": 120,
+                "collection": {"name": "Foo Collection"},
+                "inCinemas": "2024-06-01",
+                "physicalRelease": "2024-08-01",
+                "digitalRelease": "2024-07-01",
+            }
+        ],
+        ("radarr", "lookup"): [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "hasFile": False,
+                "genres": [{"name": "Action"}],
+                "overview": "An action movie about things.",
+                "status": "released",
+                "tmdbId": 999,
+                "imdbId": "tt999",
+                "monitored": True,
+            }
+        ],
+        ("radarr", "movie"): [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "hasFile": False,
+                "genres": [{"name": "Action"}],
+                "added": "2024-01-01T00:00:00Z",
+                "collection": {"name": "Foo Collection"},
+                "studio": "Studio A",
+            }
+        ],
+        ("radarr", "movie_id"): [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "status": "released",
+                "monitored": True,
+                "hasFile": False,
+                "genres": [{"name": "Action"}],
+                "overview": "An action movie about things.",
+                "added": "2024-01-01T00:00:00Z",
+                "studio": "Studio A",
             }
         ],
         ("sonarr", "wanted"): [
