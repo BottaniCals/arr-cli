@@ -570,6 +570,66 @@ def _unwrap_envelope(payload: Any) -> list[Any]:
 
 
 # ---------------------------------------------------------------------------
+# Summary-renderer shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _join_names(items: Any) -> str | None:
+    """Flatten a list of mappings-with-"name" or raw strings to a comma-joined string.
+
+    Honours both ``[{"name": "Foo"}, ...]`` (the Seer detail shape for
+    ``genres`` / ``networks`` and the Jellyfin ``Genres`` shape) and
+    bare strings (``["Foo", ...]``). Returns ``None`` when ``items``
+    is not a list or yields no string names, so the renderer prints
+    ``<null>`` instead of a bare ``", "`` for empty collections.
+
+    Lifted out of the per-renderer duplication in
+    :func:`_summary_seerr_tv` / :func:`_summary_seerr_movie` so the four
+    affected renderers (seerr TV / movie, jellyfin latest, jellyfin
+    item) share one body — guards against a future drift where one
+    renderer gains a bug the others don't.
+    """
+    if not isinstance(items, list):
+        return None
+    names: list[str] = []
+    for item in items:
+        if isinstance(item, Mapping):
+            name = item.get("name")
+            if isinstance(name, str):
+                names.append(name)
+        elif isinstance(item, str):
+            names.append(item)
+    return ", ".join(names) if names else None
+
+
+def _format_runtime_minutes(value: Any) -> str | None:
+    """Format Jellyfin ``RunTimeTicks`` (100-ns ticks) as ``"<X>h <Y>m"``.
+
+    Jellyfin documents ``RunTimeTicks`` as "the total runtime in
+    100-ns ticks" — i.e. ``10_000_000`` ticks per second. The
+    formatter divides by ``10_000_000`` for seconds, then splits the
+    result into whole hours + whole minutes. Returns ``None`` for
+    missing / zero / negative / non-numeric / ``bool`` inputs so the
+    renderer prints ``<null>`` instead of the misleading
+    ``"0h 0m"``. ``bool`` is checked first because ``bool`` is a
+    subclass of ``int`` in Python — without the guard, ``True`` would
+    format as ``"0h 0m"``.
+
+    Shared across US-2 (resume), US-4 (nextup), US-5 (latest),
+    US-6 (favorites), and US-8 (item); lifted out of the per-renderer
+    duplication so all five runtimes format identically.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value <= 0:
+        return None
+    total_seconds = int(value) // 10_000_000
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    return f"{hours}h {minutes}m"
+
+
+# ---------------------------------------------------------------------------
 # Per-command summary renderers
 # ---------------------------------------------------------------------------
 
@@ -608,6 +668,19 @@ def _summary_jellyfin_now(payload: Any) -> list[dict[str, Any]]:
                 play_state, "IsPaused", default=False
             ),
         }
+        # Per US-1: surface last-activity timestamp, queue length, and
+        # an active-transcoding boolean so the --human table can tell
+        # live vs stalled sessions at a glance.
+        last_activity = session.get("LastActivityDate")
+        queue = session.get("NowPlayingQueue")
+        queue_length = len(queue) if isinstance(queue, list) else 0
+        transcode_info = session.get("TranscodingInfo")
+        if isinstance(transcode_info, Mapping):
+            transcoding = _safe_get(
+                transcode_info, "IsVideoDirect", default=True
+            ) is False
+        else:
+            transcoding = False
         sessions.append(
             {
                 "user": _safe_get(session, "UserName", default=None),
@@ -615,6 +688,9 @@ def _summary_jellyfin_now(payload: Any) -> list[dict[str, Any]]:
                 "client": _safe_get(session, "Client", default=None),
                 "playing": playing,
                 "progress": progress,
+                "LastActivityDate": last_activity,
+                "NowPlayingQueue.length": queue_length,
+                "transcoding": transcoding,
             }
         )
     return sessions
@@ -658,6 +734,9 @@ def _summary_jellyfin_recent(payload: Any) -> list[dict[str, Any]]:
             "UserData.LastPlayedDate": _safe_get(
                 item, "UserData", "LastPlayedDate", default=None
             ),
+            "UserData.PlayedPercentage": _safe_get(
+                item, "UserData", "PlayedPercentage", default=0
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -684,6 +763,12 @@ def _summary_jellyfin_favorites(payload: Any) -> list[dict[str, Any]]:
             "Type": _safe_get(item, "Type", default=None),
             "ProductionYear": _safe_get(item, "ProductionYear", default=0),
             "SeriesName": _safe_get(item, "SeriesName", default=None),
+            "RunTimeTicks": _format_runtime_minutes(
+                item.get("RunTimeTicks")
+            ),
+            "UserData.LastPlayedDate": _safe_get(
+                item, "UserData", "LastPlayedDate", default=None
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -733,6 +818,12 @@ def _summary_jellyfin_resume(payload: Any) -> list[dict[str, Any]]:
             "UserData.PlayCount": _safe_get(
                 item, "UserData", "PlayCount", default=0
             ),
+            "UserData.PlayedPercentage": _safe_get(
+                item, "UserData", "PlayedPercentage", default=0
+            ),
+            "RunTimeTicks": _format_runtime_minutes(
+                item.get("RunTimeTicks")
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -765,6 +856,13 @@ def _summary_jellyfin_latest(payload: Any) -> list[dict[str, Any]]:
             "Type": _safe_get(item, "Type", default=None),
             "ProductionYear": _safe_get(item, "ProductionYear", default=0),
             "SeriesName": _safe_get(item, "SeriesName", default=None),
+            "RunTimeTicks": _format_runtime_minutes(
+                item.get("RunTimeTicks")
+            ),
+            "PremiereDate": _safe_get(
+                item, "PremiereDate", default=None
+            ),
+            "Genres": _join_names(item.get("Genres")),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -834,10 +932,60 @@ def _summary_jellyfin_nextup(payload: Any) -> list[dict[str, Any]]:
             ),
             "IndexNumber": _safe_get(item, "IndexNumber", default=0),
             "PremiereDate": _safe_get(item, "PremiereDate", default=None),
+            "RunTimeTicks": _format_runtime_minutes(
+                item.get("RunTimeTicks")
+            ),
+            "Overview": _safe_get(item, "Overview", default=None),
         }
         for item in payload
         if isinstance(item, Mapping)
     ]
+
+
+def _summary_jellyfin_item(payload: Any) -> dict[str, Any]:
+    """Render a Jellyfin ``item <id>`` payload as the curated summary.
+
+    ``GET /Items/{id}`` returns a single object with the item's full
+    metadata (name, type, production year, premiere date, runtime in
+    100-ns ticks, ``Genres[]``, ``Overview``, ``Status``). The
+    curated shape flattens the runtime to ``"<X>h <Y>m"`` and the
+    nested ``Genres`` array to a single ``", "-joined`` string so the
+    default ``--human`` rendering stays a readable block per key
+    (otherwise each cell would render as ``<N items>`` /
+    ``<N keys>``).
+
+    Two input shapes are accepted (mirroring the
+    size-to-summary-renderer convention):
+
+    * A single ``Mapping`` (the canonical shape for ``cmd_item``).
+    * A list containing a single ``Mapping`` (the test fixture
+      convention; mirrors :func:`_summary_seerr_tv` /
+      :func:`_summary_seerr_movie`). Empty list maps to ``{}`` and
+      ``None`` / scalar payloads map to ``{}`` so neither crashes.
+    """
+    if isinstance(payload, list):
+        if not payload:
+            return {}
+        payload = payload[0]
+    if not isinstance(payload, Mapping):
+        return {}
+
+    return {
+        "Name": _safe_get(payload, "Name", default=None),
+        "Type": _safe_get(payload, "Type", default=None),
+        "ProductionYear": _safe_get(
+            payload, "ProductionYear", default=0
+        ),
+        "PremiereDate": _safe_get(
+            payload, "PremiereDate", default=None
+        ),
+        "RunTimeTicks": _format_runtime_minutes(
+            payload.get("RunTimeTicks")
+        ),
+        "Genres": _join_names(payload.get("Genres")),
+        "Overview": _safe_get(payload, "Overview", default=None),
+        "Status": _safe_get(payload, "Status", default=None),
+    }
 
 
 def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
@@ -1503,27 +1651,6 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         return {}
 
-    def _join_names(items: Any) -> str | None:
-        """Flatten ``items`` to a ``", "-joined`` string of names.
-
-        Honours both ``[{"name": "Foo"}, ...]`` (the Seer detail
-        shape for ``genres`` / ``networks``) and ``["Foo", ...]``.
-        Returns ``None`` when ``items`` is not a list or yields no
-        string names, so the renderer prints ``<null>`` instead of
-        ``", "`` for empty collections.
-        """
-        if not isinstance(items, list):
-            return None
-        names: list[str] = []
-        for item in items:
-            if isinstance(item, Mapping):
-                name = item.get("name")
-                if isinstance(name, str):
-                    names.append(name)
-            elif isinstance(item, str):
-                names.append(item)
-        return ", ".join(names) if names else None
-
     raw_genres = payload.get("genres")
     raw_networks = payload.get("networks")
     raw_ratings = payload.get("ratings")
@@ -1596,36 +1723,23 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, Mapping):
         return {}
 
-    def _join_names(items: Any) -> str | None:
-        """Flatten ``items`` to a ``", "-joined`` string of names.
-
-        Honours both ``[{"name": "Foo"}, ...]`` (the Seer detail
-        shape for ``genres``) and ``["Foo", ...]``. Returns
-        ``None`` when ``items`` is not a list or yields no string
-        names, so the renderer prints ``<null>`` instead of
-        ``", "`` for empty collections.
-        """
-        if not isinstance(items, list):
-            return None
-        names: list[str] = []
-        for item in items:
-            if isinstance(item, Mapping):
-                name = item.get("name")
-                if isinstance(name, str):
-                    names.append(name)
-            elif isinstance(item, str):
-                names.append(item)
-        return ", ".join(names) if names else None
+    raw_genres = payload.get("genres")
+    raw_ratings = payload.get("ratings")
 
     def _format_runtime(minutes: Any) -> str | None:
         """Format ``minutes`` as ``"<X>h <Y>m"``.
 
-        Honours the spec'd display format. Returns ``None`` when
+        The Seer ``movie`` payload's ``runtime`` field is already in
+        whole minutes, so this is the simpler minutes-based formatter
+        (not the Jellyfin-ticks formatter used by the
+        ``_summary_jellyfin_*`` renderers). Returns ``None`` when
         ``minutes`` is missing or zero so the renderer prints
         ``<null>`` instead of ``"0h 0m"`` (which would be a
         misleading "the movie has zero runtime" cell).
         """
-        if not isinstance(minutes, (int, float)) or isinstance(minutes, bool):
+        if isinstance(minutes, bool) or not isinstance(
+            minutes, (int, float)
+        ):
             return None
         if minutes <= 0:
             return None
@@ -1633,9 +1747,6 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         hours = total // 60
         mins = total % 60
         return f"{hours}h {mins}m"
-
-    raw_genres = payload.get("genres")
-    raw_ratings = payload.get("ratings")
     if isinstance(raw_ratings, Mapping):
         ratings_obj: dict[str, Any] = {
             "criticsScore": _safe_get(
@@ -1702,6 +1813,7 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("jellyfin", "latest"): _summary_jellyfin_latest,
     ("jellyfin", "search"): _summary_jellyfin_search,
     ("jellyfin", "nextup"): _summary_jellyfin_nextup,
+    ("jellyfin", "item"): _summary_jellyfin_item,
     ("radarr", "wanted"): _summary_radarr_wanted,
     ("radarr", "queue"): _summary_radarr_queue,
     ("radarr", "recent"): _summary_radarr_recent,

@@ -7,6 +7,26 @@ within the pre-1.0 contract documented in `README.md`.
 
 ## [Unreleased]
 
+### Added
+
+- `jellyfin --human`: every size-to-summary table now carries the
+  audit-requested fields. `jellyfin now` adds `LastActivityDate`,
+  `PlayState.IsPaused`, `NowPlayingQueue` length, and a transcoding
+  indicator; `jellyfin resume` / `jellyfin recent` add
+  `UserData.PlayedPercentage`; `jellyfin nextup` adds `RunTimeTicks`
+  and a truncated `Overview`; `jellyfin latest` adds `RunTimeTicks`
+  → minutes, `PremiereDate`, and `Genres`; `jellyfin favorites`
+  adds `RunTimeTicks` → minutes and `UserData.LastPlayedDate`;
+  `jellyfin search` defaults to `Name`, `Type`, `ProductionYear`.
+  Run times are normalised from Jellyfin's 100-ns ticks to minutes
+  via a shared `_format_runtime_minutes` helper; `Genres` joins via
+  a shared `_join_names` helper.
+- `jellyfin item <id>`: registered a new `_summary_jellyfin_item`
+  renderer in `_SUMMARY_RENDERERS`, so the command now returns a
+  curated single-record table (`Name`, `Type`, `ProductionYear`,
+  `PremiereDate`, `RunTimeTicks`, `Genres`, `Overview`, `Status`)
+  instead of dumping the raw Jellyfin JSON.
+
 ## [0.1.0]
 
 ### Added

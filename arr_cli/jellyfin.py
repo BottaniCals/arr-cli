@@ -182,6 +182,9 @@ def cmd_now(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "playing.episode",
         "progress.position_ticks",
         "progress.is_paused",
+        "LastActivityDate",
+        "NowPlayingQueue.length",
+        "transcoding",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -207,6 +210,8 @@ def cmd_resume(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "SeriesName",
         "UserData.PlaybackPositionTicks",
         "UserData.PlayCount",
+        "UserData.PlayedPercentage",
+        "RunTimeTicks",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -248,6 +253,7 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "ProductionYear",
         "SeriesName",
         "UserData.LastPlayedDate",
+        "UserData.PlayedPercentage",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -282,6 +288,8 @@ def cmd_nextup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "ParentIndexNumber",
         "IndexNumber",
         "PremiereDate",
+        "RunTimeTicks",
+        "Overview",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -302,7 +310,15 @@ def cmd_latest(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # summary intentionally drops it. ``DateCreated`` remains
     # available via ``jellyfin item <id>`` (chainable from
     # ``--verbose``).
-    columns = ["Name", "Type", "ProductionYear", "SeriesName"]
+    columns = [
+        "Name",
+        "Type",
+        "ProductionYear",
+        "SeriesName",
+        "RunTimeTicks",
+        "PremiereDate",
+        "Genres",
+    ]
     return _emit(payload, args, columns=columns)
 
 
@@ -327,7 +343,7 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     strip this flag.
     """
     query = getattr(args, "query", "") or ""
-    columns = ["Name", "Type", "ProductionYear", "SeriesName"]
+    columns = ["Name", "Type", "ProductionYear"]
     if not query:
         # AC2: empty query short-circuits to the canonical emit
         # path with an empty list, skipping the /Items HTTP call
@@ -386,7 +402,16 @@ def cmd_item(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params={"UserId": user_id},
         op=f"item id={raw_id}",
     )
-    columns = ["Name", "Type", "ProductionYear", "Overview", "UserData"]
+    columns = [
+        "Name",
+        "Type",
+        "ProductionYear",
+        "PremiereDate",
+        "RunTimeTicks",
+        "Genres",
+        "Overview",
+        "Status",
+    ]
     return _emit(payload, args, columns=columns)
 
 
@@ -412,7 +437,15 @@ def cmd_favorites(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params=params,
         op="favorites",
     )
-    columns = ["Id", "Name", "Type", "ProductionYear", "SeriesName"]
+    columns = [
+        "Id",
+        "Name",
+        "Type",
+        "ProductionYear",
+        "SeriesName",
+        "RunTimeTicks",
+        "UserData.LastPlayedDate",
+    ]
     return _emit(payload, args, columns=columns)
 
 

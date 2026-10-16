@@ -50,6 +50,7 @@ from arr_cli.facade.output import (  # noqa: E402 - sys.path tweak above
     resolve_width,
     summarize,
     _column_widths,
+    _format_runtime_minutes,
     _safe_get,
     _SUMMARY_RENDERERS,
     _truncate,
@@ -415,6 +416,9 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "client": "Jellyfin Web",
             "playing": {"type": "Episode", "name": "Foo"},
             "progress": {"position_ticks": 100, "is_paused": False},
+            "LastActivityDate": "12:34",
+            "NowPlayingQueue.length": 3,
+            "transcoding": False,
             "NowPlayingItem": {"Name": "Foo", "SeriesName": "Show"},
             "PlayState": {"PositionTicks": 100, "IsPaused": False},
         }
@@ -426,6 +430,7 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "ProductionYear": 2024,
             "SeriesName": None,
             "UserData.LastPlayedDate": "2024-01-01",
+            "UserData.PlayedPercentage": 60,
             "Overview": "Lorem ipsum",
         }
     ],
@@ -436,6 +441,8 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "Type": "Movie",
             "ProductionYear": 2020,
             "SeriesName": None,
+            "RunTimeTicks": "2h 0m",
+            "UserData.LastPlayedDate": "2024-01-01",
             "Overview": "Lorem ipsum",
         }
     ],
@@ -447,6 +454,8 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "SeriesName": "Show",
             "UserData.PlaybackPositionTicks": 100,
             "UserData.PlayCount": 2,
+            "UserData.PlayedPercentage": 25,
+            "RunTimeTicks": "1h 45m",
             "Overview": "Lorem ipsum",
         }
     ],
@@ -456,7 +465,24 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "Type": "Movie",
             "ProductionYear": 2025,
             "SeriesName": None,
+            "RunTimeTicks": "1h 45m",
+            "PremiereDate": "2024-12-01T00:00:00Z",
+            "Genres": "Action, Drama",
             "DateCreated": "2025-06-01T00:00:00Z",
+            "Overview": "Lorem ipsum",
+        }
+    ],
+    # ``jellyfin search`` is not listed in ``_SUMMARY_RENDERERS``'s
+    # dict but is still exercised by the columns-token sweep via
+    # ``_synthetic_payload`` -- see ``TestColumnsBlockMatchesSummaryShape``.
+    ("jellyfin", "nextup"): [
+        {
+            "Name": "Foo",
+            "SeriesName": "Bar",
+            "ParentIndexNumber": 4,
+            "IndexNumber": 12,
+            "PremiereDate": "2002-01-10T00:00:00Z",
+            "RunTimeTicks": "0h 45m",
             "Overview": "Lorem ipsum",
         }
     ],
@@ -1260,15 +1286,16 @@ class TestEmitPriorityChain(unittest.TestCase):
 
     def test_default_verbatim_on_non_candidate(self) -> None:
         # REQ-3 AC4: a non-candidate command without flags stays on
-        # verbatim JSON.
+        # verbatim JSON. ``calendar`` is the canonical non-candidate
+        # example (a Radarr command absent from ``_SUMMARY_RENDERERS``).
         payload = {"foo": "bar"}
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="jellyfin",
-            command="item",
+            service="radarr",
+            command="calendar",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -1356,17 +1383,19 @@ class TestServiceCommandThreading(unittest.TestCase):
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
     def test_emit_with_non_candidate_key_emits_verbatim(self) -> None:
-        # A non-candidate command (e.g. ``jellyfin item``) falls
+        # A non-candidate command (e.g. ``radarr calendar``) falls
         # through to verbatim even though ``service`` / ``command``
-        # are non-empty.
+        # are non-empty. ``jellyfin item`` is now a registered
+        # candidate (per the jellyfin-human-fields plan), so this
+        # test pins a different command instead.
         payload = {"Name": "Foo"}
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="jellyfin",
-            command="item",
+            service="radarr",
+            command="calendar",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -1486,6 +1515,7 @@ class TestSummaryJellyfinRecent(unittest.TestCase):
                 "ProductionYear": 2024,
                 "SeriesName": None,
                 "UserData.LastPlayedDate": "2024-01-01",
+                "UserData.PlayedPercentage": 0,
             },
         )
 
@@ -1622,6 +1652,8 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
                 "Type": "Movie",
                 "ProductionYear": 2020,
                 "SeriesName": None,
+                "RunTimeTicks": None,
+                "UserData.LastPlayedDate": None,
             },
         )
 
@@ -1655,6 +1687,8 @@ class TestSummaryJellyfinFavorites(unittest.TestCase):
                     "Type": "Movie",
                     "ProductionYear": 2011,
                     "SeriesName": None,
+                    "RunTimeTicks": None,
+                    "UserData.LastPlayedDate": None,
                 }
             ],
         )
@@ -1938,6 +1972,8 @@ class TestSummaryJellyfinNextup(unittest.TestCase):
                     "ParentIndexNumber": 4,
                     "IndexNumber": 12,
                     "PremiereDate": "2002-01-10T00:00:00.0000000Z",
+                    "RunTimeTicks": None,
+                    "Overview": None,
                 }
             ],
         )
@@ -1962,6 +1998,8 @@ class TestSummaryJellyfinNextup(unittest.TestCase):
                     "ParentIndexNumber": 4,
                     "IndexNumber": 12,
                     "PremiereDate": "2002-01-10T00:00:00.0000000Z",
+                    "RunTimeTicks": None,
+                    "Overview": None,
                 }
             ],
         )
@@ -2007,6 +2045,8 @@ class TestSummaryJellyfinNextup(unittest.TestCase):
                     "ParentIndexNumber": 0,
                     "IndexNumber": 0,
                     "PremiereDate": None,
+                    "RunTimeTicks": None,
+                    "Overview": None,
                 }
             ],
         )
@@ -2035,6 +2075,8 @@ class TestSummaryJellyfinResume(unittest.TestCase):
                 "SeriesName": "Show",
                 "UserData.PlaybackPositionTicks": 100,
                 "UserData.PlayCount": 2,
+                "UserData.PlayedPercentage": 0,
+                "RunTimeTicks": None,
             },
         )
 
@@ -2218,6 +2260,9 @@ class TestSummaryJellyfinLatest(unittest.TestCase):
                 "Type": "Movie",
                 "ProductionYear": 2025,
                 "SeriesName": None,
+                "RunTimeTicks": None,
+                "PremiereDate": None,
+                "Genres": None,
             },
         )
 
@@ -2254,6 +2299,137 @@ class TestSummaryJellyfinLatest(unittest.TestCase):
             _SUMMARY_RENDERERS[("jellyfin", "latest")](None),
             [],
         )
+
+
+class TestFormatRuntimeMinutes(unittest.TestCase):
+    """``_format_runtime_minutes`` formats Jellyfin ``RunTimeTicks``."""
+
+    def test_positive_input_formats_minutes(self) -> None:
+        # 1h 36m = 96 minutes = 5760 seconds = 57_600_000_000 ticks
+        # (Jellyfin's RunTimeTicks is 100-ns ticks, so 1s = 10^7).
+        self.assertEqual(
+            _format_runtime_minutes(57_600_000_000),
+            "1h 36m",
+        )
+        # Sub-hour: 45 minutes = 2700 seconds = 27_000_000_000 ticks.
+        self.assertEqual(
+            _format_runtime_minutes(27_000_000_000),
+            "0h 45m",
+        )
+
+    def test_zero_returns_none(self) -> None:
+        self.assertIsNone(_format_runtime_minutes(0))
+
+    def test_negative_returns_none(self) -> None:
+        self.assertIsNone(_format_runtime_minutes(-1))
+        self.assertIsNone(_format_runtime_minutes(-5_760_000_000))
+
+    def test_none_returns_none(self) -> None:
+        self.assertIsNone(_format_runtime_minutes(None))
+
+    def test_non_numeric_returns_none(self) -> None:
+        self.assertIsNone(_format_runtime_minutes("1h 30m"))
+        self.assertIsNone(_format_runtime_minutes([1, 2, 3]))
+        self.assertIsNone(_format_runtime_minutes({"ticks": 1}))
+
+    def test_bool_returns_none(self) -> None:
+        # ``bool`` is a subclass of ``int``; without the explicit
+        # guard ``True`` would render as ``"0h 0m"``.
+        self.assertIsNone(_format_runtime_minutes(True))
+        self.assertIsNone(_format_runtime_minutes(False))
+
+
+class TestSummaryJellyfinItem(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("jellyfin", "item")]`` matches the spec."""
+
+    def _renderer(self) -> Any:
+        return _SUMMARY_RENDERERS[("jellyfin", "item")]
+
+    def test_bare_mapping_input_returns_eight_keys(self) -> None:
+        # Canonical input shape (the live ``GET /Items/{id}`` payload).
+        # RunTimeTicks: 2h 18m = 138 min = 8280s = 82_800_000_000 ticks.
+        payload = {
+            "Name": "The Matrix",
+            "Type": "Movie",
+            "ProductionYear": 1999,
+            "PremiereDate": "1999-03-31T00:00:00Z",
+            "RunTimeTicks": 82_800_000_000,
+            "Genres": ["Action", "Sci-Fi"],
+            "Overview": "A computer hacker learns...",
+            "Status": "Released",
+        }
+        rendered = self._renderer()(payload)
+        self.assertEqual(
+            rendered,
+            {
+                "Name": "The Matrix",
+                "Type": "Movie",
+                "ProductionYear": 1999,
+                "PremiereDate": "1999-03-31T00:00:00Z",
+                "RunTimeTicks": "2h 18m",
+                "Genres": "Action, Sci-Fi",
+                "Overview": "A computer hacker learns...",
+                "Status": "Released",
+            },
+        )
+
+    def test_one_element_list_input_unwrapped(self) -> None:
+        # Test fixture convention (mirrors ``_summary_seerr_tv`` /
+        # ``_summary_seerr_movie``).
+        payload = [
+            {
+                "Name": "Foo",
+                "Type": "Movie",
+                "ProductionYear": 2020,
+            }
+        ]
+        rendered = self._renderer()(payload)
+        self.assertEqual(rendered["Name"], "Foo")
+        self.assertEqual(rendered["ProductionYear"], 2020)
+        self.assertEqual(len(rendered), 8)
+
+    def test_empty_list_returns_empty_dict(self) -> None:
+        self.assertEqual(self._renderer()([]), {})
+
+    def test_none_returns_empty_dict(self) -> None:
+        self.assertEqual(self._renderer()(None), {})
+
+    def test_scalar_returns_empty_dict(self) -> None:
+        self.assertEqual(self._renderer()(42), {})
+        self.assertEqual(self._renderer()("foo"), {})
+
+    def test_missing_fields_default_to_none(self) -> None:
+        # Per US-8: every documented field defaults to ``None`` so the
+        # ``--human`` table stays well-formed on a sparse payload.
+        rendered = self._renderer()({"Name": "Foo"})
+        self.assertEqual(
+            rendered,
+            {
+                "Name": "Foo",
+                "Type": None,
+                "ProductionYear": 0,
+                "PremiereDate": None,
+                "RunTimeTicks": None,
+                "Genres": None,
+                "Overview": None,
+                "Status": None,
+            },
+        )
+
+    def test_genres_as_mappings_joins_names(self) -> None:
+        rendered = self._renderer()(
+            {"Genres": [{"name": "Action"}, {"name": "Drama"}]}
+        )
+        self.assertEqual(rendered["Genres"], "Action, Drama")
+
+    def test_run_time_ticks_zero_returns_none(self) -> None:
+        rendered = self._renderer()({"RunTimeTicks": 0})
+        self.assertIsNone(rendered["RunTimeTicks"])
+
+    def test_run_time_ticks_positive_format(self) -> None:
+        # 1h 0m = 60 minutes = 3600 seconds = 36_000_000_000 ticks.
+        rendered = self._renderer()({"RunTimeTicks": 36_000_000_000})
+        self.assertEqual(rendered["RunTimeTicks"], "1h 0m")
 
 
 class TestSummaryRadarrWanted(unittest.TestCase):
@@ -3995,6 +4171,7 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "ProductionYear": 2024,
                     "SeriesName": None,
                     "UserData.LastPlayedDate": "2024-01-01",
+                    "UserData.PlayedPercentage": 0,
                 }
             ],
         )
@@ -4027,6 +4204,8 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "SeriesName": "Show",
                     "UserData.PlaybackPositionTicks": 100,
                     "UserData.PlayCount": 2,
+                    "UserData.PlayedPercentage": 0,
+                    "RunTimeTicks": None,
                 }
             ],
         )
@@ -4140,6 +4319,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "ProductionYear": 2024,
                 "SeriesName": None,
                 "UserData.LastPlayedDate": "2024-01-01",
+                "UserData.PlayedPercentage": 0,
             },
         )
 
@@ -4163,6 +4343,8 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "SeriesName": "Show",
                 "UserData.PlaybackPositionTicks": 100,
                 "UserData.PlayCount": 2,
+                "UserData.PlayedPercentage": 0,
+                "RunTimeTicks": None,
             },
         )
 
@@ -4564,6 +4746,9 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                     "IndexNumber": 3,
                 },
                 "PlayState": {"PositionTicks": 12345, "IsPaused": False},
+                "LastActivityDate": "2024-06-01T00:00:00Z",
+                "NowPlayingQueue": ["a", "b", "c"],
+                "TranscodingInfo": {"IsVideoDirect": False},
             }
         ],
         ("jellyfin", "recent"): [
@@ -4572,7 +4757,10 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Movie",
                 "ProductionYear": 2024,
                 "SeriesName": "Bar",
-                "UserData": {"LastPlayedDate": "2024-01-01T00:00:00Z"},
+                "UserData": {
+                    "LastPlayedDate": "2024-01-01T00:00:00Z",
+                    "PlayedPercentage": 50,
+                },
             }
         ],
         ("jellyfin", "favorites"): [
@@ -4582,6 +4770,8 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Movie",
                 "ProductionYear": 2024,
                 "SeriesName": "Bar",
+                "RunTimeTicks": 72_000_000_000,
+                "UserData": {"LastPlayedDate": "2024-06-01T00:00:00Z"},
             }
         ],
         ("jellyfin", "resume"): [
@@ -4590,9 +4780,11 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Episode",
                 "ProductionYear": 2020,
                 "SeriesName": "Bar",
+                "RunTimeTicks": 42_000_000_000,
                 "UserData": {
                     "PlaybackPositionTicks": 12345,
                     "PlayCount": 2,
+                    "PlayedPercentage": 25,
                 },
             }
         ],
@@ -4602,6 +4794,9 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Movie",
                 "ProductionYear": 2025,
                 "SeriesName": "Bar",
+                "RunTimeTicks": 63_000_000_000,
+                "PremiereDate": "2024-12-01T00:00:00Z",
+                "Genres": ["Action", "Drama"],
                 "DateCreated": "2025-06-01T00:00:00Z",
             }
         ],
@@ -4620,8 +4815,20 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "ParentIndexNumber": 4,
                 "IndexNumber": 12,
                 "PremiereDate": "2002-01-10T00:00:00Z",
+                "RunTimeTicks": 27_000_000_000,
+                "Overview": "An episode.",
             }
         ],
+        ("jellyfin", "item"): {
+            "Name": "Foo",
+            "Type": "Movie",
+            "ProductionYear": 1999,
+            "PremiereDate": "1999-03-31T00:00:00Z",
+            "RunTimeTicks": 72_000_000_000,
+            "Genres": ["Action", "Sci-Fi"],
+            "Overview": "A computer hacker learns...",
+            "Status": "Released",
+        },
         ("radarr", "wanted"): [
             {
                 "title": "Foo",
