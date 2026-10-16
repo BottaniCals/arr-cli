@@ -260,14 +260,14 @@ def cmd_wanted(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="wanted",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_radarr_wanted`` (flat top-level keys); the summary
-    # renderer does not emit ``movieFile`` so it is intentionally
-    # absent from the column list.
+    # ``_summary_radarr_wanted`` (flat top-level keys).
     columns = [
         "title",
         "year",
-        "tmdbId",
-        "monitored",
+        "hasFile",
+        "genres",
+        "physicalRelease",
+        "releaseDate",
     ]
     return _emit(payload, args, columns=columns)
 

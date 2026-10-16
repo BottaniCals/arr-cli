@@ -995,6 +995,14 @@ def _summary_radarr_wanted(payload: Any) -> list[dict[str, Any]]:
             "year": _safe_get(item, "year", default=0),
             "tmdbId": _safe_get(item, "tmdbId", default=0),
             "monitored": _safe_get(item, "monitored", default=False),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "genres": _join_names(item.get("genres")),
+            "physicalRelease": _safe_get(
+                item, "physicalRelease", default=None
+            ),
+            "releaseDate": _safe_get(
+                item, "releaseDate", default=None
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)
