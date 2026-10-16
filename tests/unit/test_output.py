@@ -4589,6 +4589,9 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                     "IndexNumber": 3,
                 },
                 "PlayState": {"PositionTicks": 12345, "IsPaused": False},
+                "LastActivityDate": "2024-06-01T00:00:00Z",
+                "NowPlayingQueue": ["a", "b", "c"],
+                "TranscodingInfo": {"IsVideoDirect": False},
             }
         ],
         ("jellyfin", "recent"): [
@@ -4597,7 +4600,10 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Movie",
                 "ProductionYear": 2024,
                 "SeriesName": "Bar",
-                "UserData": {"LastPlayedDate": "2024-01-01T00:00:00Z"},
+                "UserData": {
+                    "LastPlayedDate": "2024-01-01T00:00:00Z",
+                    "PlayedPercentage": 50,
+                },
             }
         ],
         ("jellyfin", "favorites"): [
@@ -4607,6 +4613,8 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Movie",
                 "ProductionYear": 2024,
                 "SeriesName": "Bar",
+                "RunTimeTicks": 7_200_000_000,
+                "UserData": {"LastPlayedDate": "2024-06-01T00:00:00Z"},
             }
         ],
         ("jellyfin", "resume"): [
@@ -4615,9 +4623,11 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Episode",
                 "ProductionYear": 2020,
                 "SeriesName": "Bar",
+                "RunTimeTicks": 4_200_000_000,
                 "UserData": {
                     "PlaybackPositionTicks": 12345,
                     "PlayCount": 2,
+                    "PlayedPercentage": 25,
                 },
             }
         ],
@@ -4627,6 +4637,9 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "Type": "Movie",
                 "ProductionYear": 2025,
                 "SeriesName": "Bar",
+                "RunTimeTicks": 6_300_000_000,
+                "PremiereDate": "2024-12-01T00:00:00Z",
+                "Genres": ["Action", "Drama"],
                 "DateCreated": "2025-06-01T00:00:00Z",
             }
         ],
@@ -4645,6 +4658,8 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "ParentIndexNumber": 4,
                 "IndexNumber": 12,
                 "PremiereDate": "2002-01-10T00:00:00Z",
+                "RunTimeTicks": 2_700_000_000,
+                "Overview": "An episode.",
             }
         ],
         ("jellyfin", "item"): {

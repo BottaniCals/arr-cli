@@ -928,6 +928,9 @@ class TestHumanMode(unittest.TestCase):
                 "playing.episode",
                 "progress.position_ticks",
                 "progress.is_paused",
+                "LastActivityDate",
+                "NowPlayingQueue.length",
+                "transcoding",
             ],
         )
 
