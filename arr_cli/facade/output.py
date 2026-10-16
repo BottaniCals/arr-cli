@@ -1112,19 +1112,33 @@ def _summary_jellyfin_item(payload: Any) -> dict[str, Any]:
 
 
 def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
-    """Render a Radarr ``queue`` payload as the curated summary."""
+    """Render a Radarr ``queue`` payload as the curated summary.
+
+    The Radarr ``/api/v3/queue`` rows carry ``title``, ``year``,
+    ``quality`` (a nested ``{quality: {name}}`` envelope in modern
+    Radarr versions -- the renderer surfaces the flat ``quality``
+    key the upstream payload also exposes), ``status``, and
+    ``timeLeft``. The audit reshaped the column set to surface
+    ``year``, ``quality``, and ``timeLeft`` instead of the
+    pre-change ``trackedDownloadStatus`` / ``size`` / ``sizeleft``
+    fields; the renderer mirrors that change.
+
+    ``timeLeft`` defaults to ``None`` so the human renderer prints
+    the verbatim upstream string (typically ``"00:00:00"`` when
+    Radarr has not yet started the download) rather than the
+    misleading ``<null>`` placeholder -- the field stays visible
+    even when the operator has not yet waited on the download.
+    """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
     return [
         {
             "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "quality": _safe_get(item, "quality", default=None),
             "status": _safe_get(item, "status", default=None),
-            "trackedDownloadStatus": _safe_get(
-                item, "trackedDownloadStatus", default=None
-            ),
-            "size": _safe_get(item, "size", default=0),
-            "sizeleft": _safe_get(item, "sizeleft", default=0),
+            "timeLeft": _safe_get(item, "timeleft", default=None),
         }
         for item in payload
         if isinstance(item, Mapping)

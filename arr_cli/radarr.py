@@ -284,10 +284,10 @@ def cmd_queue(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # ``_summary_radarr_queue`` (flat top-level keys).
     columns = [
         "title",
+        "year",
+        "quality",
         "status",
-        "trackedDownloadStatus",
-        "size",
-        "sizeleft",
+        "timeLeft",
     ]
     return _emit(payload, args, columns=columns)
 
