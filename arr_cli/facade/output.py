@@ -169,6 +169,29 @@ def _truncate(value: str, width: int) -> str:
     return value[: width - 1] + "…"
 
 
+def _truncate_overview(value: Any, *, max_chars: int = 80) -> str | None:
+    """Truncate a free-text ``overview`` to a fixed character budget.
+
+    Used by the two ``overview`` projections on Radarr (``lookup`` and
+    ``movie <id>``) so the cell stays readable inside the 120-char
+    NFR-Usability width cap when joined with the surrounding columns.
+    The truncation marker matches :func:`_truncate` (U+2026
+    HORIZONTAL ELLIPSIS) for visual consistency across the table.
+
+    Returns ``None`` for non-string / missing / empty inputs so the
+    human renderer prints ``<null>`` instead of the literal ``""`` or
+    a stack trace — the documented safe-default contract for missing
+    summary fields.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    if len(value) <= max_chars:
+        return value
+    if max_chars <= 1:
+        return "…"
+    return value[: max_chars - 1] + "…"
+
+
 def _column_widths(
     headers: Sequence[str],
     rows: Sequence[Sequence[str]],
@@ -618,6 +641,10 @@ def _format_runtime_minutes(value: Any) -> str | None:
     Shared across US-2 (resume), US-4 (nextup), US-5 (latest),
     US-6 (favorites), and US-8 (item); lifted out of the per-renderer
     duplication so all five runtimes format identically.
+
+    Do **not** feed Radarr whole-minute ``runtime`` into this helper;
+    use :func:`_format_runtime_minutes_whole` instead — see that
+    function's docstring for the rationale.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -627,6 +654,41 @@ def _format_runtime_minutes(value: Any) -> str | None:
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
     return f"{hours}h {minutes}m"
+
+
+def _format_runtime_minutes_whole(value: Any) -> str | None:
+    """Format a whole-minute runtime as ``"<X>h <Y>m"``.
+
+    Used for the Radarr ``calendar`` ``runtime`` projection (US-1):
+    Radarr's upstream ``/api/v3/calendar`` rows carry ``runtime``
+    as a whole-minute integer (e.g. ``120`` for a 2-hour movie),
+    not as Jellyfin-style 100-ns ``RunTimeTicks``. Feeding such a
+    value into the sibling :func:`_format_runtime_minutes` helper
+    would yield ``None`` for any runtime under ~120 minutes (the
+    helper divides by ``10_000_000`` to convert ticks into seconds)
+    and ``0h <low>m``-class garbage for normal runtimes.
+
+    The body mirrors the inline ``_format_runtime`` helper inside
+    :func:`_summary_seerr_movie` (which has identical semantics on
+    Seer's whole-minute ``runtime`` field); lifting it into a
+    module-level helper makes the contract explicit and prevents a
+    future reader from confusing the two formatters. Both
+    definitions carry a code-comment cross-reference naming the
+    other.
+
+    Returns ``None`` for missing / zero / negative / non-numeric /
+    ``bool`` inputs (matching the safety contract of
+    :func:`_format_runtime_minutes`); the human renderer then prints
+    ``<null>`` instead of the misleading ``"0h 0m"``.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value <= 0:
+        return None
+    total = int(value)
+    hours = total // 60
+    mins = total % 60
+    return f"{hours}h {mins}m"
 
 
 # ---------------------------------------------------------------------------
