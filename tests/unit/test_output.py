@@ -3202,7 +3202,10 @@ class TestSummarySeerrRequests(unittest.TestCase):
                 "type": "movie",
                 "status": 2,
                 "createdAt": "2026-09-13T12:56:58.000Z",
-                "requestedBy": {"displayName": "alice"},
+                "requestedBy": {
+                    "displayName": "alice",
+                    "username": "alice",
+                },
                 "media": {
                     "id": 121,
                     "mediaType": "movie",
@@ -3210,6 +3213,8 @@ class TestSummarySeerrRequests(unittest.TestCase):
                     "tvdbId": None,
                     "externalServiceSlug": "tmdb",
                     "status": 5,
+                    "mediaAddedAt": "2026-09-10T00:00:00Z",
+                    "seasonCount": None,
                 },
             }
         ]
@@ -3225,6 +3230,9 @@ class TestSummarySeerrRequests(unittest.TestCase):
                 "type": "movie",
                 "status": 2,
                 "createdAt": "2026-09-13T12:56:58.000Z",
+                "requestedByUsername": "alice",
+                "mediaAddedAt": "2026-09-10T00:00:00Z",
+                "seasonCount": None,
             },
         )
 
@@ -3343,6 +3351,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "title": "The Matrix",
                 "mediaType": "movie",
                 "releaseDate": "1999-03-31",
+                "overview": "A computer hacker learns...",
+                "popularity": 89.4,
+                "genreIds": [28, 878],
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
@@ -3353,6 +3364,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "title": "The Matrix",
                 "mediaType": "movie",
                 "releaseDate": "1999-03-31",
+                "overview": "A computer hacker learns...",
+                "popularity": 89.4,
+                "genreIds": [28, 878],
             },
         )
 
@@ -3364,6 +3378,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "name": "Doctor Who",
                 "mediaType": "tv",
                 "releaseDate": "2005-03-26",
+                "overview": "A long-running sci-fi series.",
+                "popularity": 92.1,
+                "genreIds": [10759, 18],
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
@@ -3374,6 +3391,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "title": "Doctor Who",
                 "mediaType": "tv",
                 "releaseDate": "2005-03-26",
+                "overview": "A long-running sci-fi series.",
+                "popularity": 92.1,
+                "genreIds": [10759, 18],
             },
         )
 
@@ -3406,6 +3426,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "title": "Aggy Dune",
                 "mediaType": "person",
                 "releaseDate": None,
+                "overview": None,
+                "popularity": 0.455,
+                "genreIds": None,
             },
         )
 
@@ -3646,6 +3669,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                     "name": "Monster: The Lizzie Borden Story",
                     "firstAirDate": "2026-09-17",
                     "mediaType": "tv",
+                    "popularity": 73.2,
+                    "overview": "A retelling of the case.",
                 }
             ],
         }
@@ -3657,6 +3682,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                 "title": "Monster: The Lizzie Borden Story",
                 "mediaType": "tv",
                 "releaseDate": "2026-09-17",
+                "popularity": 73.2,
+                "overview": "A retelling of the case.",
             },
         )
 
@@ -3675,6 +3702,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                     "title": "Spider-Man: Brand New Day",
                     "releaseDate": "2026-07-29",
                     "mediaType": "movie",
+                    "popularity": 88.5,
+                    "overview": "The next chapter in the saga.",
                 }
             ],
         }
@@ -3686,6 +3715,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                 "title": "Spider-Man: Brand New Day",
                 "mediaType": "movie",
                 "releaseDate": "2026-07-29",
+                "popularity": 88.5,
+                "overview": "The next chapter in the saga.",
             },
         )
 
@@ -3703,12 +3734,16 @@ class TestSummarySeerrTrending(unittest.TestCase):
                     "title": "Movie A",
                     "releaseDate": "2026-01-01",
                     "mediaType": "movie",
+                    "popularity": 70.0,
+                    "overview": "Movie A overview",
                 },
                 {
                     "id": 2,
                     "name": "Show A",
                     "firstAirDate": "2026-02-02",
                     "mediaType": "tv",
+                    "popularity": 80.0,
+                    "overview": "Show A overview",
                 },
             ],
         }
@@ -3718,10 +3753,14 @@ class TestSummarySeerrTrending(unittest.TestCase):
         self.assertEqual(rendered[0]["title"], "Movie A")
         self.assertEqual(rendered[0]["releaseDate"], "2026-01-01")
         self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[0]["popularity"], 70.0)
+        self.assertEqual(rendered[0]["overview"], "Movie A overview")
         self.assertEqual(rendered[1]["id"], 2)
         self.assertEqual(rendered[1]["title"], "Show A")
         self.assertEqual(rendered[1]["releaseDate"], "2026-02-02")
         self.assertEqual(rendered[1]["mediaType"], "tv")
+        self.assertEqual(rendered[1]["popularity"], 80.0)
+        self.assertEqual(rendered[1]["overview"], "Show A overview")
 
     def test_tv_item_missing_keys_surface_as_none(self) -> None:
         # A TV item missing ``name`` / ``firstAirDate`` surfaces
@@ -3743,6 +3782,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                 "title": None,
                 "mediaType": "tv",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])
@@ -3803,6 +3844,8 @@ class TestSummarySeerrUpcomingMovies(unittest.TestCase):
                     "title": "Mickey 17",
                     "releaseDate": "2025-03-07",
                     "mediaType": "movie",
+                    "popularity": 75.0,
+                    "overview": "A clone goes on a mission.",
                 }
             ],
         }
@@ -3814,6 +3857,8 @@ class TestSummarySeerrUpcomingMovies(unittest.TestCase):
                 "title": "Mickey 17",
                 "mediaType": "movie",
                 "releaseDate": "2025-03-07",
+                "popularity": 75.0,
+                "overview": "A clone goes on a mission.",
             },
         )
 
@@ -3832,6 +3877,8 @@ class TestSummarySeerrUpcomingMovies(unittest.TestCase):
                 "title": None,
                 "mediaType": "movie",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])
@@ -3887,6 +3934,8 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
                     "name": "The Scandal",
                     "firstAirDate": "2026-09-18",
                     "mediaType": "tv",
+                    "popularity": 60.0,
+                    "overview": "A scandalous drama.",
                 }
             ],
         }
@@ -3898,6 +3947,8 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
                 "title": "The Scandal",
                 "mediaType": "tv",
                 "releaseDate": "2026-09-18",
+                "popularity": 60.0,
+                "overview": "A scandalous drama.",
             },
         )
 
@@ -3916,6 +3967,8 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
                 "title": None,
                 "mediaType": "tv",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])
@@ -3978,6 +4031,9 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
                     "name": "The Vampire Diaries",
                     "firstAirDate": "2009-09-10",
                     "mediaType": "tv",
+                    "popularity": 81.0,
+                    "overview": "A supernatural teen drama.",
+                    "genreIds": [10765, 18],
                 }
             ],
         }
@@ -3989,6 +4045,9 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
                 "title": "The Vampire Diaries",
                 "mediaType": "tv",
                 "releaseDate": "2009-09-10",
+                "popularity": 81.0,
+                "overview": "A supernatural teen drama.",
+                "genreIds": [10765, 18],
             },
         )
 
@@ -4007,6 +4066,9 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
                 "title": None,
                 "mediaType": "tv",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
+                "genreIds": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])
@@ -4067,6 +4129,9 @@ class TestSummarySeerrDiscoverMovies(unittest.TestCase):
                     "title": "Captain America: Brave New World",
                     "releaseDate": "2025-02-14",
                     "mediaType": "movie",
+                    "popularity": 90.0,
+                    "overview": "A new chapter in the MCU.",
+                    "genreIds": [28, 878],
                 }
             ],
         }
@@ -4078,6 +4143,9 @@ class TestSummarySeerrDiscoverMovies(unittest.TestCase):
                 "title": "Captain America: Brave New World",
                 "mediaType": "movie",
                 "releaseDate": "2025-02-14",
+                "popularity": 90.0,
+                "overview": "A new chapter in the MCU.",
+                "genreIds": [28, 878],
             },
         )
 
@@ -4096,6 +4164,9 @@ class TestSummarySeerrDiscoverMovies(unittest.TestCase):
                 "title": None,
                 "mediaType": "movie",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
+                "genreIds": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])

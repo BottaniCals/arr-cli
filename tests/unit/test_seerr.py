@@ -5990,6 +5990,9 @@ class TestCmdSearchMixedMediaTypes(unittest.TestCase):
                 "title": "Aggy Dune",
                 "mediaType": "person",
                 "releaseDate": None,
+                "overview": None,
+                "popularity": 0.455,
+                "genreIds": None,
             },
         )
 
