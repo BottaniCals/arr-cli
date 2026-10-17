@@ -1614,8 +1614,19 @@ class TestCmdTv(unittest.TestCase):
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
+        # Live ``/api/v1/{tv,movie}/{id}/ratings`` envelope shape
+        # verified directly on the operator's Seer instance on
+        # 2026-10-17. The renderer projects ``criticsScore`` (the
+        # integer RT Tomatometer percentage, plural-with-s key) and
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # the upstream-only ``title`` / ``url`` / ``criticsRating``
+        # / ``year`` keys are not part of the curated projection.
+        "title": "Doctor Who",
+        "url": "https://www.rottentomatoes.com/tv/doctor_who",
+        "criticsRating": "Fresh",
         "criticsScore": 90,
-        "audienceScore": 86,
+        "audienceRating": "Upright",
+        "year": 2005,
     }
 
     def _make_args(self, **overrides: Any) -> argparse.Namespace:
@@ -1711,10 +1722,15 @@ class TestCmdTv(unittest.TestCase):
         rendered = json.loads(output)
         # Top-level fields still come from the detail payload ...
         self.assertEqual(rendered["name"], "Doctor Who")
-        # ... and the RT scores arrive nested under ``ratings``.
+        # ... and the live-spec RT envelope (verified 2026-10-17)
+        # surfaces the integer ``criticsScore`` (plural-with-s key)
+        # and the categorical ``audienceRating`` string under the
+        # ``ratings`` block. The renderer drops the upstream-only
+        # ``title`` / ``url`` / ``criticsRating`` / ``year`` keys
+        # so the curated shape stays minimal.
         self.assertIsNotNone(rendered["ratings"])
         self.assertEqual(rendered["ratings"]["criticsScore"], 90)
-        self.assertEqual(rendered["ratings"]["audienceScore"], 86)
+        self.assertEqual(rendered["ratings"]["audienceRating"], "Upright")
 
     def test_cmd_tv_verbose_emits_verbatim_payload(self) -> None:
         """``--verbose`` bypasses the renderer and emits the verbatim payload."""
@@ -1898,8 +1914,19 @@ class TestCmdTvHttpPath(unittest.TestCase):
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
+        # Live ``/api/v1/{tv,movie}/{id}/ratings`` envelope shape
+        # verified directly on the operator's Seer instance on
+        # 2026-10-17. The renderer projects ``criticsScore`` (the
+        # integer RT Tomatometer percentage, plural-with-s key) and
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # the upstream-only ``title`` / ``url`` / ``criticsRating``
+        # / ``year`` keys are not part of the curated projection.
+        "title": "Doctor Who",
+        "url": "https://www.rottentomatoes.com/tv/doctor_who",
+        "criticsRating": "Fresh",
         "criticsScore": 90,
-        "audienceScore": 86,
+        "audienceRating": "Upright",
+        "year": 2005,
     }
 
     def setUp(self) -> None:
@@ -2027,8 +2054,19 @@ class TestCmdMovie(unittest.TestCase):
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
+        # Live ``/api/v1/{movie,tv}/{id}/ratings`` envelope shape
+        # verified directly on the operator's Seer instance on
+        # 2026-10-17. The renderer projects ``criticsScore`` (the
+        # integer RT Tomatometer percentage, plural-with-s key) and
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # the upstream-only ``title`` / ``url`` / ``criticsRating``
+        # / ``year`` keys are not part of the curated projection.
+        "title": "The Matrix",
+        "url": "https://www.rottentomatoes.com/m/the_matrix",
+        "criticsRating": "Fresh",
         "criticsScore": 83,
-        "audienceScore": 85,
+        "audienceRating": "Spilled",
+        "year": 1999,
     }
 
     def _make_args(self, **overrides: Any) -> argparse.Namespace:
@@ -2119,10 +2157,15 @@ class TestCmdMovie(unittest.TestCase):
         rendered = json.loads(output)
         # Top-level fields still come from the detail payload ...
         self.assertEqual(rendered["title"], "The Matrix")
-        # ... and the RT scores arrive nested under ``ratings``.
+        # ... and the live-spec RT envelope (verified 2026-10-17)
+        # surfaces the integer ``criticsScore`` (plural-with-s key)
+        # and the categorical ``audienceRating`` string under the
+        # ``ratings`` block. RT does not expose a numeric audience
+        # score on this instance, so the auditor-asked
+        # ``audienceScore`` key does not exist on the live envelope.
         self.assertIsNotNone(rendered["ratings"])
         self.assertEqual(rendered["ratings"]["criticsScore"], 83)
-        self.assertEqual(rendered["ratings"]["audienceScore"], 85)
+        self.assertEqual(rendered["ratings"]["audienceRating"], "Spilled")
 
     def test_cmd_movie_verbose_emits_verbatim_payload(self) -> None:
         """``--verbose`` bypasses the renderer and emits the verbatim payload."""
@@ -2310,8 +2353,19 @@ class TestCmdMovieHttpPath(unittest.TestCase):
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
+        # Live ``/api/v1/{movie,tv}/{id}/ratings`` envelope shape
+        # verified directly on the operator's Seer instance on
+        # 2026-10-17. The renderer projects ``criticsScore`` (the
+        # integer RT Tomatometer percentage, plural-with-s key) and
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # the upstream-only ``title`` / ``url`` / ``criticsRating``
+        # / ``year`` keys are not part of the curated projection.
+        "title": "The Matrix",
+        "url": "https://www.rottentomatoes.com/m/the_matrix",
+        "criticsRating": "Fresh",
         "criticsScore": 83,
-        "audienceScore": 85,
+        "audienceRating": "Spilled",
+        "year": 1999,
     }
 
     def setUp(self) -> None:
@@ -6826,11 +6880,15 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
         self.assertIsNone(rendered["status"])
         self.assertIsNone(rendered["mediaInfoStatus"])
 
-    def test_tv_ratings_default_plural_keys(self) -> None:
-        # US-3.2 (default branch): the pre-change plural
-        # ``criticsScore`` / ``audienceScore`` keys are kept for
-        # plumbing compatibility (downstream consumers that
-        # already script against the plural shape keep working).
+    def test_tv_ratings_live_envelope_keys(self) -> None:
+        # Live-spec positive case (verified against
+        # ``/api/v1/tv/{tvId}/ratings`` directly on the operator's
+        # Seer instance on 2026-10-17): the renderer projects the
+        # live integer ``criticsScore`` (plural-with-s key) and
+        # the live categorical ``audienceRating`` string under
+        # the ``ratings`` block. The pre-change
+        # ``audienceScore`` numeric key is dropped (RT does not
+        # expose a numeric audience score on this instance).
         from arr_cli.seerr import cmd_tv
 
         args = self._make_args("tv", ratings=True)
@@ -6840,8 +6898,12 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
             "firstAirDate": "2005-03-26",
         }
         ratings_payload = {
+            "title": "Doctor Who",
+            "url": "https://www.rottentomatoes.com/tv/doctor_who",
+            "criticsRating": "Fresh",
             "criticsScore": 90,
-            "audienceScore": 86,
+            "audienceRating": "Upright",
+            "year": 2005,
         }
         with patch(
             "arr_cli.seerr.transport.get",
@@ -6851,42 +6913,7 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
         rendered = json.loads(output)
         self.assertEqual(
             rendered["ratings"],
-            {"criticsScore": 90, "audienceScore": 86},
-        )
-
-    def test_tv_ratings_singular_keys_when_gate_open(self) -> None:
-        # US-3.2 (gate-open branch): when the operator has
-        # confirmed the live OpenAPI ``Ratings`` schema via
-        # ``ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED=1``, the
-        # renderer emits the audit-asked singular ``criticScore``
-        # / ``audienceScore`` keys.
-        import unittest.mock
-        from arr_cli.facade import output as output_module
-        from arr_cli.seerr import cmd_tv
-
-        args = self._make_args("tv", ratings=True)
-        detail_payload = {
-            "name": "Doctor Who",
-            "originalName": "Doctor Who",
-            "firstAirDate": "2005-03-26",
-        }
-        ratings_payload = {
-            "criticScore": 90,
-            "audienceScore": 86,
-        }
-        with patch(
-            "arr_cli.seerr.transport.get",
-            side_effect=[detail_payload, ratings_payload],
-        ), unittest.mock.patch.object(
-            output_module,
-            "_spec_ratings_key_present",
-            return_value=True,
-        ):
-            output = _capture_stdout(cmd_tv, args, None)
-        rendered = json.loads(output)
-        self.assertEqual(
-            rendered["ratings"],
-            {"criticScore": 90, "audienceScore": 86},
+            {"criticsScore": 90, "audienceRating": "Upright"},
         )
 
     def test_tv_verbose_emits_verbatim(self) -> None:
@@ -6967,8 +6994,13 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
     # --- user (US-4.1, US-4.2) ------------------------------------
 
     def test_user_default_emits_curated_five_keys(self) -> None:
-        # US-4.1: the curated five-key projection is emitted on
-        # default-mode JSON.
+        # US-3.1: the curated five-key projection is emitted on
+        # default-mode JSON. The ``permissions`` cell is decoded
+        # from the live ``/api/v1/auth/me`` integer bitfield via
+        # :func:`_decode_permissions_bitfield`; ``permissions=2``
+        # projects the canonical ``"admin"`` name (verified
+        # directly against the operator's Seer instance on
+        # 2026-10-17).
         from arr_cli.seerr import cmd_user
 
         args = self._make_args("user")
@@ -6977,7 +7009,7 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
             "username": "alice",
             "email": "alice@example.com",
             "userType": 1,
-            "permissions": ["ADMIN", "MANAGE_REQUESTS"],
+            "permissions": 2,
             "requestCount": 42,
         }
         with patch(
@@ -6993,84 +7025,84 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
         self.assertEqual(rendered["username"], "alice")
         self.assertEqual(rendered["email"], "alice@example.com")
         self.assertEqual(rendered["userType"], 1)
-        # ``permissions`` defaults to ``None`` under the gate-closed
-        # branch (the documented hermetic default).
-        self.assertIsNone(rendered["permissions"])
+        # ``permissions=2`` decodes to the canonical ``"admin"``
+        # name per the documented bit-to-name map.
+        self.assertEqual(rendered["permissions"], "admin")
         self.assertEqual(rendered["requestCount"], 42)
 
-    def test_user_default_flattens_permissions_when_gate_open(self) -> None:
-        # US-4.1: when the operator has flipped
-        # ``ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED=1``, the
-        # renderer flattens a list of permission strings via
-        # ``AGENTS.md §4.1``'s comma-join contract.
-        import unittest.mock
-        from arr_cli.facade import output as output_module
+    def test_user_default_decodes_multibit_permissions(self) -> None:
+        # US-3.2 / US-3.5: the renderer decodes a multi-bit
+        # integer (``permissions=3`` = ``1 | 2``) to a sorted-by-
+        # bit comma-joined list; ``permissions=7`` = ``1 | 2 | 4``
+        # projects ``"request, admin, manage_users"``. The
+        # historical Overseerr list / mapping shape falls back
+        # to ``None`` per AGENTS.md §4.1.
         from arr_cli.seerr import cmd_user
 
-        args = self._make_args("user")
-        payload = {
-            "username": "alice",
-            "permissions": ["ADMIN", "MANAGE_REQUESTS"],
-        }
         with patch(
-            "arr_cli.seerr.transport.get", return_value=payload
-        ), unittest.mock.patch.object(
-            output_module,
-            "_spec_permissions_shape_flattenable",
-            return_value=True,
+            "arr_cli.seerr.transport.get",
+            return_value={
+                "username": "alice",
+                "permissions": 3,
+            },
         ):
-            output = _capture_stdout(cmd_user, args, None)
-        rendered = json.loads(output)
+            output_three = _capture_stdout(
+                cmd_user, self._make_args("user"), None
+            )
         self.assertEqual(
-            rendered["permissions"], "ADMIN, MANAGE_REQUESTS"
+            json.loads(output_three)["permissions"],
+            "request, admin",
         )
 
-    def test_user_default_flattens_permissions_mapping_when_gate_open(
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value={
+                "username": "alice",
+                "permissions": 7,
+            },
+        ):
+            output_seven = _capture_stdout(
+                cmd_user, self._make_args("user"), None
+            )
+        self.assertEqual(
+            json.loads(output_seven)["permissions"],
+            "request, admin, manage_users",
+        )
+
+    def test_user_default_non_integer_permissions_falls_back_to_none(
         self,
     ) -> None:
-        # US-4.1: under the gate-open branch a mapping of
-        # ``{key: value}`` flattens to ``"key=value, key=value"``
-        # so the operator sees the role / capability pairs in a
-        # single cell.
-        import unittest.mock
-        from arr_cli.facade import output as output_module
+        # US-3.6 / AGENTS.md §4.1: the historical Overseerr
+        # ``permissions`` shape (list of strings / mapping of
+        # caps) and any non-integer fallback (e.g. a stray
+        # ``"admin"`` string from a misbehaving partner) project
+        # as ``None`` so the cell renders ``<null>`` rather than
+        # crashing on envelope drift.
         from arr_cli.seerr import cmd_user
 
-        args = self._make_args("user")
-        payload = {
-            "username": "alice",
-            "permissions": {"admin": True, "requests": 5},
-        }
-        with patch(
-            "arr_cli.seerr.transport.get", return_value=payload
-        ), unittest.mock.patch.object(
-            output_module,
-            "_spec_permissions_shape_flattenable",
-            return_value=True,
+        for bad_value in (
+            ["ADMIN", "MANAGE_REQUESTS"],
+            {"admin": True, "requests": 5},
+            "ADMIN",
         ):
-            output = _capture_stdout(cmd_user, args, None)
-        rendered = json.loads(output)
-        self.assertIn("admin=True", rendered["permissions"])
-        self.assertIn("requests=5", rendered["permissions"])
-
-    def test_user_default_gate_closed_returns_none_permissions(self) -> None:
-        # US-4.2: with the gate closed (the documented hermetic
-        # default), the renderer returns ``None`` for any
-        # ``permissions`` value rather than crashing on a
-        # third (undocumented) shape.
-        from arr_cli.seerr import cmd_user
-
-        args = self._make_args("user")
-        payload = {
-            "username": "alice",
-            "permissions": ["ADMIN", "MANAGE_REQUESTS"],
-        }
-        with patch(
-            "arr_cli.seerr.transport.get", return_value=payload
-        ):
-            output = _capture_stdout(cmd_user, args, None)
-        rendered = json.loads(output)
-        self.assertIsNone(rendered["permissions"])
+            with patch(
+                "arr_cli.seerr.transport.get",
+                return_value={
+                    "username": "alice",
+                    "permissions": bad_value,
+                },
+            ):
+                output = _capture_stdout(
+                    cmd_user, self._make_args("user"), None
+                )
+            self.assertIsNone(
+                json.loads(output)["permissions"],
+                msg=(
+                    f"non-integer permissions must fall back to "
+                    f"None; got {json.loads(output)['permissions']!r} "
+                    f"for input {bad_value!r}"
+                ),
+            )
 
     def test_user_columns_literal_matches_summary(self) -> None:
         # US-4.3: the per-handler ``columns`` literal in
