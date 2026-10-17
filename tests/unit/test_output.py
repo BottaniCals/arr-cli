@@ -5713,7 +5713,7 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "type": "movie",
                 "status": 2,
                 "createdAt": "2024-01-01T00:00:00Z",
-                "requestedBy": {"displayName": "alice"},
+                "requestedBy": {"displayName": "alice", "username": "alice"},
                 "media": {
                     "id": 121,
                     "mediaType": "movie",
@@ -5721,6 +5721,8 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                     "tvdbId": 76107,
                     "externalServiceSlug": "tmdb",
                     "status": 5,
+                    "mediaAddedAt": "2024-01-01T00:00:00Z",
+                    "seasonCount": 0,
                 },
             }
         ],
@@ -5730,6 +5732,9 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "title": "Foo",
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
+                "overview": "An overview.",
+                "popularity": 50.0,
+                "genreIds": [28],
             }
         ],
         ("seerr", "available"): [
@@ -5745,26 +5750,32 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         ],
         ("seerr", "trending"): [
             {
+                "id": 1,
                 "title": "Foo",
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
             }
         ],
         ("seerr", "upcoming-movies"): [
             {
+                "id": 1,
                 "title": "Foo",
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
             }
         ],
         ("seerr", "upcoming-tv"): [
             {
+                "id": 1,
                 "name": "Foo",
                 "mediaType": "tv",
                 "firstAirDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
             }
         ],
         ("seerr", "tv"): [
@@ -5824,18 +5835,24 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         },
         ("seerr", "discover-movies"): [
             {
+                "id": 1,
                 "title": "Foo",
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
+                "genreIds": [28],
             }
         ],
         ("seerr", "discover-tv"): [
             {
+                "id": 1,
                 "name": "Foo",
                 "mediaType": "tv",
                 "firstAirDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
+                "genreIds": [10759],
             }
         ],
         ("seerr", "genres"): [
