@@ -691,6 +691,43 @@ def _format_runtime_minutes_whole(value: Any) -> str | None:
     return f"{hours}h {mins}m"
 
 
+def _format_episode_progress(item: Any) -> str | None:
+    """Format ``statistics.episodeFileCount / statistics.episodeCount`` as ``"<file>/<total>"``.
+
+    Used by the Sonarr ``series`` and ``series/lookup`` ``statistics``
+    projections so the operator can scan a library row and see, at a
+    glance, how many episodes have been imported out of the total
+    (the audit-asked cell). Sonarr's upstream ``statistics``
+    envelope is a nested ``Mapping``; the helper walks it
+    defensively so a future Sonarr release that omits either count
+    (e.g. a ``/series/lookup`` candidate row that did not finish
+    linking) renders ``<null>`` instead of a misleading ``"0/0"`` or
+    ``"0/undefined"``.
+
+    The defensive contract mirrors :func:`_format_runtime_minutes_whole`:
+    ``bool`` is checked first because ``bool`` is a subclass of
+    ``int`` in Python -- without the guard, ``True`` would format as
+    ``"1/1"`` (or similar) on payloads that omit the field and
+    default to ``False``. Non-numeric / negative / missing
+    components return ``None``. A non-Mapping ``item`` (e.g. a
+    scalar) also returns ``None``; the caller projects ``None`` and
+    the human renderer prints ``<null>``.
+    """
+    if not isinstance(item, Mapping):
+        return None
+    file_count = item.get("statistics")
+    if not isinstance(file_count, Mapping):
+        return None
+    file_count = file_count.get("episodeFileCount")
+    total_count = item["statistics"].get("episodeCount")
+    for count in (file_count, total_count):
+        if isinstance(count, bool) or not isinstance(count, (int, float)):
+            return None
+        if count < 0:
+            return None
+    return f"{int(file_count)}/{int(total_count)}"
+
+
 # ---------------------------------------------------------------------------
 # Per-command summary renderers
 # ---------------------------------------------------------------------------
@@ -1210,7 +1247,22 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_sonarr_wanted(payload: Any) -> list[dict[str, Any]]:
-    """Render a Sonarr ``wanted`` payload as the curated summary."""
+    """Render a Sonarr ``wanted`` payload as the curated summary.
+
+    The per-row projection surfaces the audit-asked ``hasFile``,
+    ``runtime`` (formatted as ``"<X>h <Y>m"`` via
+    :func:`_format_runtime_minutes_whole`; Sonarr's ``runtime`` is
+    whole-minute like Radarr's, so the Jellyfin-ticks formatter is
+    not used here), a truncated ``overview`` (via
+    :func:`_truncate_overview` with the documented 80-character
+    budget; same helper as the radarr audit fix), and
+    ``series.title`` lifted from the nested ``series`` envelope
+    alongside the pre-change ``title`` / ``seasonNumber`` /
+    ``episodeNumber`` / ``airDate`` / ``monitored`` keys. Missing
+    fields default to ``None`` / ``0`` / ``False`` per the per-type
+    contract so the renderer stays well-formed even when upstream
+    drops a field.
+    """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
@@ -1221,6 +1273,14 @@ def _summary_sonarr_wanted(payload: Any) -> list[dict[str, Any]]:
             "episodeNumber": _safe_get(item, "episodeNumber", default=0),
             "airDate": _safe_get(item, "airDate", default=None),
             "monitored": _safe_get(item, "monitored", default=False),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "runtime": _format_runtime_minutes_whole(
+                _safe_get(item, "runtime", default=None)
+            ),
+            "overview": _truncate_overview(item.get("overview")),
+            "series.title": _safe_get(
+                item, "series", "title", default=None
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -1228,7 +1288,22 @@ def _summary_sonarr_wanted(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
-    """Render a Sonarr ``queue`` payload as the curated summary."""
+    """Render a Sonarr ``queue`` payload as the curated summary.
+
+    The per-row projection keeps the pre-change ``title`` /
+    ``status`` / ``trackedDownloadStatus`` / ``size`` / ``sizeleft``
+    keys in their existing positions and appends the audit-asked
+    ``series.title`` (lifted from the nested ``series`` envelope),
+    ``episode`` (the flat ``episode.title`` projected to the top
+    level via :func:`_safe_get`), ``quality`` (the flat ``quality``
+    key the upstream payload exposes; matches the radarr ``queue``
+    projection), and ``timeLeft`` (lifted from ``timeleft``).
+    ``status`` is a pre-change key and MUST NOT be re-appended at
+    the tail; there is no pre-change ``progress`` key on the
+    queue summary and the audit does not add one. Missing fields
+    default to ``None`` / ``0`` per the per-type contract so the
+    renderer stays well-formed even when upstream drops a field.
+    """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
         return []
@@ -1241,6 +1316,14 @@ def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
             ),
             "size": _safe_get(item, "size", default=0),
             "sizeleft": _safe_get(item, "sizeleft", default=0),
+            "series.title": _safe_get(
+                item, "series", "title", default=None
+            ),
+            "episode": _safe_get(
+                item, "episode", "title", default=None
+            ),
+            "quality": _safe_get(item, "quality", default=None),
+            "timeLeft": _safe_get(item, "timeleft", default=None),
         }
         for item in payload
         if isinstance(item, Mapping)
@@ -1296,9 +1379,186 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
                 "quality": _safe_get(item, "quality", default=None),
+                "language": _safe_get(item, "language", default=None),
+                "client": _safe_get(
+                    item, "downloadClient", default=None
+                ),
             }
         )
     return summaries
+
+
+def _summary_sonarr_calendar(payload: Any) -> list[dict[str, Any]]:
+    """Render a Sonarr ``calendar`` payload as the curated summary.
+
+    ``GET /api/v3/calendar`` returns the upcoming-episodes rows; on
+    modern Sonarr versions the endpoint wraps the rows in the
+    paginated ``{page, pageSize, sortKey, sortDirection, totalRecords,
+    records: [...]}`` envelope, so the renderer unwraps it via
+    :func:`_unwrap_envelope` (defensive against envelope-drift
+    across Sonarr versions; mirrors :func:`_summary_radarr_calendar`
+    and :func:`_summary_sonarr_recent`). A bare list is unchanged
+    behaviour.
+
+    The per-row projection surfaces ``monitored``, ``hasFile``,
+    ``runtime`` (formatted as ``"<X>h <Y>m"`` via
+    :func:`_format_runtime_minutes_whole`; Sonarr's ``runtime``
+    field is whole-minute like Radarr's, not Jellyfin-ticks), and
+    a truncated ``overview`` (via :func:`_truncate_overview` with
+    the documented 80-character budget) alongside the pre-change
+    calendar-shape keys ``title`` / ``seasonNumber`` /
+    ``episodeNumber`` / ``airDate`` / ``series.title``. Missing
+    fields default to ``None`` / ``0`` / ``False`` per the per-
+    type contract so the renderer stays well-formed even when
+    upstream drops a field.
+    """
+    payload = _unwrap_envelope(payload)
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "seasonNumber": _safe_get(item, "seasonNumber", default=0),
+            "episodeNumber": _safe_get(item, "episodeNumber", default=0),
+            "airDate": _safe_get(item, "airDate", default=None),
+            "series.title": _safe_get(
+                item, "series", "title", default=None
+            ),
+            "monitored": _safe_get(item, "monitored", default=False),
+            "hasFile": _safe_get(item, "hasFile", default=False),
+            "runtime": _format_runtime_minutes_whole(
+                _safe_get(item, "runtime", default=None)
+            ),
+            "overview": _truncate_overview(item.get("overview")),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_sonarr_lookup(payload: Any) -> list[dict[str, Any]]:
+    """Render a Sonarr ``lookup`` payload as the curated summary.
+
+    ``GET /api/v3/series/lookup?term=<urlencoded term>`` returns a
+    list of candidate series records (TVDB-sourced defaults, not
+    the operator's library rows). The per-row projection surfaces
+    a ``statistics`` summary cell (formatted as
+    ``"<file>/<total>"`` via :func:`_format_episode_progress`),
+    ``genres`` (via :func:`_join_names`), a truncated ``overview``
+    (via :func:`_truncate_overview` with the documented 80-
+    character budget; same helper as the radarr audit fix), and
+    ``status`` alongside the existing candidate-identity fields
+    ``title`` / ``year`` / ``tvdbId`` / ``tvMazeId`` / ``id`` /
+    ``monitored``. Missing fields default to ``None`` / ``0`` /
+    ``False`` per the per-type contract so the renderer stays
+    well-formed even when upstream drops a field (e.g. a candidate
+    row that did not finish linking and lacks ``statistics``).
+    """
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "tvdbId": _safe_get(item, "tvdbId", default=0),
+            "tvMazeId": _safe_get(item, "tvMazeId", default=0),
+            "id": _safe_get(item, "id", default=None),
+            "monitored": _safe_get(item, "monitored", default=False),
+            "statistics": _format_episode_progress(item),
+            "genres": _join_names(item.get("genres")),
+            "overview": _truncate_overview(item.get("overview")),
+            "status": _safe_get(item, "status", default=None),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_sonarr_series(payload: Any) -> list[dict[str, Any]]:
+    """Render a Sonarr ``series`` (no id) library-list payload as the curated summary.
+
+    ``GET /api/v3/series`` returns a bare list of library series
+    records (every series the operator has added to Sonarr, not
+    the candidates from ``/api/v3/series/lookup``). The per-row
+    projection surfaces a ``statistics`` summary cell (formatted
+    as ``"<file>/<total>"`` via :func:`_format_episode_progress`),
+    ``genres`` (via :func:`_join_names`), ``firstAired``, and
+    ``lastAired`` (ISO-8601 timestamps from the upstream ``firstAired``
+    / ``lastAired` fields) alongside the pre-change library-list
+    fields ``title`` / ``year`` / ``monitored`` / ``status`` /
+    ``tvdbId`` / ``seasons``. Missing fields default to ``None``
+    / ``0`` / ``False`` per the per-type contract so the renderer
+    stays well-formed even when upstream drops a field.
+    """
+    if not isinstance(payload, list):
+        return []
+    return [
+        {
+            "title": _safe_get(item, "title", default=None),
+            "year": _safe_get(item, "year", default=0),
+            "monitored": _safe_get(item, "monitored", default=False),
+            "status": _safe_get(item, "status", default=None),
+            "tvdbId": _safe_get(item, "tvdbId", default=0),
+            "seasons": _safe_get(item, "seasons", default=[]),
+            "statistics": _format_episode_progress(item),
+            "genres": _join_names(item.get("genres")),
+            "firstAired": _safe_get(item, "firstAired", default=None),
+            "lastAired": _safe_get(item, "lastAired", default=None),
+        }
+        for item in payload
+        if isinstance(item, Mapping)
+    ]
+
+
+def _summary_sonarr_series_id(payload: Any) -> dict[str, Any]:
+    """Render a Sonarr ``series <id>`` single-record payload as the curated summary.
+
+    ``GET /api/v3/series/{id}`` returns a single object with the
+    series' full library metadata. The curated shape surfaces
+    ``status``, ``monitored``, a ``statistics`` summary cell
+    (formatted as ``"<file>/<total>"`` via
+    :func:`_format_episode_progress`), ``genres`` (via
+    :func:`_join_names`), ``firstAired``, and ``lastAired``
+    alongside the pre-change ``title`` / ``year`` / ``runtime``
+    (formatted as ``"<X>h <Y>m"`` via
+    :func:`_format_runtime_minutes_whole`).
+
+    Two input shapes are accepted (mirroring the
+    size-to-summary-renderer convention):
+
+    * A single ``Mapping`` (the canonical ``/api/v3/series/{id}``
+      shape).
+    * A list containing a single ``Mapping`` (the test fixture
+      convention; mirrors :func:`_summary_radarr_movie_id` /
+      :func:`_summary_seerr_movie` / :func:`_summary_seerr_tv`).
+
+    Empty list maps to ``{}`` and ``None`` / scalar payloads map
+    to ``{}`` so neither crashes. The renderer is invoked via the
+    dedicated dispatch key ``("sonarr", "series_id")`` so the
+    ``cmd_series`` handler can pick the right renderer per branch
+    (no-id list vs with-id single); mirrors the radarr
+    ``("radarr", "movie_id")`` dispatch trick.
+    """
+    if isinstance(payload, list):
+        if not payload:
+            return {}
+        payload = payload[0]
+    if not isinstance(payload, Mapping):
+        return {}
+
+    return {
+        "title": _safe_get(payload, "title", default=None),
+        "year": _safe_get(payload, "year", default=0),
+        "runtime": _format_runtime_minutes_whole(
+            _safe_get(payload, "runtime", default=None)
+        ),
+        "status": _safe_get(payload, "status", default=None),
+        "monitored": _safe_get(payload, "monitored", default=False),
+        "statistics": _format_episode_progress(payload),
+        "genres": _join_names(payload.get("genres")),
+        "firstAired": _safe_get(payload, "firstAired", default=None),
+        "lastAired": _safe_get(payload, "lastAired", default=None),
+    }
 
 
 def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
@@ -2105,6 +2365,10 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("sonarr", "wanted"): _summary_sonarr_wanted,
     ("sonarr", "queue"): _summary_sonarr_queue,
     ("sonarr", "recent"): _summary_sonarr_recent,
+    ("sonarr", "calendar"): _summary_sonarr_calendar,
+    ("sonarr", "lookup"): _summary_sonarr_lookup,
+    ("sonarr", "series"): _summary_sonarr_series,
+    ("sonarr", "series_id"): _summary_sonarr_series_id,
     ("seerr", "requests"): _summary_seerr_requests,
     ("seerr", "search"): _summary_seerr_search,
     ("seerr", "available"): _summary_seerr_available,
