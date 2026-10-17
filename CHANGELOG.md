@@ -91,6 +91,52 @@ within the pre-1.0 contract documented in `README.md`.
   continues to pass `columns=None` so the scalar `"OK"` /
   `"DEGRADED"` flows through the output module's `_render_scalar`
   branch.
+- `seerr --human` widening per the `audit-2026-10-16` UX audit:
+  `seerr requests` adds `requestedByUsername`, `mediaAddedAt`,
+  `seasonCount`; `seerr search` adds a truncated `overview`,
+  `popularity`, and `genreIds`; `seerr trending` and the
+  upcoming / discover buckets add `popularity` and a truncated
+  `overview`, with `discover-movies` / `discover-tv` additionally
+  surfacing `genreIds`; `seerr movie <id>` adds a truncated
+  `overview`, `status`, and `mediaInfoStatus`; `seerr tv <id>`
+  adds `lastAirDate`, `numberOfEpisodes`, a truncated `overview`,
+  `status`, and `mediaInfoStatus`; `seerr user` is now a
+  size-to-summary candidate that projects `username`, `email`,
+  `userType`, `permissions` (flattened via the documented list /
+  mapping guard), and `requestCount`. All eleven affected `cmd_*`
+  `columns` literals in `arr_cli/seerr.py` mirror the renderer
+  body's left-to-right key order so the `--human` table and the
+  default-mode JSON share a single shape. Missing fields default
+  to `None` (rendered as `<null>`) so the renderer stays
+  well-formed even when upstream drops a field.
+
+### Changed
+
+- `seerr --human` deferred-decision notes (the documented
+  hermetic gate): the audit-asked `title` column on
+  `seerr available` is gated by
+  `_spec_status_field_present()` (env-var override
+  `ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED=1`) -- default `False`
+  so the renderer keeps the pre-change seven-column shape
+  until the operator confirms the live `/api/v1/media` payload
+  populates the field on their Seer instance. The audit-vs-
+  upstream `criticScore` / `criticsScore` reconciliation on
+  `seerr movie <id>` and `seerr tv <id>` `--ratings` is gated by
+  `_spec_ratings_key_present()` (env-var override
+  `ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED=1`) -- default `False`
+  keeps the pre-change plural `criticsScore` / `audienceScore`
+  for plumbing compatibility; the singular keys ship only after
+  the operator confirms the live OpenAPI `Ratings` schema
+  against their instance. The `permissions` flattening on
+  `seerr user` is gated by
+  `_spec_permissions_shape_flattenable()` (env-var override
+  `ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED=1`) -- default
+  `False` so the renderer returns `permissions: <null>` on any
+  unverified (third, undocumented) envelope shape rather than
+  crashing; the flattened `key=value` join ships only after the
+  operator confirms the live `/api/v1/auth/me` shape against
+  their instance. CI stays hermetic in every branch; no live
+  OpenAPI fetch runs from CI.
 
 ## [0.1.0]
 

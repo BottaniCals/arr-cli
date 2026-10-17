@@ -1587,11 +1587,28 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
     stay top-level alongside the lifted identity. ``status`` is the
     request status (not the underlying media status) -- the bit the
     operator cares about when scanning the household request queue.
-    The ``requestedBy.displayName`` projection was dropped: the
-    ``--human`` column list does not include it (the 120-char width
-    budget divided across eight columns truncates the 23-char token
-    to ``requestedBy.di...``), and the upstream detail is available
-    via ``--verbose`` for operators who need it.
+
+    The audit-asked fields are appended in left-to-right column
+    order so the renderer body and ``cmd_requests``'s column list
+    stay byte-identical: ``requestedByUsername`` (lifted from the
+    nested ``requestedBy.username`` field via :func:`_safe_get` --
+    the upstream payload exposes ``requestedBy`` as a mapping on
+    every record), ``mediaAddedAt`` (when the nested ``media``
+    envelope carries it; ``None`` otherwise so the renderer prints
+    ``<null>`` rather than crashing), and ``seasonCount`` (same
+    nested-walk pattern). Missing fields default to ``None`` per the
+    documented :func:`_safe_get` contract so the renderer stays
+    well-formed even when upstream drops a field (defensive against
+    future Seer drift; ``<null>``-on-missing is the universal
+    convention for every other renderer in this module).
+
+    The ``requestedBy.displayName`` projection was dropped from the
+    curated column list because the 120-char width budget divided
+    across ten columns truncates the 23-char token to
+    ``requestedBy.di...``; the upstream detail is available via
+    ``--verbose`` for operators who need it. The audit's shorter
+    ``requestedByUsername`` token (18 chars) renders legibly under
+    the same width budget.
 
     The historical ``title`` projection is still retired -- neither
     ``media.title`` (movie) nor ``media.name`` (TV) is populated on
@@ -1629,8 +1646,22 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
             slug = _safe_get(
                 media, "externalServiceSlug", default=None
             )
+            media_added_at = _safe_get(
+                media, "mediaAddedAt", default=None
+            )
+            season_count = _safe_get(
+                media, "seasonCount", default=None
+            )
         else:
-            id_ = media_type = tmdb_id = tvdb_id = slug = None
+            (
+                id_,
+                media_type,
+                tmdb_id,
+                tvdb_id,
+                slug,
+                media_added_at,
+                season_count,
+            ) = (None, None, None, None, None, None, None)
         summaries.append(
             {
                 "id": id_,
@@ -1641,6 +1672,11 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
                 "type": _safe_get(item, "type", default=None),
                 "status": _safe_get(item, "status", default=None),
                 "createdAt": _safe_get(item, "createdAt", default=None),
+                "requestedByUsername": _safe_get(
+                    item, "requestedBy", "username", default=None
+                ),
+                "mediaAddedAt": media_added_at,
+                "seasonCount": season_count,
             }
         )
     return summaries
@@ -1668,6 +1704,18 @@ def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
     from ``name`` (the upstream payload exposes ``name`` only on
     those rows, with no top-level ``title``) while movie rows
     source it from ``title``.
+
+    The audit-asked fields are appended in left-to-right column
+    order so the renderer body and ``cmd_search``'s column list
+    stay byte-identical: ``overview`` (truncated to 80 chars via
+    :func:`_truncate_overview` -- the documented overview budget
+    shared with the sibling Radarr / Sonarr ``overview``
+    projections so cell widths stay visually consistent across the
+    five CLIs), ``popularity`` (the raw TMDB popularity score), and
+    ``genreIds`` (the TMDB genre-id list, lifted verbatim via
+    :func:`_safe_get`). Missing fields default to ``None`` per the
+    documented :func:`_safe_get` contract so the renderer stays
+    well-formed even when upstream drops a field.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1686,6 +1734,13 @@ def _summary_seerr_search(payload: Any) -> list[dict[str, Any]]:
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
                     item, "releaseDate", default=None
+                ),
+                "overview": _truncate_overview(item.get("overview")),
+                "popularity": _safe_get(
+                    item, "popularity", default=None
+                ),
+                "genreIds": _safe_get(
+                    item, "genreIds", default=None
                 ),
             }
         )
@@ -1714,30 +1769,48 @@ def _summary_seerr_available(payload: Any) -> list[dict[str, Any]]:
     friendly title can resolve it via ``seerr search <query>`` or
     look up ``tmdbId`` / ``tvdbId`` externally; the curated summary
     here stays as the canonical "what is in my library" answer.
+
+    The audit asks for a ``title`` cell on the ``seerr available``
+    table; the projection is **gated** behind
+    :func:`_spec_status_field_present`. Default ``False`` keeps
+    the pre-change seven-column shape so the renderer never emits a
+    ``title: null`` regression on a live Seer instance whose
+    ``/api/v1/media`` payload does not yet populate ``title``. An
+    operator who has confirmed the title field on their live
+    OpenAPI spec can flip the gate with
+    ``ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED=1`` so the projection
+    emits the ``title`` cell alongside the pre-change identity
+    fields in audit left-to-right order. The deferral is recorded
+    in ``CHANGELOG.md`` so the audit follow-up is visible without
+    a fresh tracker ticket (the orchestrator cannot reach the
+    operator's live instance from this environment per the
+    documented deferral path).
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
     if not isinstance(payload, list):
         return []
     summaries: list[dict[str, Any]] = []
+    show_title = _spec_status_field_present()
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        summaries.append(
-            {
-                "id": _safe_get(item, "id", default=None),
-                "mediaType": _safe_get(item, "mediaType", default=None),
-                "tmdbId": _safe_get(item, "tmdbId", default=None),
-                "tvdbId": _safe_get(item, "tvdbId", default=None),
-                "externalServiceSlug": _safe_get(
-                    item, "externalServiceSlug", default=None
-                ),
-                "status": _safe_get(item, "status", default=None),
-                "mediaAddedAt": _safe_get(
-                    item, "mediaAddedAt", default=None
-                ),
-            }
-        )
+        row: dict[str, Any] = {
+            "id": _safe_get(item, "id", default=None),
+            "mediaType": _safe_get(item, "mediaType", default=None),
+            "tmdbId": _safe_get(item, "tmdbId", default=None),
+            "tvdbId": _safe_get(item, "tvdbId", default=None),
+            "externalServiceSlug": _safe_get(
+                item, "externalServiceSlug", default=None
+            ),
+            "status": _safe_get(item, "status", default=None),
+            "mediaAddedAt": _safe_get(
+                item, "mediaAddedAt", default=None
+            ),
+        }
+        if show_title:
+            row["title"] = _safe_get(item, "title", default=None)
+        summaries.append(row)
     return summaries
 
 
@@ -1772,6 +1845,13 @@ def _summary_seerr_trending(payload: Any) -> list[dict[str, Any]]:
     known to mix media types in a single envelope -- so the
     projections are intentionally **not** byte-identical even
     though the envelopes share the same outer shape.
+
+    The audit-asked fields are appended in left-to-right column
+    order so the renderer body and ``cmd_trending``'s column list
+    stay byte-identical: ``popularity`` (the raw TMDB popularity
+    score) and ``overview`` (truncated to 80 chars via
+    :func:`_truncate_overview`). Missing fields default to ``None``
+    per the documented :func:`_safe_get` contract.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1794,6 +1874,10 @@ def _summary_seerr_trending(payload: Any) -> list[dict[str, Any]]:
                     "firstAirDate" if is_tv else "releaseDate",
                     default=None,
                 ),
+                "popularity": _safe_get(
+                    item, "popularity", default=None
+                ),
+                "overview": _truncate_overview(item.get("overview")),
             }
         )
     return summaries
@@ -1806,9 +1890,11 @@ def _summary_seerr_upcoming_movies(payload: Any) -> list[dict[str, Any]]:
     envelope of the shape ``{page, totalPages, totalResults,
     results: [...]}`` -- the same envelope
     :func:`_summary_seerr_trending` consumes -- so the projection is
-    intentionally identical: ``id``, ``title``, ``mediaType``,
-    ``releaseDate``. A bare list is unchanged behaviour (defensive
-    against envelope-drift across Seer versions).
+    intentionally aligned with the trending projection, extended
+    with the audit-asked ``popularity`` and ``overview`` (truncated
+    via :func:`_truncate_overview`) fields. A bare list is unchanged
+    behaviour (defensive against envelope-drift across Seer
+    versions).
 
     The per-item projection surfaces the top-level ``id`` field the
     upstream payload actually carries. The rows in the operator's
@@ -1820,11 +1906,9 @@ def _summary_seerr_upcoming_movies(payload: Any) -> list[dict[str, Any]]:
     was projected as ``tmdbId: 0`` even for hits with well-known
     ids.
 
-    The only difference from :func:`_summary_seerr_trending` is the
-    dispatch key -- same envelope, same per-item shape, so the
-    renderer is byte-identical to keep row-for-row alignment when
-    the operator tabulates ``seerr trending`` and ``seerr
-    upcoming-movies`` together.
+    Missing fields default to ``None`` per the documented
+    :func:`_safe_get` contract so the renderer stays well-formed
+    even when upstream drops a field.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1842,6 +1926,10 @@ def _summary_seerr_upcoming_movies(payload: Any) -> list[dict[str, Any]]:
                 "releaseDate": _safe_get(
                     item, "releaseDate", default=None
                 ),
+                "popularity": _safe_get(
+                    item, "popularity", default=None
+                ),
+                "overview": _truncate_overview(item.get("overview")),
             }
         )
     return summaries
@@ -1870,6 +1958,13 @@ def _summary_seerr_upcoming_tv(payload: Any) -> list[dict[str, Any]]:
     ``{"tmdbId": 0}`` placeholder was misleading because every row
     was projected as ``tmdbId: 0`` even for hits with well-known
     ids.
+
+    The audit-asked ``popularity`` and ``overview`` (truncated via
+    :func:`_truncate_overview`) fields are appended in
+    left-to-right column order so the renderer body and
+    ``cmd_upcoming_tv``'s column list stay byte-identical.
+    Missing fields default to ``None`` per the documented
+    :func:`_safe_get` contract.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1887,6 +1982,10 @@ def _summary_seerr_upcoming_tv(payload: Any) -> list[dict[str, Any]]:
                 "releaseDate": _safe_get(
                     item, "firstAirDate", default=None
                 ),
+                "popularity": _safe_get(
+                    item, "popularity", default=None
+                ),
+                "overview": _truncate_overview(item.get("overview")),
             }
         )
     return summaries
@@ -1899,10 +1998,12 @@ def _summary_seerr_discover_movies(payload: Any) -> list[dict[str, Any]]:
     the shape ``{page, totalPages, totalResults, results: [...]}``
     -- the same envelope :func:`_summary_seerr_trending` /
     :func:`_summary_seerr_upcoming_movies` consume -- so the
-    projection is intentionally identical: ``id``, ``title``,
-    ``mediaType``, ``releaseDate``. A bare list is unchanged
-    behaviour (defensive against envelope-drift across Seer
-    versions).
+    projection is intentionally aligned with the upstream
+    trending/upcoming projection, extended with the audit-asked
+    ``popularity``, ``overview`` (truncated via
+    :func:`_truncate_overview`), and ``genreIds`` fields. A bare
+    list is unchanged behaviour (defensive against envelope-drift
+    across Seer versions).
 
     The per-item projection surfaces the top-level ``id`` field the
     upstream payload actually carries. The rows in the operator's
@@ -1914,10 +2015,10 @@ def _summary_seerr_discover_movies(payload: Any) -> list[dict[str, Any]]:
     was projected as ``tmdbId: 0`` even for hits with well-known
     ids.
 
-    The renderer is byte-identical to :func:`_summary_seerr_upcoming_movies`
-    so the operator's default summary aligns row-for-row when
-    ``seerr upcoming-movies`` and ``seerr discover-movies`` are
-    tabulated together.
+    The renderer mirrors :func:`_summary_seerr_upcoming_movies` so
+    the operator's default summary aligns row-for-row when ``seerr
+    upcoming-movies`` and ``seerr discover-movies`` are tabulated
+    together.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1934,6 +2035,13 @@ def _summary_seerr_discover_movies(payload: Any) -> list[dict[str, Any]]:
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
                     item, "releaseDate", default=None
+                ),
+                "popularity": _safe_get(
+                    item, "popularity", default=None
+                ),
+                "overview": _truncate_overview(item.get("overview")),
+                "genreIds": _safe_get(
+                    item, "genreIds", default=None
                 ),
             }
         )
@@ -1962,6 +2070,13 @@ def _summary_seerr_discover_tv(payload: Any) -> list[dict[str, Any]]:
     historical fabricated ``{"tmdbId": 0}`` placeholder was
     misleading because every row was projected as ``tmdbId: 0``
     even for hits with well-known ids.
+
+    The audit-asked ``popularity``, ``overview`` (truncated via
+    :func:`_truncate_overview`), and ``genreIds`` fields are
+    appended in left-to-right column order so the renderer body
+    and ``cmd_discover_tv``'s column list stay byte-identical.
+    Missing fields default to ``None`` per the documented
+    :func:`_safe_get` contract.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
@@ -1978,6 +2093,13 @@ def _summary_seerr_discover_tv(payload: Any) -> list[dict[str, Any]]:
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "releaseDate": _safe_get(
                     item, "firstAirDate", default=None
+                ),
+                "popularity": _safe_get(
+                    item, "popularity", default=None
+                ),
+                "overview": _truncate_overview(item.get("overview")),
+                "genreIds": _safe_get(
+                    item, "genreIds", default=None
                 ),
             }
         )
@@ -2044,9 +2166,35 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
     so the default ``--human`` rendering stays a readable block per
     key (otherwise each cell would render as ``<N items>``).
 
+    The audit widens the projection to surface the audit-asked
+    fields in left-to-right order: ``lastAirDate`` (sourced from
+    the documented ``lastAirDate`` field via :func:`_safe_get`),
+    ``numberOfEpisodes`` (the sibling ``numberOfSeasons`` /
+    ``numberOfEpisodes`` pair on the upstream payload), an
+    ``overview`` truncated via :func:`_truncate_overview` (same
+    80-char budget as the sibling Radarr / Sonarr ``overview``
+    projections so cell widths stay visually consistent across the
+    five CLIs), and ``mediaInfoStatus`` (sourced from the nested
+    ``mediaInfo.status`` / ``media.status`` field that the live
+    Seer envelope carries -- :func:`_safe_get` walks both paths so
+    the renderer never crashes on either envelope shape). Missing
+    fields default to ``None`` / ``0`` per the per-type contract so
+    the renderer stays well-formed even when upstream drops a
+    field.
+
     When ``cmd_tv`` is invoked with ``--ratings``, the RT critic
     and audience scores arrive under ``payload["ratings"]`` and are
-    surfaced as ``ratings.criticsScore`` / ``ratings.audienceScore``.
+    surfaced under the ``ratings`` block. The pre-change plural
+    ``criticsScore`` / ``audienceScore`` keys are kept by default
+    for plumbing compatibility (downstream consumers that already
+    script against the plural shape keep working); the singular
+    ``criticScore`` / ``audienceScore`` keys ship when the operator
+    has confirmed the live OpenAPI ``Ratings`` schema via
+    :func:`_spec_ratings_key_present`. The audit-vs-upstream
+    reconciliation is recorded in ``CHANGELOG.md`` ``[Unreleased]``
+    / ``Changed`` so operators reading the release notes know
+    which key the current renderer is emitting.
+
     A bare detail fetch (no ``--ratings``) leaves ``ratings`` as
     ``None`` so the column is visible-but-empty in the default
     output instead of being silently dropped.
@@ -2074,28 +2222,53 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
     raw_genres = payload.get("genres")
     raw_networks = payload.get("networks")
     raw_ratings = payload.get("ratings")
+    singular_ratings = _spec_ratings_key_present()
     if isinstance(raw_ratings, Mapping):
-        ratings_obj: dict[str, Any] = {
-            "criticsScore": _safe_get(
-                raw_ratings, "criticsScore", default=None
-            ),
-            "audienceScore": _safe_get(
-                raw_ratings, "audienceScore", default=None
-            ),
-        }
+        if singular_ratings:
+            ratings_obj: dict[str, Any] = {
+                "criticScore": _safe_get(
+                    raw_ratings, "criticScore", default=None
+                ),
+                "audienceScore": _safe_get(
+                    raw_ratings, "audienceScore", default=None
+                ),
+            }
+        else:
+            ratings_obj = {
+                "criticsScore": _safe_get(
+                    raw_ratings, "criticsScore", default=None
+                ),
+                "audienceScore": _safe_get(
+                    raw_ratings, "audienceScore", default=None
+                ),
+            }
     else:
         ratings_obj = None
+
+    media_info_status = _safe_get(
+        payload, "mediaInfo", "status", default=None
+    )
+    if media_info_status is None:
+        media_info_status = _safe_get(
+            payload, "media", "status", default=None
+        )
 
     return {
         "name": _safe_get(payload, "name", default=None),
         "originalName": _safe_get(payload, "originalName", default=None),
         "firstAirDate": _safe_get(payload, "firstAirDate", default=None),
-        "genres": _join_names(raw_genres),
-        "networks": _join_names(raw_networks),
+        "lastAirDate": _safe_get(payload, "lastAirDate", default=None),
         "numberOfSeasons": _safe_get(
             payload, "numberOfSeasons", default=0
         ),
+        "numberOfEpisodes": _safe_get(
+            payload, "numberOfEpisodes", default=0
+        ),
+        "genres": _join_names(raw_genres),
+        "networks": _join_names(raw_networks),
+        "overview": _truncate_overview(payload.get("overview")),
         "status": _safe_get(payload, "status", default=None),
+        "mediaInfoStatus": media_info_status,
         "ratings": ratings_obj,
     }
 
@@ -2114,11 +2287,32 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
     ``"<X>h <Y>m"`` -- the spec'd display format which matters
     because raw minutes is not human-readable.
 
+    The audit widens the projection to surface the audit-asked
+    fields in left-to-right order: an ``overview`` truncated via
+    :func:`_truncate_overview` (same 80-char budget as the sibling
+    Radarr / Sonarr ``overview`` projections so cell widths stay
+    visually consistent across the five CLIs), ``status``, and
+    ``mediaInfoStatus`` (sourced from the nested ``mediaInfo.status``
+    / ``media.status`` field that the live Seer envelope carries --
+    :func:`_safe_get` walks both paths so the renderer never crashes
+    on either envelope shape). Missing fields default to ``None``
+    per the per-type contract.
+
     When ``cmd_movie`` is invoked with ``--ratings``, the RT
     critic and audience scores arrive under
-    ``payload["ratings"]`` and are surfaced as
-    ``ratings.criticsScore`` / ``ratings.audienceScore``. A bare
-    detail fetch (no ``--ratings``) leaves ``ratings`` as
+    ``payload["ratings"]`` and are surfaced under the ``ratings``
+    block. The pre-change plural ``criticsScore`` /
+    ``audienceScore`` keys are kept by default for plumbing
+    compatibility (downstream consumers that already script
+    against the plural shape keep working); the singular
+    ``criticScore`` / ``audienceScore`` keys ship when the
+    operator has confirmed the live OpenAPI ``Ratings`` schema
+    via :func:`_spec_ratings_key_present`. The audit-vs-upstream
+    reconciliation is recorded in ``CHANGELOG.md``
+    ``[Unreleased]`` / ``Changed`` so operators reading the
+    release notes know which key the current renderer is emitting.
+
+    A bare detail fetch (no ``--ratings``) leaves ``ratings`` as
     ``None`` so the column is visible-but-empty in the default
     output instead of being silently dropped.
 
@@ -2167,17 +2361,36 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         hours = total // 60
         mins = total % 60
         return f"{hours}h {mins}m"
+    singular_ratings = _spec_ratings_key_present()
     if isinstance(raw_ratings, Mapping):
-        ratings_obj: dict[str, Any] = {
-            "criticsScore": _safe_get(
-                raw_ratings, "criticsScore", default=None
-            ),
-            "audienceScore": _safe_get(
-                raw_ratings, "audienceScore", default=None
-            ),
-        }
+        if singular_ratings:
+            ratings_obj: dict[str, Any] = {
+                "criticScore": _safe_get(
+                    raw_ratings, "criticScore", default=None
+                ),
+                "audienceScore": _safe_get(
+                    raw_ratings, "audienceScore", default=None
+                ),
+            }
+        else:
+            ratings_obj = {
+                "criticsScore": _safe_get(
+                    raw_ratings, "criticsScore", default=None
+                ),
+                "audienceScore": _safe_get(
+                    raw_ratings, "audienceScore", default=None
+                ),
+            }
     else:
         ratings_obj = None
+
+    media_info_status = _safe_get(
+        payload, "mediaInfo", "status", default=None
+    )
+    if media_info_status is None:
+        media_info_status = _safe_get(
+            payload, "media", "status", default=None
+        )
 
     return {
         "title": _safe_get(payload, "title", default=None),
@@ -2188,6 +2401,9 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         "runtime": _format_runtime(payload.get("runtime")),
         "genres": _join_names(raw_genres),
         "tagline": _safe_get(payload, "tagline", default=None),
+        "overview": _truncate_overview(payload.get("overview")),
+        "status": _safe_get(payload, "status", default=None),
+        "mediaInfoStatus": media_info_status,
         "ratings": ratings_obj,
     }
 
@@ -2311,6 +2527,125 @@ def _summary_radarr_lookup(payload: Any) -> list[dict[str, Any]]:
         for item in payload
         if isinstance(item, Mapping)
     ]
+
+
+def _summary_seerr_user(payload: Any) -> dict[str, Any]:
+    """Render a Seerr ``user`` payload as the curated summary.
+
+    The auth-self-check endpoint ``GET /api/v1/auth/me`` returns
+    the operator's authenticated user object. The pre-change
+    contract passed the verbatim payload through ``cmd_user`` with
+    ``columns=None`` (the safe-to-leave-alone path). The audit asks
+    for a curated single-record projection that answers "who am I
+    and what can I do here?" without the operator having to drop to
+    ``--verbose`` and parse the envelope.
+
+    The per-field projection surfaces:
+
+    * ``username`` -- the operator's ``username`` / ``plexUsername``
+      / similar identity token, walked via :func:`_safe_get` so a
+      missing field defaults to ``None``.
+    * ``email`` -- the operator's contact email (None on accounts
+      that omit it).
+    * ``userType`` -- the role/permission tier the account runs at
+      (e.g. ``"admin"`` / ``"user"``).
+    * ``permissions`` -- flattened per ``AGENTS.md §4.1``: a list of
+      strings is comma-joined (``"ADMIN, MANAGE_REQUESTS"``); a
+      mapping of ``{key: value}`` is rendered as
+      ``key=value, key=value``. When the live payload exposes a
+      shape that is neither a list nor a mapping (defensive
+      against envelope drift), the cell projects ``None`` (renders
+      as ``<null>``) instead of raising. The defensive fall-back
+      is gated behind :func:`_spec_permissions_shape_flattenable`
+      so an operator who has confirmed the live shape against the
+      OpenAPI spec can ship the flattened projection; default
+      ``False`` keeps the renderer well-formed on any third
+      (undocumented) shape.
+    * ``requestCount`` -- sourced from the nested
+      ``permissions.requestCount`` or top-level ``requestCount``
+      field, whichever the live Seer envelope exposes --
+      :func:`_safe_get` walks both paths.
+
+    Missing fields default to ``None`` / ``0`` per the per-type
+    contract so the renderer stays well-formed even when upstream
+    drops a field.
+
+    Two input shapes are accepted (mirroring the
+    size-to-summary-renderer convention):
+
+    * A single ``Mapping`` (the canonical ``/api/v1/auth/me``
+      shape).
+    * A list containing a single ``Mapping`` (the test fixture
+      convention; mirrors :func:`_summary_seerr_movie` /
+      :func:`_summary_seerr_tv`).
+
+    Empty list maps to ``{}`` and ``None`` / scalar payloads map to
+    ``{}`` so neither crashes. The renderer is invoked via the
+    dedicated dispatch key ``("seerr", "user")`` so the
+    ``cmd_user`` handler routes to it once the handler's
+    ``columns`` literal switches from ``None`` to an explicit
+    five-key list (mirrors the ``cmd_pending`` widening in the
+    sibling maintainerr-human-fields PR).
+    """
+    if isinstance(payload, list):
+        if not payload:
+            return {}
+        payload = payload[0]
+    if not isinstance(payload, Mapping):
+        return {}
+
+    username = _safe_get(payload, "username", default=None) or _safe_get(
+        payload, "plexUsername", default=None
+    )
+    email = _safe_get(payload, "email", default=None)
+    user_type = _safe_get(payload, "userType", default=None)
+
+    raw_permissions = payload.get("permissions")
+    flattened_permissions: Any
+    if isinstance(raw_permissions, list):
+        if not _spec_permissions_shape_flattenable():
+            flattened_permissions = None
+        else:
+            parts: list[str] = []
+            for item in raw_permissions:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, Mapping):
+                    name = item.get("name")
+                    if isinstance(name, str):
+                        parts.append(name)
+            flattened_permissions = (
+                ", ".join(parts) if parts else None
+            )
+    elif isinstance(raw_permissions, Mapping):
+        if not _spec_permissions_shape_flattenable():
+            flattened_permissions = None
+        else:
+            kv_pairs: list[str] = []
+            for key, value in raw_permissions.items():
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    kv_pairs.append(f"{key}={value}")
+            flattened_permissions = (
+                ", ".join(kv_pairs) if kv_pairs else None
+            )
+    else:
+        flattened_permissions = None
+
+    request_count = _safe_get(
+        payload, "permissions", "requestCount", default=None
+    )
+    if request_count is None:
+        request_count = _safe_get(
+            payload, "requestCount", default=None
+        )
+
+    return {
+        "username": username,
+        "email": email,
+        "userType": user_type,
+        "permissions": flattened_permissions,
+        "requestCount": request_count,
+    }
 
 
 def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
@@ -2470,6 +2805,93 @@ def _summary_maintainerr_health(payload: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _spec_status_field_present() -> bool:
+    """Return ``True`` when the operator has verified the ``title`` cell on
+    ``GET /api/v1/media`` is populated on their live Seer instance.
+
+    The audit asks :func:`_summary_seerr_available` to surface a
+    ``title`` cell on the ``seerr available`` ``--human`` table;
+    the renderer historically dropped it because the live Seer
+    payload does not yet populate a top-level ``title`` field on
+    the operator's instance (the regression that motivated the
+    2026-09-18 ``seerr-available-no-title-filter`` ticket). The
+    gate defaults to ``False`` so the renderer never silently
+    ships a ``title: null`` regression: when the gate is closed,
+    ``seerr available`` keeps its pre-change seven-column shape;
+    when an operator has confirmed the field via the live
+    ``/api-docs/swagger-ui-init.js`` OpenAPI spec they can flip
+    the gate with ``ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED=1`` so the
+    audit-asked cell ships with the rest of the column widening.
+
+    The env-var override is hermetic: CI neither needs the
+    operator's instance nor silently strips the audit-asked
+    column. The deferral is recorded in ``CHANGELOG.md`` so the
+    audit follow-up is visible without a fresh tracker ticket
+    (the orchestrator cannot reach the operator's live instance
+    from this environment per the documented deferral path).
+    """
+    import os
+    return os.environ.get("ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED") == "1"
+
+
+def _spec_ratings_key_present() -> bool:
+    """Return ``True`` when the operator has verified the live Seer
+    ``Ratings`` schema uses the singular ``criticScore`` token.
+
+    The audit asks :func:`_summary_seerr_movie` /
+    :func:`_summary_seerr_tv` to surface ``criticScore`` /
+    ``audienceScore`` (singular) under the ``ratings`` block; the
+    pre-change renderers use the plural ``criticsScore`` /
+    ``audienceScore`` (the historical Overseerr shape). The gate
+    defaults to ``False`` so the pre-change plural key stays for
+    plumbing compatibility (downstream consumers that already
+    script against ``criticsScore`` keep working); when an
+    operator has confirmed the singular key via the live
+    ``/api-docs/swagger-ui-init.js`` OpenAPI spec they can flip
+    the gate with
+    ``ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED=1`` so the
+    audit-asked singular token ships.
+
+    The audit-vs-upstream discrepancy is recorded in
+    ``CHANGELOG.md`` ``[Unreleased]`` / ``Changed`` so operators
+    reading the release notes know which key the current
+    renderer is emitting.
+    """
+    import os
+    return (
+        os.environ.get("ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED")
+        == "1"
+    )
+
+
+def _spec_permissions_shape_flattenable() -> bool:
+    """Return ``True`` when the operator has verified the live Seer
+    ``GET /api/v1/auth/me`` payload exposes ``permissions`` as a
+    list of strings OR a mapping (the documented flattenable
+    shapes per ``AGENTS.md §4.1``).
+
+    The audit asks :func:`_summary_seerr_user` to project a
+    flattened ``permissions`` cell; the flattening contract
+    assumes one of the two documented shapes. When the operator
+    cannot verify the live shape (or the envelope exposes a third
+    undocumented shape), the gate defaults to ``False`` so the
+    renderer returns ``None`` (renders as ``<null>``) instead of
+    an ill-formed join. Operators can flip the gate with
+    ``ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED=1`` once they
+    have confirmed the shape against their live Seer instance.
+
+    The defensive ``None`` fall-back is unit-tested in
+    ``tests/unit/test_seerr.py`` so a regression on the gate
+    surfaces as a hard test failure rather than a silent
+    ``<null>`` in the operator's table.
+    """
+    import os
+    return (
+        os.environ.get("ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED")
+        == "1"
+    )
+
+
 # Add a new size-to-summary candidate by appending one
 # ``_summary_<service>_<command>`` function above and one entry here
 # (REQ-3 AC6). The 14 safe-to-leave-alone commands are intentionally
@@ -2514,6 +2936,7 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("seerr", "discover-movies"): _summary_seerr_discover_movies,
     ("seerr", "discover-tv"): _summary_seerr_discover_tv,
     ("seerr", "genres"): _summary_seerr_genres,
+    ("seerr", "user"): _summary_seerr_user,
     ("maintainerr", "pending"): _summary_maintainerr_pending,
     ("maintainerr", "storage"): _summary_maintainerr_storage,
     ("maintainerr", "health"): _summary_maintainerr_health,
