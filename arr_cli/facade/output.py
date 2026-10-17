@@ -2366,6 +2366,105 @@ def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
     ]
 
 
+def _summary_maintainerr_storage(payload: Any) -> list[dict[str, Any]]:
+    """Render a Maintainerr ``storage`` payload as the curated summary.
+
+    ``GET /api/storage-metrics`` returns the per-volume / per-library
+    storage metrics Maintainerr reports. On newer Maintainerr
+    releases the envelope nests the actual numbers under an
+    ``instances[]`` array (one entry per volume / partition); on
+    older releases the parent item carries the ``mount`` / ``used``
+    / ``free`` / ``total`` / ``usedPercent`` keys verbatim. The
+    renderer flattens both shapes onto one row per volume so the
+    ``--human`` table shows the audit-asked per-instance numbers
+    (rather than the literal ``<N items>`` / ``<N keys>`` token
+    rendering that the pre-change summary emitted).
+
+    The defensive walk mirrors the other list-shape renderers: a
+    non-list payload (e.g. an envelope mapping without the nested
+    array) returns ``[]`` so the human renderer prints
+    ``(empty list)`` instead of crashing. Items whose ``instances``
+    is a non-empty list emit one row per instance; items with no
+    ``instances`` array (the legacy shape) emit a single row from
+    the parent keys so well-formed payloads still render. Cells
+    default to ``None`` / ``0`` / ``""`` per the per-type contract
+    so missing fields render as ``<null>`` rather than crashing.
+    """
+    if not isinstance(payload, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        instances = item.get("instances")
+        if isinstance(instances, list) and instances:
+            for instance in instances:
+                if not isinstance(instance, Mapping):
+                    continue
+                rows.append(
+                    {
+                        "mount": _safe_get(instance, "mount", default=None),
+                        "used": _safe_get(instance, "used", default=0),
+                        "free": _safe_get(instance, "free", default=0),
+                        "total": _safe_get(instance, "total", default=0),
+                        "usedPercent": _safe_get(
+                            instance, "usedPercent", default=0.0
+                        ),
+                    }
+                )
+        else:
+            rows.append(
+                {
+                    "mount": _safe_get(item, "mount", default=None),
+                    "used": _safe_get(item, "used", default=0),
+                    "free": _safe_get(item, "free", default=0),
+                    "total": _safe_get(item, "total", default=0),
+                    "usedPercent": _safe_get(
+                        item, "usedPercent", default=0.0
+                    ),
+                }
+            )
+    return rows
+
+
+def _summary_maintainerr_health(payload: Any) -> str:
+    """Render a Maintainerr ``health`` payload as the curated ``OK`` / ``DEGRADED`` token.
+
+    ``GET /api/health/ready`` historically returns a bare boolean on
+    older Maintainerr releases (``true`` / ``false``) and a richer
+    object on newer ones
+    (``{status: "ok"|..., uptimeSeconds: ..., database: ...,
+    timestamp: ...}``). The audit asks for a single-line
+    ``OK`` / ``DEGRADED`` summary so the readiness probe is readable
+    at a glance instead of dumping the raw object on stdout.
+
+    Two input shapes are accepted:
+
+    * A bare ``bool`` (the historical contract; still tolerated for
+      backward compatibility) -- ``True`` -> ``"OK"``;
+      ``False`` -> ``"DEGRADED"``.
+    * A ``Mapping`` whose ``status`` field equals ``"ok"`` ->
+      ``"OK"``; anything else (unknown string, missing ``status``,
+      non-Mapping shape) -> ``"DEGRADED"`` as the defensive default
+      so legacy operators and unrecognised upstream payloads keep
+      working without a crash.
+
+    The renderer returns a string rather than a list / dict so the
+    output module's scalar branch (``_render_scalar`` via
+    :func:`human`) prints ``"value: OK"`` on a single line; the
+    ``cmd_health`` handler continues to pass ``columns=None`` so no
+    table layout is attempted.
+    """
+    if isinstance(payload, bool):
+        return "OK" if payload else "DEGRADED"
+    if isinstance(payload, Mapping):
+        status = payload.get("status")
+        if isinstance(status, str) and status == "ok":
+            return "OK"
+        return "DEGRADED"
+    return "DEGRADED"
+
+
 # ---------------------------------------------------------------------------
 # Renderer dispatch table
 # ---------------------------------------------------------------------------
@@ -2416,6 +2515,8 @@ _SUMMARY_RENDERERS: dict[tuple[str, str], Callable[[Any], Any]] = {
     ("seerr", "discover-tv"): _summary_seerr_discover_tv,
     ("seerr", "genres"): _summary_seerr_genres,
     ("maintainerr", "pending"): _summary_maintainerr_pending,
+    ("maintainerr", "storage"): _summary_maintainerr_storage,
+    ("maintainerr", "health"): _summary_maintainerr_health,
 }
 
 

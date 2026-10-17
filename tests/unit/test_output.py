@@ -721,6 +721,15 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "collectionId": 7,
         }
     ],
+    ("maintainerr", "storage"): [
+        {
+            "mount": "/data",
+            "used": 700,
+            "free": 300,
+            "total": 1000,
+            "usedPercent": 70.0,
+        }
+    ],
 }
 
 
@@ -1050,21 +1059,24 @@ class TestEmitHumanVerbatimFallback(unittest.TestCase):
     verbatim when ``(service, command)`` is not in
     :data:`_SUMMARY_RENDERERS` (REQ-2 AC7)."""
 
-    def test_known_non_candidate_radarr_calendar(self) -> None:
+    def test_known_non_candidate_seerr_request_count(self) -> None:
         # After the radarr-human-fields work, ``radarr calendar``
         # became a size-to-summary candidate (it has the
-        # ``_summary_radarr_calendar`` renderer registered). The
-        # canonical non-candidate example is now ``maintainerr
-        # storage`` (the maintainerr storage endpoint has no
-        # registered renderer, so it falls through to verbatim).
+        # ``_summary_radarr_calendar`` renderer registered); after
+        # the sonarr-human-fields work, ``sonarr calendar`` joined
+        # the candidates; after the maintainerr-human-fields work,
+        # ``maintainerr storage`` joined too. The canonical
+        # non-candidate example is now ``seerr request-count`` (the
+        # endpoint has no registered renderer, so it falls through
+        # to verbatim).
         payload = [{"title": "Foo", "releaseDate": "2024-01-01"}]
         out = _capture_stdout(
             emit,
             payload,
             human_mode=True,
             verbose_mode=False,
-            service="maintainerr",
-            command="storage",
+            service="seerr",
+            command="request-count",
         )
         expected_buffer = io.StringIO()
         print(human(payload), file=expected_buffer)
@@ -1501,20 +1513,20 @@ class TestEmitPriorityChain(unittest.TestCase):
 
     def test_default_verbatim_on_non_candidate(self) -> None:
         # REQ-3 AC4: a non-candidate command without flags stays on
-        # verbatim JSON. ``maintainerr storage`` is the canonical
+        # verbatim JSON. ``seerr request-count`` is the canonical
         # non-candidate example (Radarr's calendar became a
         # size-to-summary candidate in radarr-human-fields; Sonarr's
-        # calendar became one in sonarr-human-fields; the
-        # maintainerr storage endpoint still has no registered
-        # renderer).
+        # calendar became one in sonarr-human-fields; maintainerr
+        # storage became one in maintainerr-human-fields; the seerr
+        # request-count endpoint still has no registered renderer).
         payload = [{"title": "Foo"}]
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="maintainerr",
-            command="storage",
+            service="seerr",
+            command="request-count",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -1602,11 +1614,12 @@ class TestServiceCommandThreading(unittest.TestCase):
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
     def test_emit_with_non_candidate_key_emits_verbatim(self) -> None:
-        # A non-candidate command (e.g. ``maintainerr storage``)
+        # A non-candidate command (e.g. ``seerr request-count``)
         # falls through to verbatim even though ``service`` /
         # ``command`` are non-empty. Radarr's calendar became a
         # candidate in radarr-human-fields; Sonarr's calendar became
-        # one in sonarr-human-fields; the maintainerr storage
+        # one in sonarr-human-fields; maintainerr storage became one
+        # in maintainerr-human-fields; the seerr request-count
         # endpoint is the canonical non-candidate example now.
         payload = {"Name": "Foo"}
         out = _capture_stdout(
@@ -1614,8 +1627,8 @@ class TestServiceCommandThreading(unittest.TestCase):
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="maintainerr",
-            command="storage",
+            service="seerr",
+            command="request-count",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -5024,6 +5037,14 @@ def _columns_for(service: str, command: str) -> list[str]:
             "firstAired",
             "lastAired",
         ]
+    if (service, command) == ("maintainerr", "health"):
+        # The health summary is a scalar (``"OK"`` / ``"DEGRADED"``);
+        # ``cmd_health`` deliberately passes ``columns=None`` to
+        # :func:`emit` so the output module's scalar branch renders
+        # the result. The override returns an empty list so the
+        # column-token sweeps see ``columns = []`` and skip the
+        # per-row ``<null>`` check.
+        return []
     module = importlib.import_module(f"arr_cli.{service}")
     source = inspect.getsource(module)
     tree = ast.parse(source)
@@ -5500,6 +5521,18 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "visibleOnHome": False,
             }
         ],
+        ("maintainerr", "storage"): [
+            {
+                "mount": "/data",
+                "used": 700,
+                "free": 300,
+                "total": 1000,
+                "usedPercent": 70.0,
+            }
+        ],
+        ("maintainerr", "health"): {
+            "status": "ok",
+        },
         ("seerr", "discover-movies"): [
             {
                 "title": "Foo",

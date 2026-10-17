@@ -413,12 +413,15 @@ class TestCmdHealth(unittest.TestCase):
 
     def test_health_emits_scalar_json_when_not_human(self) -> None:
         cfg = _service_config()
-        args = _namespace(human=False)
+        args = _namespace(human=False, command="health")
         with _patched_get_payload(True):
             output = _capture_stdout(cmd_health, args, cfg)
-        # Maintainerr's readiness probe returns a bare boolean; the
-        # output module must serialise it as ``true`` (REQ-3 AC1).
-        self.assertEqual(json.loads(output), True)
+        # Maintainerr's readiness probe is now a size-to-summary
+        # candidate: the default-mode JSON emits the curated
+        # ``OK`` token (a bare-boolean legacy payload maps to
+        # ``"OK"``); ``--verbose`` is required for the verbatim
+        # upstream shape (REQ-3 AC1, US-3 AC5).
+        self.assertEqual(json.loads(output), "OK")
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +477,7 @@ class TestHumanMode(unittest.TestCase):
         kwargs = mock_emit.call_args.kwargs
         self.assertEqual(
             kwargs["columns"],
-            ["name", "total", "used", "free", "percentUsed"],
+            ["mount", "used", "free", "total", "usedPercent"],
         )
 
     def test_human_mode_health_has_no_columns(self) -> None:
@@ -751,8 +754,10 @@ class TestMainEntryPoint(unittest.TestCase):
         self.assertEqual(json.loads(stdout), payload)
 
     def test_main_health_emits_scalar(self) -> None:
-        # The readiness probe returns a bare boolean; the JSON
-        # pass-through must serialise it as ``true``.
+        # The readiness probe is now a size-to-summary candidate:
+        # the default-mode JSON emits the curated ``OK`` token
+        # (the legacy bare-boolean ``True`` maps to ``"OK"``);
+        # ``--verbose`` is required for the verbatim upstream shape.
         with patch(
             "arr_cli.maintainerr.transport.get",
             return_value=True,
@@ -761,7 +766,7 @@ class TestMainEntryPoint(unittest.TestCase):
                 main,
                 ["--config", str(self.cfg_path), "health"],
             )
-        self.assertEqual(json.loads(stdout), True)
+        self.assertEqual(json.loads(stdout), "OK")
 
 
 # ---------------------------------------------------------------------------
