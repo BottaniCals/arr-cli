@@ -1770,47 +1770,39 @@ def _summary_seerr_available(payload: Any) -> list[dict[str, Any]]:
     look up ``tmdbId`` / ``tvdbId`` externally; the curated summary
     here stays as the canonical "what is in my library" answer.
 
-    The audit asks for a ``title`` cell on the ``seerr available``
-    table; the projection is **gated** behind
-    :func:`_spec_status_field_present`. Default ``False`` keeps
-    the pre-change seven-column shape so the renderer never emits a
-    ``title: null`` regression on a live Seer instance whose
-    ``/api/v1/media`` payload does not yet populate ``title``. An
-    operator who has confirmed the title field on their live
-    OpenAPI spec can flip the gate with
-    ``ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED=1`` so the projection
-    emits the ``title`` cell alongside the pre-change identity
-    fields in audit left-to-right order. The deferral is recorded
-    in ``CHANGELOG.md`` so the audit follow-up is visible without
-    a fresh tracker ticket (the orchestrator cannot reach the
-    operator's live instance from this environment per the
-    documented deferral path).
+    **AGENTS.md §1 contract (identity-only envelope):** the live
+    ``/api/v1/media`` payload carries identity fields only and does
+    not populate a ``title`` field on the operator's Seer instance.
+    The renderer therefore does NOT project a ``title`` cell -- the
+    absence is by design, not a regression. A unit test in
+    ``tests/unit/test_output.py`` pins the contract and names the
+    2026-09-18 ``seerr-available-no-title-filter`` regression vector
+    so any future contributor who tries to add a ``title`` projection
+    back gets a hard test failure with the audit context preserved.
     """
     if isinstance(payload, Mapping):
         payload = payload.get("results")
     if not isinstance(payload, list):
         return []
     summaries: list[dict[str, Any]] = []
-    show_title = _spec_status_field_present()
     for item in payload:
         if not isinstance(item, Mapping):
             continue
-        row: dict[str, Any] = {
-            "id": _safe_get(item, "id", default=None),
-            "mediaType": _safe_get(item, "mediaType", default=None),
-            "tmdbId": _safe_get(item, "tmdbId", default=None),
-            "tvdbId": _safe_get(item, "tvdbId", default=None),
-            "externalServiceSlug": _safe_get(
-                item, "externalServiceSlug", default=None
-            ),
-            "status": _safe_get(item, "status", default=None),
-            "mediaAddedAt": _safe_get(
-                item, "mediaAddedAt", default=None
-            ),
-        }
-        if show_title:
-            row["title"] = _safe_get(item, "title", default=None)
-        summaries.append(row)
+        summaries.append(
+            {
+                "id": _safe_get(item, "id", default=None),
+                "mediaType": _safe_get(item, "mediaType", default=None),
+                "tmdbId": _safe_get(item, "tmdbId", default=None),
+                "tvdbId": _safe_get(item, "tvdbId", default=None),
+                "externalServiceSlug": _safe_get(
+                    item, "externalServiceSlug", default=None
+                ),
+                "status": _safe_get(item, "status", default=None),
+                "mediaAddedAt": _safe_get(
+                    item, "mediaAddedAt", default=None
+                ),
+            }
+        )
     return summaries
 
 
@@ -2182,18 +2174,25 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
     the renderer stays well-formed even when upstream drops a
     field.
 
-    When ``cmd_tv`` is invoked with ``--ratings``, the RT critic
-    and audience scores arrive under ``payload["ratings"]`` and are
-    surfaced under the ``ratings`` block. The pre-change plural
-    ``criticsScore`` / ``audienceScore`` keys are kept by default
-    for plumbing compatibility (downstream consumers that already
-    script against the plural shape keep working); the singular
-    ``criticScore`` / ``audienceScore`` keys ship when the operator
-    has confirmed the live OpenAPI ``Ratings`` schema via
-    :func:`_spec_ratings_key_present`. The audit-vs-upstream
-    reconciliation is recorded in ``CHANGELOG.md`` ``[Unreleased]``
-    / ``Changed`` so operators reading the release notes know
-    which key the current renderer is emitting.
+    When ``cmd_tv`` is invoked with ``--ratings``, the live Seer
+    ``/api/v1/tv/{tvId}/ratings`` envelope is merged under
+    ``payload["ratings"]`` and surfaced under the ``ratings``
+    block on the curated row. The projection uses the live-spec
+    key names the operator verified on 2026-10-17:
+
+    * ``criticsScore`` (plural-with-s, integer -- RT's
+      "Tomatometer" percentage 0-100).
+    * ``audienceRating`` (categorical string, e.g. ``"Spilled"``
+      / ``"Upright"`` / ``"Want to See"``).
+
+    RT does not expose a numeric audience score on this Seer
+    instance; ``audienceRating`` is the closest categorical field,
+    so it is a string on purpose (not a numeric filler). A
+    missing ``audienceRating`` (e.g. RT did not publish a
+    categorical rating for the title) renders as ``<null>`` next
+    to a populated ``criticsScore``, which is clearly
+    distinguishable from "no ratings fetched" because the
+    ``criticsScore`` is still populated.
 
     A bare detail fetch (no ``--ratings``) leaves ``ratings`` as
     ``None`` so the column is visible-but-empty in the default
@@ -2222,26 +2221,21 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
     raw_genres = payload.get("genres")
     raw_networks = payload.get("networks")
     raw_ratings = payload.get("ratings")
-    singular_ratings = _spec_ratings_key_present()
     if isinstance(raw_ratings, Mapping):
-        if singular_ratings:
-            ratings_obj: dict[str, Any] = {
-                "criticScore": _safe_get(
-                    raw_ratings, "criticScore", default=None
-                ),
-                "audienceScore": _safe_get(
-                    raw_ratings, "audienceScore", default=None
-                ),
-            }
-        else:
-            ratings_obj = {
-                "criticsScore": _safe_get(
-                    raw_ratings, "criticsScore", default=None
-                ),
-                "audienceScore": _safe_get(
-                    raw_ratings, "audienceScore", default=None
-                ),
-            }
+        # RT numeric-vs-categorical gap: live Seer envelope
+        # carries ``criticsScore`` (plural, integer 0-100) and
+        # ``audienceRating`` (categorical string). The two share
+        # no common numeric shape, so the projection keeps them
+        # as distinct keys rather than fabricating a numeric
+        # ``audienceScore`` the upstream payload does not populate.
+        ratings_obj: dict[str, Any] = {
+            "criticsScore": _safe_get(
+                raw_ratings, "criticsScore", default=None
+            ),
+            "audienceRating": _safe_get(
+                raw_ratings, "audienceRating", default=None
+            ),
+        }
     else:
         ratings_obj = None
 
@@ -2298,19 +2292,25 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
     on either envelope shape). Missing fields default to ``None``
     per the per-type contract.
 
-    When ``cmd_movie`` is invoked with ``--ratings``, the RT
-    critic and audience scores arrive under
-    ``payload["ratings"]`` and are surfaced under the ``ratings``
-    block. The pre-change plural ``criticsScore`` /
-    ``audienceScore`` keys are kept by default for plumbing
-    compatibility (downstream consumers that already script
-    against the plural shape keep working); the singular
-    ``criticScore`` / ``audienceScore`` keys ship when the
-    operator has confirmed the live OpenAPI ``Ratings`` schema
-    via :func:`_spec_ratings_key_present`. The audit-vs-upstream
-    reconciliation is recorded in ``CHANGELOG.md``
-    ``[Unreleased]`` / ``Changed`` so operators reading the
-    release notes know which key the current renderer is emitting.
+    When ``cmd_movie`` is invoked with ``--ratings``, the live
+    Seer ``/api/v1/movie/{movieId}/ratings`` envelope is merged
+    under ``payload["ratings"]`` and surfaced under the
+    ``ratings`` block on the curated row. The projection uses the
+    live-spec key names the operator verified on 2026-10-17:
+
+    * ``criticsScore`` (plural-with-s, integer -- RT's
+      "Tomatometer" percentage 0-100).
+    * ``audienceRating`` (categorical string, e.g.
+      ``"Spilled"`` / ``"Upright"`` / ``"Want to See"``).
+
+    RT does not expose a numeric audience score on this Seer
+    instance; ``audienceRating`` is the closest categorical
+    field, so it is a string on purpose (not a numeric filler).
+    A missing ``audienceRating`` (e.g. RT did not publish a
+    categorical rating for the title) renders as ``<null>`` next
+    to a populated ``criticsScore``, which is clearly
+    distinguishable from "no ratings fetched" because the
+    ``criticsScore`` is still populated.
 
     A bare detail fetch (no ``--ratings``) leaves ``ratings`` as
     ``None`` so the column is visible-but-empty in the default
@@ -2361,26 +2361,21 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         hours = total // 60
         mins = total % 60
         return f"{hours}h {mins}m"
-    singular_ratings = _spec_ratings_key_present()
     if isinstance(raw_ratings, Mapping):
-        if singular_ratings:
-            ratings_obj: dict[str, Any] = {
-                "criticScore": _safe_get(
-                    raw_ratings, "criticScore", default=None
-                ),
-                "audienceScore": _safe_get(
-                    raw_ratings, "audienceScore", default=None
-                ),
-            }
-        else:
-            ratings_obj = {
-                "criticsScore": _safe_get(
-                    raw_ratings, "criticsScore", default=None
-                ),
-                "audienceScore": _safe_get(
-                    raw_ratings, "audienceScore", default=None
-                ),
-            }
+        # RT numeric-vs-categorical gap: live Seer envelope
+        # carries ``criticsScore`` (plural, integer 0-100) and
+        # ``audienceRating`` (categorical string). The two share
+        # no common numeric shape, so the projection keeps them
+        # as distinct keys rather than fabricating a numeric
+        # ``audienceScore`` the upstream payload does not populate.
+        ratings_obj: dict[str, Any] = {
+            "criticsScore": _safe_get(
+                raw_ratings, "criticsScore", default=None
+            ),
+            "audienceRating": _safe_get(
+                raw_ratings, "audienceRating", default=None
+            ),
+        }
     else:
         ratings_obj = None
 
@@ -2549,18 +2544,33 @@ def _summary_seerr_user(payload: Any) -> dict[str, Any]:
       that omit it).
     * ``userType`` -- the role/permission tier the account runs at
       (e.g. ``"admin"`` / ``"user"``).
-    * ``permissions`` -- flattened per ``AGENTS.md §4.1``: a list of
-      strings is comma-joined (``"ADMIN, MANAGE_REQUESTS"``); a
-      mapping of ``{key: value}`` is rendered as
-      ``key=value, key=value``. When the live payload exposes a
-      shape that is neither a list nor a mapping (defensive
-      against envelope drift), the cell projects ``None`` (renders
-      as ``<null>``) instead of raising. The defensive fall-back
-      is gated behind :func:`_spec_permissions_shape_flattenable`
-      so an operator who has confirmed the live shape against the
-      OpenAPI spec can ship the flattened projection; default
-      ``False`` keeps the renderer well-formed on any third
-      (undocumented) shape.
+    * ``permissions`` -- decoded from the live ``/api/v1/auth/me``
+      integer bitfield via :func:`_decode_permissions_bitfield`.
+      The Seer envelope (verified directly on 2026-10-17)
+      carries ``"permissions": 2`` -- a single integer bitfield,
+      not a list / mapping as the historical Overseerr shape
+      exposed. The bit-to-name mapping is:
+
+      ===== =====================
+      bit   name
+      ===== =====================
+      ``1`` ``request``
+      ``2`` ``admin``
+      ``4`` ``manage_users``
+      ``8`` ``manage_issues``
+      ``16`` ``auto_approve``
+      ``32`` ``view_users``
+      ===== =====================
+
+      The decoded list is sorted by bit value and comma-joined
+      (``"request, admin"``) so the ``--human`` cell reads in
+      bit-order. A bitfield of ``0`` projects as ``""`` (the
+      documented "no bits set" contract; renders as a blank
+      cell rather than ``<null>``). Non-integer ``permissions``
+      shapes (the historical Overseerr string / list / mapping)
+      fall back to ``None`` so the AGENTS.md §4.1 defensive
+      contract is preserved and the cell renders as ``<null>``
+      rather than crashing on envelope drift.
     * ``requestCount`` -- sourced from the nested
       ``permissions.requestCount`` or top-level ``requestCount``
       field, whichever the live Seer envelope exposes --
@@ -2601,35 +2611,26 @@ def _summary_seerr_user(payload: Any) -> dict[str, Any]:
     user_type = _safe_get(payload, "userType", default=None)
 
     raw_permissions = payload.get("permissions")
-    flattened_permissions: Any
-    if isinstance(raw_permissions, list):
-        if not _spec_permissions_shape_flattenable():
-            flattened_permissions = None
-        else:
-            parts: list[str] = []
-            for item in raw_permissions:
-                if isinstance(item, str):
-                    parts.append(item)
-                elif isinstance(item, Mapping):
-                    name = item.get("name")
-                    if isinstance(name, str):
-                        parts.append(name)
-            flattened_permissions = (
-                ", ".join(parts) if parts else None
-            )
-    elif isinstance(raw_permissions, Mapping):
-        if not _spec_permissions_shape_flattenable():
-            flattened_permissions = None
-        else:
-            kv_pairs: list[str] = []
-            for key, value in raw_permissions.items():
-                if isinstance(value, (str, int, float, bool)) or value is None:
-                    kv_pairs.append(f"{key}={value}")
-            flattened_permissions = (
-                ", ".join(kv_pairs) if kv_pairs else None
-            )
+    decoded_permissions: Any
+    # ``bool`` is a subclass of ``int``; reject it explicitly so
+    # ``permissions: True`` does not decode as bit ``1`` (the
+    # ``request`` name). The Seer envelope only ever carries an
+    # ``int`` here, but the defensive guard prevents a future
+    # ``"permissions": True`` regression on a sibling payload.
+    if (
+        isinstance(raw_permissions, int)
+        and not isinstance(raw_permissions, bool)
+    ):
+        decoded_permissions = _decode_permissions_bitfield(
+            raw_permissions
+        )
     else:
-        flattened_permissions = None
+        # AGENTS.md §4.1 defensive fall-back: a non-integer
+        # ``permissions`` value (the historical Overseerr
+        # string / list / mapping shape, or a future drift)
+        # renders as ``None`` so the cell shows ``<null>``
+        # rather than crashing.
+        decoded_permissions = None
 
     request_count = _safe_get(
         payload, "permissions", "requestCount", default=None
@@ -2643,9 +2644,57 @@ def _summary_seerr_user(payload: Any) -> dict[str, Any]:
         "username": username,
         "email": email,
         "userType": user_type,
-        "permissions": flattened_permissions,
+        "permissions": decoded_permissions,
         "requestCount": request_count,
     }
+
+
+# Bit-to-name map for the live ``/api/v1/auth/me`` ``permissions``
+# integer bitfield (verified directly on the operator's Seer
+# instance on 2026-10-17). The dict is intentionally small and
+# committed as a constant so the bitfield decoder is hermetic --
+# no runtime fetch from CI, no third-party dep. Extend the table
+# only after confirming the new bit against the live OpenAPI
+# ``auth/me`` schema.
+_PERMISSIONS_BIT_NAMES: dict[int, str] = {
+    1: "request",
+    2: "admin",
+    4: "manage_users",
+    8: "manage_issues",
+    16: "auto_approve",
+    32: "view_users",
+}
+
+
+def _decode_permissions_bitfield(value: int) -> str:
+    """Decode a Seer ``permissions`` integer bitfield to a name list.
+
+    The live ``GET /api/v1/auth/me`` envelope carries
+    ``"permissions": <int>`` -- a single integer bitfield. Each
+    set bit maps to a documented permission name via
+    :data:`_PERMISSIONS_BIT_NAMES`; the matched names are joined
+    with ``", "`` sorted by bit value so the output reads in the
+    documented bit-order (e.g. ``3 -> "request, admin"``,
+    ``7 -> "request, admin, manage_users"``).
+
+    ``value == 0`` returns ``""`` (the documented "no bits set"
+    contract; renders as a blank cell rather than ``<null>``).
+    Bits outside the documented table are silently dropped -- the
+    unknown bit would otherwise surface as a trailing comma in
+    the joined output -- so the cell stays well-formed even if a
+    future Seer release adds a new bit the renderer has not been
+    taught yet.
+
+    Callers must pre-guard non-integer / ``bool`` inputs (the
+    renderer does this with ``isinstance(value, int) and not
+    isinstance(value, bool)``); the helper itself trusts the
+    caller so its body stays a single dict-comprehension.
+    """
+    return ", ".join(
+        name
+        for bit, name in sorted(_PERMISSIONS_BIT_NAMES.items())
+        if value & bit
+    )
 
 
 def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
@@ -2803,93 +2852,6 @@ def _summary_maintainerr_health(payload: Any) -> str:
 # ---------------------------------------------------------------------------
 # Renderer dispatch table
 # ---------------------------------------------------------------------------
-
-
-def _spec_status_field_present() -> bool:
-    """Return ``True`` when the operator has verified the ``title`` cell on
-    ``GET /api/v1/media`` is populated on their live Seer instance.
-
-    The audit asks :func:`_summary_seerr_available` to surface a
-    ``title`` cell on the ``seerr available`` ``--human`` table;
-    the renderer historically dropped it because the live Seer
-    payload does not yet populate a top-level ``title`` field on
-    the operator's instance (the regression that motivated the
-    2026-09-18 ``seerr-available-no-title-filter`` ticket). The
-    gate defaults to ``False`` so the renderer never silently
-    ships a ``title: null`` regression: when the gate is closed,
-    ``seerr available`` keeps its pre-change seven-column shape;
-    when an operator has confirmed the field via the live
-    ``/api-docs/swagger-ui-init.js`` OpenAPI spec they can flip
-    the gate with ``ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED=1`` so the
-    audit-asked cell ships with the rest of the column widening.
-
-    The env-var override is hermetic: CI neither needs the
-    operator's instance nor silently strips the audit-asked
-    column. The deferral is recorded in ``CHANGELOG.md`` so the
-    audit follow-up is visible without a fresh tracker ticket
-    (the orchestrator cannot reach the operator's live instance
-    from this environment per the documented deferral path).
-    """
-    import os
-    return os.environ.get("ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED") == "1"
-
-
-def _spec_ratings_key_present() -> bool:
-    """Return ``True`` when the operator has verified the live Seer
-    ``Ratings`` schema uses the singular ``criticScore`` token.
-
-    The audit asks :func:`_summary_seerr_movie` /
-    :func:`_summary_seerr_tv` to surface ``criticScore`` /
-    ``audienceScore`` (singular) under the ``ratings`` block; the
-    pre-change renderers use the plural ``criticsScore`` /
-    ``audienceScore`` (the historical Overseerr shape). The gate
-    defaults to ``False`` so the pre-change plural key stays for
-    plumbing compatibility (downstream consumers that already
-    script against ``criticsScore`` keep working); when an
-    operator has confirmed the singular key via the live
-    ``/api-docs/swagger-ui-init.js`` OpenAPI spec they can flip
-    the gate with
-    ``ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED=1`` so the
-    audit-asked singular token ships.
-
-    The audit-vs-upstream discrepancy is recorded in
-    ``CHANGELOG.md`` ``[Unreleased]`` / ``Changed`` so operators
-    reading the release notes know which key the current
-    renderer is emitting.
-    """
-    import os
-    return (
-        os.environ.get("ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED")
-        == "1"
-    )
-
-
-def _spec_permissions_shape_flattenable() -> bool:
-    """Return ``True`` when the operator has verified the live Seer
-    ``GET /api/v1/auth/me`` payload exposes ``permissions`` as a
-    list of strings OR a mapping (the documented flattenable
-    shapes per ``AGENTS.md §4.1``).
-
-    The audit asks :func:`_summary_seerr_user` to project a
-    flattened ``permissions`` cell; the flattening contract
-    assumes one of the two documented shapes. When the operator
-    cannot verify the live shape (or the envelope exposes a third
-    undocumented shape), the gate defaults to ``False`` so the
-    renderer returns ``None`` (renders as ``<null>``) instead of
-    an ill-formed join. Operators can flip the gate with
-    ``ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED=1`` once they
-    have confirmed the shape against their live Seer instance.
-
-    The defensive ``None`` fall-back is unit-tested in
-    ``tests/unit/test_seerr.py`` so a regression on the gate
-    surfaces as a hard test failure rather than a silent
-    ``<null>`` in the operator's table.
-    """
-    import os
-    return (
-        os.environ.get("ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED")
-        == "1"
-    )
 
 
 # Add a new size-to-summary candidate by appending one
