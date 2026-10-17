@@ -4371,6 +4371,191 @@ class TestSummaryMaintainerrPending(unittest.TestCase):
         )
 
 
+class TestSummaryMaintainerrStorage(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("maintainerr", "storage")]`` matches the spec."""
+
+    def _renderer(self) -> Any:
+        return _SUMMARY_RENDERERS[("maintainerr", "storage")]
+
+    def test_instances_envelope_flattened_one_row_per_instance(self) -> None:
+        # US-2.1: when ``instances`` is a non-empty list, the
+        # renderer emits one row per instance with mount/used/
+        # free/total/usedPercent.
+        payload = [
+            {
+                "name": "media",
+                "instances": [
+                    {
+                        "mount": "/data",
+                        "used": 700,
+                        "free": 300,
+                        "total": 1000,
+                        "usedPercent": 70.0,
+                    },
+                    {
+                        "mount": "/backup",
+                        "used": 100,
+                        "free": 900,
+                        "total": 1000,
+                        "usedPercent": 10.0,
+                    },
+                ],
+            }
+        ]
+        rendered = self._renderer()(payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "mount": "/data",
+                    "used": 700,
+                    "free": 300,
+                    "total": 1000,
+                    "usedPercent": 70.0,
+                },
+                {
+                    "mount": "/backup",
+                    "used": 100,
+                    "free": 900,
+                    "total": 1000,
+                    "usedPercent": 10.0,
+                },
+            ],
+        )
+
+    def test_parent_fallback_when_instances_missing(self) -> None:
+        # US-2.2: when ``instances`` is absent (legacy Maintainerr
+        # build) the renderer emits a single row from the parent
+        # item's mount/used/free/total/usedPercent keys.
+        payload = [
+            {
+                "mount": "/data",
+                "used": 700,
+                "free": 300,
+                "total": 1000,
+                "usedPercent": 70.0,
+            }
+        ]
+        rendered = self._renderer()(payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "mount": "/data",
+                    "used": 700,
+                    "free": 300,
+                    "total": 1000,
+                    "usedPercent": 70.0,
+                }
+            ],
+        )
+
+    def test_parent_fallback_when_instances_empty(self) -> None:
+        # US-2.2 (extended): an empty ``instances`` array also falls
+        # back to the parent row so the renderer stays well-formed
+        # even on sparse upstream payloads.
+        payload = [
+            {
+                "mount": "/data",
+                "used": 700,
+                "free": 300,
+                "total": 1000,
+                "usedPercent": 70.0,
+                "instances": [],
+            }
+        ]
+        rendered = self._renderer()(payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "mount": "/data",
+                    "used": 700,
+                    "free": 300,
+                    "total": 1000,
+                    "usedPercent": 70.0,
+                }
+            ],
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        # US-2.4: a non-list payload returns ``[]`` so the human
+        # renderer prints ``(empty list)`` rather than crashing.
+        for value in (None, {}, "foo", 42):
+            self.assertEqual(
+                self._renderer()(value),
+                [],
+                msg=f"expected empty list for {value!r}",
+            )
+
+    def test_missing_fields_default_to_null(self) -> None:
+        # US-2.3: when an instance row is missing one of the
+        # audit-asked fields the cell renders as ``None`` (the
+        # documented safe-default contract of ``_safe_get``).
+        rendered = self._renderer()(
+            [{"instances": [{"mount": "/data"}]}]
+        )
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        self.assertEqual(row["mount"], "/data")
+        self.assertEqual(row["used"], 0)
+        self.assertEqual(row["free"], 0)
+        self.assertEqual(row["total"], 0)
+        self.assertEqual(row["usedPercent"], 0.0)
+
+
+class TestSummaryMaintainerrHealth(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("maintainerr", "health")]`` matches the spec."""
+
+    def _renderer(self) -> Any:
+        return _SUMMARY_RENDERERS[("maintainerr", "health")]
+
+    def test_status_ok_returns_ok(self) -> None:
+        # US-3.1: ``{status: "ok"}`` maps to the ``"OK"`` token.
+        self.assertEqual(self._renderer()({"status": "ok"}), "OK")
+
+    def test_status_degraded_returns_degraded(self) -> None:
+        # US-3.2: a non-``"ok"`` status (e.g. ``"degraded"``,
+        # ``"down"``, ``"unhealthy"``) maps to ``"DEGRADED"``.
+        for status in ("degraded", "down", "unhealthy", ""):
+            self.assertEqual(
+                self._renderer()({"status": status}),
+                "DEGRADED",
+                msg=f"status {status!r} should map to DEGRADED",
+            )
+
+    def test_missing_status_returns_degraded(self) -> None:
+        # US-3.4: a Mapping without a ``status`` key falls back to
+        # ``"DEGRADED"`` as the documented defensive default.
+        self.assertEqual(self._renderer()({}), "DEGRADED")
+        self.assertEqual(
+            self._renderer()({"uptimeSeconds": 1234}),
+            "DEGRADED",
+        )
+
+    def test_legacy_bare_true_returns_ok(self) -> None:
+        # US-3.3: the historical bare-boolean contract -- ``True``
+        # maps to ``"OK"`` so legacy operators that still see a bare
+        # boolean out of older Maintainerr builds keep working.
+        self.assertEqual(self._renderer()(True), "OK")
+
+    def test_legacy_bare_false_returns_degraded(self) -> None:
+        # US-3.3: ``False`` maps to ``"DEGRADED"`` -- the legacy
+        # bare-boolean contract.
+        self.assertEqual(self._renderer()(False), "DEGRADED")
+
+    def test_non_mapping_non_bool_returns_degraded(self) -> None:
+        # US-3.4: any non-Mapping / non-bool shape (list, scalar,
+        # None) maps to ``"DEGRADED"`` as the documented defensive
+        # default.
+        for value in ([], [1, 2], None, 42, "foo"):
+            self.assertEqual(
+                self._renderer()(value),
+                "DEGRADED",
+                msg=f"value {value!r} should map to DEGRADED",
+            )
+
+
 # ---------------------------------------------------------------------------
 # Envelope unwrap helper
 # ---------------------------------------------------------------------------
