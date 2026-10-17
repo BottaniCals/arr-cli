@@ -413,12 +413,15 @@ class TestCmdHealth(unittest.TestCase):
 
     def test_health_emits_scalar_json_when_not_human(self) -> None:
         cfg = _service_config()
-        args = _namespace(human=False)
+        args = _namespace(human=False, command="health")
         with _patched_get_payload(True):
             output = _capture_stdout(cmd_health, args, cfg)
-        # Maintainerr's readiness probe returns a bare boolean; the
-        # output module must serialise it as ``true`` (REQ-3 AC1).
-        self.assertEqual(json.loads(output), True)
+        # Maintainerr's readiness probe is now a size-to-summary
+        # candidate: the default-mode JSON emits the curated
+        # ``OK`` token (a bare-boolean legacy payload maps to
+        # ``"OK"``); ``--verbose`` is required for the verbatim
+        # upstream shape (REQ-3 AC1, US-3 AC5).
+        self.assertEqual(json.loads(output), "OK")
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +453,19 @@ class TestHumanMode(unittest.TestCase):
         kwargs = mock_emit.call_args.kwargs
         self.assertEqual(
             kwargs["columns"],
-            ["title", "mediaCount", "deleteAfterDays", "isOnHold"],
+            [
+                "title",
+                "mediaCount",
+                "deleteAfterDays",
+                "isOnHold",
+                "arrAction",
+                "addDate",
+                "mediaServerType",
+                "type",
+                "description",
+                "isActive",
+                "visibleOnHome",
+            ],
         )
 
     def test_human_mode_columns_for_storage(self) -> None:
@@ -462,7 +477,7 @@ class TestHumanMode(unittest.TestCase):
         kwargs = mock_emit.call_args.kwargs
         self.assertEqual(
             kwargs["columns"],
-            ["name", "total", "used", "free", "percentUsed"],
+            ["mount", "used", "free", "total", "usedPercent"],
         )
 
     def test_human_mode_health_has_no_columns(self) -> None:
@@ -476,6 +491,253 @@ class TestHumanMode(unittest.TestCase):
             cmd_health(args, cfg)
         kwargs = mock_emit.call_args.kwargs
         self.assertIsNone(kwargs["columns"])
+
+    def test_pending_default_emits_eleven_keys_with_audit_fields(
+        self,
+    ) -> None:
+        # US-1.1 / US-1.2 / US-1.3: every audit-asked field projects
+        # through the renderer; missing fields default to ``None``
+        # (the documented ``_stringify`` / ``_safe_get`` contract).
+        cfg = _service_config()
+        args = _namespace(command="pending")
+        payload = [
+            {
+                "title": "Old Movies",
+                "mediaCount": 42,
+                "deleteAfterDays": 14,
+                "isOnHold": False,
+                "arrAction": "delete",
+                "addDate": "2026-01-01T00:00:00Z",
+                "mediaServerType": "plex",
+                "type": "movie",
+                "description": "Old movies that have been watched",
+                "isActive": True,
+                "visibleOnHome": False,
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_pending, args, cfg)
+        rendered = json.loads(output)
+        self.assertEqual(
+            rendered[0]["title"], "Old Movies"
+        )
+        self.assertEqual(rendered[0]["arrAction"], "delete")
+        self.assertEqual(
+            rendered[0]["addDate"], "2026-01-01T00:00:00Z"
+        )
+        self.assertEqual(rendered[0]["mediaServerType"], "plex")
+        self.assertEqual(rendered[0]["type"], "movie")
+        self.assertEqual(
+            rendered[0]["description"],
+            "Old movies that have been watched",
+        )
+        self.assertTrue(rendered[0]["isActive"])
+        self.assertFalse(rendered[0]["visibleOnHome"])
+
+    def test_pending_missing_fields_default_to_none(self) -> None:
+        # US-1.2: a payload that omits the audit-asked fields still
+        # emits a well-formed row with the missing cells projected as
+        # ``None`` (``<null>`` in the human table); no crash, no
+        # KeyError.
+        cfg = _service_config()
+        args = _namespace(command="pending")
+        payload = [{"title": "Old Movies", "mediaCount": 42}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_pending, args, cfg)
+        rendered = json.loads(output)
+        self.assertIsNone(rendered[0]["arrAction"])
+        self.assertIsNone(rendered[0]["addDate"])
+        self.assertIsNone(rendered[0]["mediaServerType"])
+        self.assertIsNone(rendered[0]["type"])
+        self.assertIsNone(rendered[0]["description"])
+        self.assertFalse(rendered[0]["isActive"])
+        self.assertFalse(rendered[0]["visibleOnHome"])
+
+    def test_pending_verbose_emits_verbatim(self) -> None:
+        # US-1.5: ``--verbose`` still emits the verbatim upstream
+        # payload unchanged so JSON consumers keep working.
+        cfg = _service_config()
+        args = _namespace(command="pending", verbose=True)
+        payload = [{"title": "Old Movies", "mediaCount": 42}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_pending, args, cfg)
+        self.assertEqual(json.loads(output), payload)
+
+    def test_storage_default_flattens_instances_envelope(self) -> None:
+        # US-2.1: when the upstream payload's ``instances`` array is
+        # populated, the renderer emits one row per instance with the
+        # audit-asked five columns. The non-Mapping fall-back path is
+        # covered in test_output.py.
+        cfg = _service_config()
+        args = _namespace(command="storage")
+        payload = [
+            {
+                "name": "media",
+                "instances": [
+                    {
+                        "mount": "/data",
+                        "used": 700,
+                        "free": 300,
+                        "total": 1000,
+                        "usedPercent": 70.0,
+                    },
+                    {
+                        "mount": "/backup",
+                        "used": 100,
+                        "free": 900,
+                        "total": 1000,
+                        "usedPercent": 10.0,
+                    },
+                ],
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_storage, args, cfg)
+        rendered = json.loads(output)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["mount"], "/data")
+        self.assertEqual(rendered[0]["used"], 700)
+        self.assertEqual(rendered[0]["free"], 300)
+        self.assertEqual(rendered[0]["total"], 1000)
+        self.assertEqual(rendered[0]["usedPercent"], 70.0)
+        self.assertEqual(rendered[1]["mount"], "/backup")
+        self.assertEqual(rendered[1]["usedPercent"], 10.0)
+
+    def test_storage_default_uses_parent_when_instances_missing(
+        self,
+    ) -> None:
+        # US-2.2: when ``instances`` is absent the renderer falls back
+        # to the parent item's ``mount`` / ``used`` / ``free`` /
+        # ``total`` / ``usedPercent`` keys so well-formed legacy
+        # payloads still render.
+        cfg = _service_config()
+        args = _namespace(command="storage")
+        payload = [
+            {
+                "mount": "/data",
+                "used": 700,
+                "free": 300,
+                "total": 1000,
+                "usedPercent": 70.0,
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_storage, args, cfg)
+        rendered = json.loads(output)
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["mount"], "/data")
+        self.assertEqual(rendered[0]["used"], 700)
+        self.assertEqual(rendered[0]["usedPercent"], 70.0)
+
+    def test_storage_columns_match_summary_keys(self) -> None:
+        # US-2.5: the per-handler ``columns`` list mirrors the summary
+        # renderer's row keys in the audit's left-to-right order so the
+        # --human table shows the same five columns the renderer emits.
+        cfg = _service_config()
+        args = _namespace(human=True)
+        with _patched_get_payload([]), \
+                patch("arr_cli.maintainerr.output.emit") as mock_emit:
+            cmd_storage(args, cfg)
+        kwargs = mock_emit.call_args.kwargs
+        self.assertEqual(
+            kwargs["columns"],
+            ["mount", "used", "free", "total", "usedPercent"],
+        )
+
+    def test_storage_verbose_emits_verbatim(self) -> None:
+        # US-2.6: ``--verbose`` still emits the verbatim upstream
+        # payload unchanged so JSON consumers keep working.
+        cfg = _service_config()
+        args = _namespace(command="storage", verbose=True)
+        payload = [
+            {
+                "name": "media",
+                "instances": [
+                    {
+                        "mount": "/data",
+                        "used": 700,
+                        "free": 300,
+                        "total": 1000,
+                        "usedPercent": 70.0,
+                    }
+                ],
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_storage, args, cfg)
+        self.assertEqual(json.loads(output), payload)
+
+    def test_health_default_renders_ok_for_status_ok(self) -> None:
+        # US-3.1: ``maintainerr health`` default-mode JSON now emits
+        # the curated ``"OK"`` token when the upstream payload's
+        # ``status`` is ``"ok"`` (matches the audit's single-line
+        # ask).
+        cfg = _service_config()
+        args = _namespace(command="health")
+        with _patched_get_payload({"status": "ok"}):
+            output = _capture_stdout(cmd_health, args, cfg)
+        self.assertEqual(json.loads(output), "OK")
+
+    def test_health_default_renders_degraded_for_status_degraded(
+        self,
+    ) -> None:
+        # US-3.2: a non-``"ok"`` status (e.g. ``"degraded"``,
+        # ``"down"``, ``"unhealthy"``) maps to the ``"DEGRADED"``
+        # token; the renderer does not surface the literal upstream
+        # object on default-mode stdout.
+        cfg = _service_config()
+        args = _namespace(command="health")
+        with _patched_get_payload({"status": "degraded"}):
+            output = _capture_stdout(cmd_health, args, cfg)
+        self.assertEqual(json.loads(output), "DEGRADED")
+
+    def test_health_default_renders_degraded_for_unknown_status(
+        self,
+    ) -> None:
+        # US-3.2 (extended): an unrecognised status string falls back
+        # to ``"DEGRADED"`` as the documented defensive default --
+        # the renderer does not pass through arbitrary status tokens.
+        cfg = _service_config()
+        args = _namespace(command="health")
+        with _patched_get_payload({"status": "flipping-out"}):
+            output = _capture_stdout(cmd_health, args, cfg)
+        self.assertEqual(json.loads(output), "DEGRADED")
+
+    def test_health_default_legacy_bare_true_renders_ok(self) -> None:
+        # US-3.3: legacy operators whose Maintainerr build still
+        # returns a bare boolean out of ``/api/health/ready`` keep
+        # working -- ``True`` maps to ``"OK"`` so the readiness probe
+        # stays readable.
+        cfg = _service_config()
+        args = _namespace(command="health")
+        with _patched_get_payload(True):
+            output = _capture_stdout(cmd_health, args, cfg)
+        self.assertEqual(json.loads(output), "OK")
+
+    def test_health_default_legacy_bare_false_renders_degraded(self) -> None:
+        # US-3.3: the bare ``False`` legacy shape maps to
+        # ``"DEGRADED"`` so legacy deployments keep working.
+        cfg = _service_config()
+        args = _namespace(command="health")
+        with _patched_get_payload(False):
+            output = _capture_stdout(cmd_health, args, cfg)
+        self.assertEqual(json.loads(output), "DEGRADED")
+
+    def test_health_verbose_emits_verbatim(self) -> None:
+        # US-3.5: ``--verbose`` still emits the verbatim upstream
+        # payload unchanged so JSON consumers that parse the raw
+        # object shape keep working.
+        cfg = _service_config()
+        args = _namespace(command="health", verbose=True)
+        payload = {
+            "status": "ok",
+            "uptimeSeconds": 1234,
+            "database": "ok",
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_health, args, cfg)
+        self.assertEqual(json.loads(output), payload)
 
 
 # ---------------------------------------------------------------------------
@@ -739,8 +1001,10 @@ class TestMainEntryPoint(unittest.TestCase):
         self.assertEqual(json.loads(stdout), payload)
 
     def test_main_health_emits_scalar(self) -> None:
-        # The readiness probe returns a bare boolean; the JSON
-        # pass-through must serialise it as ``true``.
+        # The readiness probe is now a size-to-summary candidate:
+        # the default-mode JSON emits the curated ``OK`` token
+        # (the legacy bare-boolean ``True`` maps to ``"OK"``);
+        # ``--verbose`` is required for the verbatim upstream shape.
         with patch(
             "arr_cli.maintainerr.transport.get",
             return_value=True,
@@ -749,7 +1013,7 @@ class TestMainEntryPoint(unittest.TestCase):
                 main,
                 ["--config", str(self.cfg_path), "health"],
             )
-        self.assertEqual(json.loads(stdout), True)
+        self.assertEqual(json.loads(stdout), "OK")
 
 
 # ---------------------------------------------------------------------------

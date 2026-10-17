@@ -206,6 +206,13 @@ def cmd_pending(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "mediaCount",
         "deleteAfterDays",
         "isOnHold",
+        "arrAction",
+        "addDate",
+        "mediaServerType",
+        "type",
+        "description",
+        "isActive",
+        "visibleOnHome",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -225,11 +232,11 @@ def cmd_storage(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="storage",
     )
     columns = [
-        "name",
-        "total",
+        "mount",
         "used",
         "free",
-        "percentUsed",
+        "total",
+        "usedPercent",
     ]
     return _emit(payload, args, columns=columns)
 

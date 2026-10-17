@@ -711,7 +711,23 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "mediaCount": 42,
             "deleteAfterDays": 14,
             "isOnHold": False,
+            "arrAction": "delete",
+            "addDate": "2026-01-01T00:00:00Z",
+            "mediaServerType": "plex",
+            "type": "movie",
+            "description": "Old movies that have been watched",
+            "isActive": True,
+            "visibleOnHome": False,
             "collectionId": 7,
+        }
+    ],
+    ("maintainerr", "storage"): [
+        {
+            "mount": "/data",
+            "used": 700,
+            "free": 300,
+            "total": 1000,
+            "usedPercent": 70.0,
         }
     ],
 }
@@ -1043,21 +1059,24 @@ class TestEmitHumanVerbatimFallback(unittest.TestCase):
     verbatim when ``(service, command)`` is not in
     :data:`_SUMMARY_RENDERERS` (REQ-2 AC7)."""
 
-    def test_known_non_candidate_radarr_calendar(self) -> None:
+    def test_known_non_candidate_seerr_request_count(self) -> None:
         # After the radarr-human-fields work, ``radarr calendar``
         # became a size-to-summary candidate (it has the
-        # ``_summary_radarr_calendar`` renderer registered). The
-        # canonical non-candidate example is now ``maintainerr
-        # storage`` (the maintainerr storage endpoint has no
-        # registered renderer, so it falls through to verbatim).
+        # ``_summary_radarr_calendar`` renderer registered); after
+        # the sonarr-human-fields work, ``sonarr calendar`` joined
+        # the candidates; after the maintainerr-human-fields work,
+        # ``maintainerr storage`` joined too. The canonical
+        # non-candidate example is now ``seerr request-count`` (the
+        # endpoint has no registered renderer, so it falls through
+        # to verbatim).
         payload = [{"title": "Foo", "releaseDate": "2024-01-01"}]
         out = _capture_stdout(
             emit,
             payload,
             human_mode=True,
             verbose_mode=False,
-            service="maintainerr",
-            command="storage",
+            service="seerr",
+            command="request-count",
         )
         expected_buffer = io.StringIO()
         print(human(payload), file=expected_buffer)
@@ -1494,20 +1513,20 @@ class TestEmitPriorityChain(unittest.TestCase):
 
     def test_default_verbatim_on_non_candidate(self) -> None:
         # REQ-3 AC4: a non-candidate command without flags stays on
-        # verbatim JSON. ``maintainerr storage`` is the canonical
+        # verbatim JSON. ``seerr request-count`` is the canonical
         # non-candidate example (Radarr's calendar became a
         # size-to-summary candidate in radarr-human-fields; Sonarr's
-        # calendar became one in sonarr-human-fields; the
-        # maintainerr storage endpoint still has no registered
-        # renderer).
+        # calendar became one in sonarr-human-fields; maintainerr
+        # storage became one in maintainerr-human-fields; the seerr
+        # request-count endpoint still has no registered renderer).
         payload = [{"title": "Foo"}]
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="maintainerr",
-            command="storage",
+            service="seerr",
+            command="request-count",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -1595,11 +1614,12 @@ class TestServiceCommandThreading(unittest.TestCase):
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
     def test_emit_with_non_candidate_key_emits_verbatim(self) -> None:
-        # A non-candidate command (e.g. ``maintainerr storage``)
+        # A non-candidate command (e.g. ``seerr request-count``)
         # falls through to verbatim even though ``service`` /
         # ``command`` are non-empty. Radarr's calendar became a
         # candidate in radarr-human-fields; Sonarr's calendar became
-        # one in sonarr-human-fields; the maintainerr storage
+        # one in sonarr-human-fields; maintainerr storage became one
+        # in maintainerr-human-fields; the seerr request-count
         # endpoint is the canonical non-candidate example now.
         payload = {"Name": "Foo"}
         out = _capture_stdout(
@@ -1607,8 +1627,8 @@ class TestServiceCommandThreading(unittest.TestCase):
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="maintainerr",
-            command="storage",
+            service="seerr",
+            command="request-count",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -4317,6 +4337,13 @@ class TestSummaryMaintainerrPending(unittest.TestCase):
                 "mediaCount": 42,
                 "deleteAfterDays": 14,
                 "isOnHold": False,
+                "arrAction": "delete",
+                "addDate": "2026-01-01T00:00:00Z",
+                "mediaServerType": "plex",
+                "type": "movie",
+                "description": "Old movies that have been watched",
+                "isActive": True,
+                "visibleOnHome": False,
             }
         ]
         rendered = _SUMMARY_RENDERERS[("maintainerr", "pending")](payload)
@@ -4327,6 +4354,13 @@ class TestSummaryMaintainerrPending(unittest.TestCase):
                 "mediaCount": 42,
                 "deleteAfterDays": 14,
                 "isOnHold": False,
+                "arrAction": "delete",
+                "addDate": "2026-01-01T00:00:00Z",
+                "mediaServerType": "plex",
+                "type": "movie",
+                "description": "Old movies that have been watched",
+                "isActive": True,
+                "visibleOnHome": False,
             },
         )
 
@@ -4335,6 +4369,191 @@ class TestSummaryMaintainerrPending(unittest.TestCase):
             _SUMMARY_RENDERERS[("maintainerr", "pending")](None),
             [],
         )
+
+
+class TestSummaryMaintainerrStorage(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("maintainerr", "storage")]`` matches the spec."""
+
+    def _renderer(self) -> Any:
+        return _SUMMARY_RENDERERS[("maintainerr", "storage")]
+
+    def test_instances_envelope_flattened_one_row_per_instance(self) -> None:
+        # US-2.1: when ``instances`` is a non-empty list, the
+        # renderer emits one row per instance with mount/used/
+        # free/total/usedPercent.
+        payload = [
+            {
+                "name": "media",
+                "instances": [
+                    {
+                        "mount": "/data",
+                        "used": 700,
+                        "free": 300,
+                        "total": 1000,
+                        "usedPercent": 70.0,
+                    },
+                    {
+                        "mount": "/backup",
+                        "used": 100,
+                        "free": 900,
+                        "total": 1000,
+                        "usedPercent": 10.0,
+                    },
+                ],
+            }
+        ]
+        rendered = self._renderer()(payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "mount": "/data",
+                    "used": 700,
+                    "free": 300,
+                    "total": 1000,
+                    "usedPercent": 70.0,
+                },
+                {
+                    "mount": "/backup",
+                    "used": 100,
+                    "free": 900,
+                    "total": 1000,
+                    "usedPercent": 10.0,
+                },
+            ],
+        )
+
+    def test_parent_fallback_when_instances_missing(self) -> None:
+        # US-2.2: when ``instances`` is absent (legacy Maintainerr
+        # build) the renderer emits a single row from the parent
+        # item's mount/used/free/total/usedPercent keys.
+        payload = [
+            {
+                "mount": "/data",
+                "used": 700,
+                "free": 300,
+                "total": 1000,
+                "usedPercent": 70.0,
+            }
+        ]
+        rendered = self._renderer()(payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "mount": "/data",
+                    "used": 700,
+                    "free": 300,
+                    "total": 1000,
+                    "usedPercent": 70.0,
+                }
+            ],
+        )
+
+    def test_parent_fallback_when_instances_empty(self) -> None:
+        # US-2.2 (extended): an empty ``instances`` array also falls
+        # back to the parent row so the renderer stays well-formed
+        # even on sparse upstream payloads.
+        payload = [
+            {
+                "mount": "/data",
+                "used": 700,
+                "free": 300,
+                "total": 1000,
+                "usedPercent": 70.0,
+                "instances": [],
+            }
+        ]
+        rendered = self._renderer()(payload)
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "mount": "/data",
+                    "used": 700,
+                    "free": 300,
+                    "total": 1000,
+                    "usedPercent": 70.0,
+                }
+            ],
+        )
+
+    def test_non_list_returns_empty_list(self) -> None:
+        # US-2.4: a non-list payload returns ``[]`` so the human
+        # renderer prints ``(empty list)`` rather than crashing.
+        for value in (None, {}, "foo", 42):
+            self.assertEqual(
+                self._renderer()(value),
+                [],
+                msg=f"expected empty list for {value!r}",
+            )
+
+    def test_missing_fields_default_to_null(self) -> None:
+        # US-2.3: when an instance row is missing one of the
+        # audit-asked fields the cell renders as ``None`` (the
+        # documented safe-default contract of ``_safe_get``).
+        rendered = self._renderer()(
+            [{"instances": [{"mount": "/data"}]}]
+        )
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        self.assertEqual(row["mount"], "/data")
+        self.assertEqual(row["used"], 0)
+        self.assertEqual(row["free"], 0)
+        self.assertEqual(row["total"], 0)
+        self.assertEqual(row["usedPercent"], 0.0)
+
+
+class TestSummaryMaintainerrHealth(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("maintainerr", "health")]`` matches the spec."""
+
+    def _renderer(self) -> Any:
+        return _SUMMARY_RENDERERS[("maintainerr", "health")]
+
+    def test_status_ok_returns_ok(self) -> None:
+        # US-3.1: ``{status: "ok"}`` maps to the ``"OK"`` token.
+        self.assertEqual(self._renderer()({"status": "ok"}), "OK")
+
+    def test_status_degraded_returns_degraded(self) -> None:
+        # US-3.2: a non-``"ok"`` status (e.g. ``"degraded"``,
+        # ``"down"``, ``"unhealthy"``) maps to ``"DEGRADED"``.
+        for status in ("degraded", "down", "unhealthy", ""):
+            self.assertEqual(
+                self._renderer()({"status": status}),
+                "DEGRADED",
+                msg=f"status {status!r} should map to DEGRADED",
+            )
+
+    def test_missing_status_returns_degraded(self) -> None:
+        # US-3.4: a Mapping without a ``status`` key falls back to
+        # ``"DEGRADED"`` as the documented defensive default.
+        self.assertEqual(self._renderer()({}), "DEGRADED")
+        self.assertEqual(
+            self._renderer()({"uptimeSeconds": 1234}),
+            "DEGRADED",
+        )
+
+    def test_legacy_bare_true_returns_ok(self) -> None:
+        # US-3.3: the historical bare-boolean contract -- ``True``
+        # maps to ``"OK"`` so legacy operators that still see a bare
+        # boolean out of older Maintainerr builds keep working.
+        self.assertEqual(self._renderer()(True), "OK")
+
+    def test_legacy_bare_false_returns_degraded(self) -> None:
+        # US-3.3: ``False`` maps to ``"DEGRADED"`` -- the legacy
+        # bare-boolean contract.
+        self.assertEqual(self._renderer()(False), "DEGRADED")
+
+    def test_non_mapping_non_bool_returns_degraded(self) -> None:
+        # US-3.4: any non-Mapping / non-bool shape (list, scalar,
+        # None) maps to ``"DEGRADED"`` as the documented defensive
+        # default.
+        for value in ([], [1, 2], None, 42, "foo"):
+            self.assertEqual(
+                self._renderer()(value),
+                "DEGRADED",
+                msg=f"value {value!r} should map to DEGRADED",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -5003,6 +5222,14 @@ def _columns_for(service: str, command: str) -> list[str]:
             "firstAired",
             "lastAired",
         ]
+    if (service, command) == ("maintainerr", "health"):
+        # The health summary is a scalar (``"OK"`` / ``"DEGRADED"``);
+        # ``cmd_health`` deliberately passes ``columns=None`` to
+        # :func:`emit` so the output module's scalar branch renders
+        # the result. The override returns an empty list so the
+        # column-token sweeps see ``columns = []`` and skip the
+        # per-row ``<null>`` check.
+        return []
     module = importlib.import_module(f"arr_cli.{service}")
     source = inspect.getsource(module)
     tree = ast.parse(source)
@@ -5470,8 +5697,27 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "mediaCount": 42,
                 "deleteAfterDays": 14,
                 "isOnHold": False,
+                "arrAction": "delete",
+                "addDate": "2026-01-01T00:00:00Z",
+                "mediaServerType": "plex",
+                "type": "movie",
+                "description": "Old movies that have been watched",
+                "isActive": True,
+                "visibleOnHome": False,
             }
         ],
+        ("maintainerr", "storage"): [
+            {
+                "mount": "/data",
+                "used": 700,
+                "free": 300,
+                "total": 1000,
+                "usedPercent": 70.0,
+            }
+        ],
+        ("maintainerr", "health"): {
+            "status": "ok",
+        },
         ("seerr", "discover-movies"): [
             {
                 "title": "Foo",
