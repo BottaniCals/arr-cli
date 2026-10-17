@@ -330,10 +330,23 @@ class TestCmdUserHttpErrors(unittest.TestCase):
             self.assertEqual(len(rsps.calls), 1)
         self.assertEqual(exit_code, 0)
         # Stdout is the JSON user object pipe-clean so downstream
-        # consumers can parse it directly. The renderer keeps the
-        # default summary path for object payloads (no tabular
-        # columns are registered for ``user``).
-        self.assertEqual(json.loads(stdout), user_payload)
+        # consumers can parse it directly. The renderer is now
+        # registered in ``_SUMMARY_RENDERERS`` so the default-mode
+        # JSON surfaces the curated five-key projection
+        # (US-4 AC1). Missing audit-asked fields (``userType``,
+        # ``permissions``, ``requestCount``) project as ``None``
+        # per the documented ``_safe_get`` / ``<null>``-on-missing
+        # contract (US-4 AC2).
+        self.assertEqual(
+            json.loads(stdout),
+            {
+                "username": "alice",
+                "email": "alice@example.com",
+                "userType": None,
+                "permissions": None,
+                "requestCount": None,
+            },
+        )
         # Nothing on stderr in the success path.
         self.assertEqual(stderr, "")
 

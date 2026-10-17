@@ -730,6 +730,14 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "usedPercent": 70.0,
         }
     ],
+    ("seerr", "user"): {
+        "id": 1,
+        "username": "alice",
+        "email": "alice@example.com",
+        "userType": 1,
+        "permissions": ["ADMIN", "MANAGE_REQUESTS"],
+        "requestCount": 42,
+    },
 }
 
 
@@ -4198,10 +4206,14 @@ class TestSummarySeerrTv(unittest.TestCase):
             "name": "Doctor Who",
             "originalName": "Doctor Who",
             "firstAirDate": "2005-03-26",
+            "lastAirDate": "2023-12-25",
             "genres": [{"name": "Action & Adventure"}],
             "networks": [{"name": "BBC One"}],
             "numberOfSeasons": 13,
+            "numberOfEpisodes": 175,
+            "overview": "The Doctor travels through time and space.",
             "status": "Ended",
+            "mediaInfo": {"status": 4},
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "tv")](payload)
         self.assertEqual(
@@ -4210,10 +4222,14 @@ class TestSummarySeerrTv(unittest.TestCase):
                 "name": "Doctor Who",
                 "originalName": "Doctor Who",
                 "firstAirDate": "2005-03-26",
+                "lastAirDate": "2023-12-25",
+                "numberOfSeasons": 13,
+                "numberOfEpisodes": 175,
                 "genres": "Action & Adventure",
                 "networks": "BBC One",
-                "numberOfSeasons": 13,
+                "overview": "The Doctor travels through time and space.",
                 "status": "Ended",
+                "mediaInfoStatus": 4,
                 "ratings": None,
             },
         )
@@ -4233,6 +4249,12 @@ class TestSummarySeerrTv(unittest.TestCase):
         # as "the show has no genres".
         self.assertIsNone(rendered["genres"])
         self.assertIsNone(rendered["networks"])
+        # Missing audit-asked fields also default to ``None`` /
+        # ``0`` so the renderer stays well-formed on sparse payloads.
+        self.assertIsNone(rendered["lastAirDate"])
+        self.assertEqual(rendered["numberOfEpisodes"], 0)
+        self.assertIsNone(rendered["overview"])
+        self.assertIsNone(rendered["mediaInfoStatus"])
 
     def test_tv_ratings_merged_under_ratings_key(self) -> None:
         payload = {
@@ -4276,6 +4298,9 @@ class TestSummarySeerrMovie(unittest.TestCase):
                 {"id": 878, "name": "Science Fiction"},
             ],
             "tagline": "Welcome to the Real World.",
+            "overview": "A computer hacker learns the truth about his reality.",
+            "status": "Released",
+            "mediaInfo": {"status": 4},
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
         # Raw runtime minutes ``136`` reformats as ``"2h 16m"``;
@@ -4290,6 +4315,9 @@ class TestSummarySeerrMovie(unittest.TestCase):
                 "runtime": "2h 16m",
                 "genres": "Action, Science Fiction",
                 "tagline": "Welcome to the Real World.",
+                "overview": "A computer hacker learns the truth about his reality.",
+                "status": "Released",
+                "mediaInfoStatus": 4,
                 "ratings": None,
             },
         )
@@ -4308,6 +4336,11 @@ class TestSummarySeerrMovie(unittest.TestCase):
         # instead of an empty cell that masquerades as "the
         # movie has no genres".
         self.assertIsNone(rendered["genres"])
+        # Missing audit-asked fields default to ``None`` so the
+        # renderer stays well-formed on sparse payloads.
+        self.assertIsNone(rendered["overview"])
+        self.assertIsNone(rendered["status"])
+        self.assertIsNone(rendered["mediaInfoStatus"])
 
     def test_movie_missing_runtime_renders_none(self) -> None:
         payload = {
@@ -5811,6 +5844,17 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "name": "Action",
             }
         ],
+        ("seerr", "user"): {
+            "id": 1,
+            "username": "alice",
+            "email": "alice@example.com",
+            "userType": 1,
+            "permissions": [
+                "ADMIN",
+                "MANAGE_REQUESTS",
+            ],
+            "requestCount": 42,
+        },
     }
     return payloads[(svc, cmd)]
 
