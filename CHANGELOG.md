@@ -42,6 +42,30 @@ within the pre-1.0 contract documented in `README.md`.
   curated single-record table (`title`, `year`, `status`,
   `monitored`, `hasFile`, `genres`, `overview`, `added`, `studio`)
   instead of dumping the raw Radarr JSON.
+- `sonarr --human`: every size-to-summary table now carries the
+  audit-requested fields. `sonarr calendar` adds `monitored`,
+  `hasFile`, `runtime` formatted as `"<X>h <Y>m"`, and a truncated
+  `overview`; `sonarr wanted` adds `hasFile`, `runtime`, `overview`,
+  and `series.title`; `sonarr queue` adds `series.title`,
+  `episode`, `quality`, and `timeLeft` (the pre-change `status`
+  stays in its existing position and is not re-appended at the
+  tail; no `progress` column is invented); `sonarr recent` adds
+  `language` and `client` (lifted from `downloadClient`);
+  `sonarr lookup` adds `statistics`, `genres`, `overview`, and
+  `status`; `sonarr series` (library list) adds `statistics`,
+  `genres`, `firstAired`, and `lastAired`. The new
+  `_format_episode_progress` helper formats
+  `statistics.episodeFileCount / statistics.episodeCount` as
+  `"<file>/<total>"`; existing helpers `_format_runtime_minutes_whole`,
+  `_truncate_overview`, and `_join_names` are reused.
+- `sonarr series <id>`: registered a new `_summary_sonarr_series_id`
+  renderer in `_SUMMARY_RENDERERS`, so the command now returns a
+  curated single-record table (`title`, `year`, `runtime`,
+  `status`, `monitored`, `statistics`, `genres`, `firstAired`,
+  `lastAired`) instead of dumping the raw Sonarr JSON. The
+  with-id branch dispatches on `("sonarr", "series_id")` via the
+  `command=` kwarg so the renderer routes correctly while sharing
+  the same argparse subcommand name with the no-id branch.
 
 ## [0.1.0]
 

@@ -580,6 +580,10 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "episodeNumber": 1,
             "airDate": "2024-01-01",
             "monitored": True,
+            "hasFile": False,
+            "runtime": 45,
+            "overview": "An overview.",
+            "series": {"title": "Severance"},
             "seriesId": 7,
         }
     ],
@@ -590,6 +594,10 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "trackedDownloadStatus": "ok",
             "size": 1000,
             "sizeleft": 500,
+            "series": {"title": "Severance"},
+            "episode": {"title": "The Work Is Never Done"},
+            "quality": {"quality": {"name": "WEBDL-1080p"}},
+            "timeleft": "00:30:00",
             "downloadClient": "qbit",
         }
     ],
@@ -602,6 +610,62 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "eventType": "downloadFolderImported",
             "date": "2024-06-01T00:00:00Z",
             "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+            "language": {"name": "English"},
+            "downloadClient": "qbit",
+        }
+    ],
+    ("sonarr", "calendar"): [
+        {
+            "title": "Pilot",
+            "seasonNumber": 1,
+            "episodeNumber": 1,
+            "airDate": "2024-01-01",
+            "series": {"title": "Severance"},
+            "monitored": True,
+            "hasFile": False,
+            "runtime": 45,
+            "overview": "An overview.",
+        }
+    ],
+    ("sonarr", "lookup"): [
+        {
+            "title": "Doctor Who",
+            "year": 2005,
+            "tvdbId": 78804,
+            "tvMazeId": 210,
+            "id": None,
+            "monitored": True,
+            "statistics": {"episodeFileCount": 0, "episodeCount": 13},
+            "genres": [{"name": "Sci-Fi"}],
+            "overview": "An overview.",
+            "status": "continuing",
+        }
+    ],
+    ("sonarr", "series"): [
+        {
+            "title": "Severance",
+            "year": 2022,
+            "monitored": True,
+            "status": "continuing",
+            "tvdbId": 371918,
+            "seasons": [],
+            "statistics": {"episodeFileCount": 0, "episodeCount": 9},
+            "genres": [{"name": "Drama"}],
+            "firstAired": "2022-02-17T00:00:00Z",
+            "lastAired": "2022-04-17T00:00:00Z",
+        }
+    ],
+    ("sonarr", "series_id"): [
+        {
+            "title": "Severance",
+            "year": 2022,
+            "runtime": 45,
+            "status": "continuing",
+            "monitored": True,
+            "statistics": {"episodeFileCount": 0, "episodeCount": 9},
+            "genres": [{"name": "Drama"}],
+            "firstAired": "2022-02-17T00:00:00Z",
+            "lastAired": "2022-04-17T00:00:00Z",
         }
     ],
     ("seerr", "requests"): [
@@ -983,17 +1047,17 @@ class TestEmitHumanVerbatimFallback(unittest.TestCase):
         # After the radarr-human-fields work, ``radarr calendar``
         # became a size-to-summary candidate (it has the
         # ``_summary_radarr_calendar`` renderer registered). The
-        # canonical non-candidate example is now ``sonarr
-        # calendar`` (Sonarr's calendar endpoint has no registered
-        # renderer, so it falls through to verbatim).
+        # canonical non-candidate example is now ``maintainerr
+        # storage`` (the maintainerr storage endpoint has no
+        # registered renderer, so it falls through to verbatim).
         payload = [{"title": "Foo", "releaseDate": "2024-01-01"}]
         out = _capture_stdout(
             emit,
             payload,
             human_mode=True,
             verbose_mode=False,
-            service="sonarr",
-            command="calendar",
+            service="maintainerr",
+            command="storage",
         )
         expected_buffer = io.StringIO()
         print(human(payload), file=expected_buffer)
@@ -1430,18 +1494,20 @@ class TestEmitPriorityChain(unittest.TestCase):
 
     def test_default_verbatim_on_non_candidate(self) -> None:
         # REQ-3 AC4: a non-candidate command without flags stays on
-        # verbatim JSON. ``sonarr calendar`` is the canonical
+        # verbatim JSON. ``maintainerr storage`` is the canonical
         # non-candidate example (Radarr's calendar became a
         # size-to-summary candidate in radarr-human-fields; Sonarr's
-        # calendar still has no registered renderer).
+        # calendar became one in sonarr-human-fields; the
+        # maintainerr storage endpoint still has no registered
+        # renderer).
         payload = [{"title": "Foo"}]
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="sonarr",
-            command="calendar",
+            service="maintainerr",
+            command="storage",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -1529,19 +1595,20 @@ class TestServiceCommandThreading(unittest.TestCase):
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
     def test_emit_with_non_candidate_key_emits_verbatim(self) -> None:
-        # A non-candidate command (e.g. ``sonarr calendar``) falls
-        # through to verbatim even though ``service`` / ``command``
-        # are non-empty. Radarr's calendar became a candidate in
-        # radarr-human-fields, so this test pins a different
-        # non-candidate command instead.
+        # A non-candidate command (e.g. ``maintainerr storage``)
+        # falls through to verbatim even though ``service`` /
+        # ``command`` are non-empty. Radarr's calendar became a
+        # candidate in radarr-human-fields; Sonarr's calendar became
+        # one in sonarr-human-fields; the maintainerr storage
+        # endpoint is the canonical non-candidate example now.
         payload = {"Name": "Foo"}
         out = _capture_stdout(
             emit,
             payload,
             human_mode=False,
             verbose_mode=False,
-            service="sonarr",
-            command="calendar",
+            service="maintainerr",
+            command="storage",
         )
         self.assertEqual(out, json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -2813,6 +2880,10 @@ class TestSummarySonarrWanted(unittest.TestCase):
                 "episodeNumber": 1,
                 "airDate": "2024-01-01",
                 "monitored": True,
+                "hasFile": False,
+                "runtime": 45,
+                "overview": "An overview.",
+                "series": {"title": "Severance"},
             }
         ]
         rendered = _SUMMARY_RENDERERS[("sonarr", "wanted")](payload)
@@ -2824,6 +2895,10 @@ class TestSummarySonarrWanted(unittest.TestCase):
                 "episodeNumber": 1,
                 "airDate": "2024-01-01",
                 "monitored": True,
+                "hasFile": False,
+                "runtime": "0h 45m",
+                "overview": "An overview.",
+                "series.title": "Severance",
             },
         )
 
@@ -2845,6 +2920,10 @@ class TestSummarySonarrQueue(unittest.TestCase):
                 "trackedDownloadStatus": "ok",
                 "size": 1000,
                 "sizeleft": 500,
+                "series": {"title": "Severance"},
+                "episode": {"title": "The Work Is Never Done"},
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "timeleft": "00:30:00",
             }
         ]
         rendered = _SUMMARY_RENDERERS[("sonarr", "queue")](payload)
@@ -2856,6 +2935,10 @@ class TestSummarySonarrQueue(unittest.TestCase):
                 "trackedDownloadStatus": "ok",
                 "size": 1000,
                 "sizeleft": 500,
+                "series.title": "Severance",
+                "episode": "The Work Is Never Done",
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "timeLeft": "00:30:00",
             },
         )
 
@@ -2880,6 +2963,10 @@ class TestSummarySonarrQueue(unittest.TestCase):
                     "trackedDownloadStatus": "ok",
                     "size": 1000,
                     "sizeleft": 500,
+                    "series": {"title": "Severance"},
+                    "episode": {"title": "Pilot"},
+                    "quality": {"quality": {"name": "WEBDL-1080p"}},
+                    "timeleft": "00:30:00",
                 }
             ],
         }
@@ -2893,6 +2980,10 @@ class TestSummarySonarrQueue(unittest.TestCase):
                     "trackedDownloadStatus": "ok",
                     "size": 1000,
                     "sizeleft": 500,
+                    "series.title": "Severance",
+                    "episode": "Pilot",
+                    "quality": {"quality": {"name": "WEBDL-1080p"}},
+                    "timeLeft": "00:30:00",
                 }
             ],
         )
@@ -2923,6 +3014,8 @@ class TestSummarySonarrRecent(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
                 "series": {"title": "Star Trek: Strange New Worlds"},
                 "episode": {"title": "Orders of Magnitude"},
             }
@@ -2940,6 +3033,8 @@ class TestSummarySonarrRecent(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "client": "qbit",
             },
         )
 
@@ -2958,6 +3053,8 @@ class TestSummarySonarrRecent(unittest.TestCase):
                 "eventType": "x",
                 "date": "y",
                 "quality": None,
+                "language": None,
+                "client": None,
             },
         )
 
@@ -4411,6 +4508,10 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "episodeNumber": 1,
                     "airDate": "2024-01-01",
                     "monitored": True,
+                    "hasFile": False,
+                    "runtime": 45,
+                    "overview": "An overview.",
+                    "series": {"title": "Severance"},
                 }
             ],
         }
@@ -4424,6 +4525,10 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "episodeNumber": 1,
                     "airDate": "2024-01-01",
                     "monitored": True,
+                    "hasFile": False,
+                    "runtime": "0h 45m",
+                    "overview": "An overview.",
+                    "series.title": "Severance",
                 }
             ],
         )
@@ -4442,6 +4547,8 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "eventType": "downloadFolderImported",
                     "date": "2024-06-01",
                     "quality": {"quality": {"name": "WEBDL-1080p"}},
+                    "language": {"name": "English"},
+                    "downloadClient": "qbit",
                 }
             ],
         }
@@ -4459,6 +4566,8 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "eventType": "downloadFolderImported",
                     "date": "2024-06-01",
                     "quality": {"quality": {"name": "WEBDL-1080p"}},
+                    "language": {"name": "English"},
+                    "client": "qbit",
                 }
             ],
         )
@@ -4544,6 +4653,10 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "episodeNumber": 1,
                 "airDate": "2024-01-01",
                 "monitored": True,
+                "hasFile": False,
+                "runtime": 45,
+                "overview": "An overview.",
+                "series": {"title": "Severance"},
             }
         ]
         rendered = _SUMMARY_RENDERERS[("sonarr", "wanted")](payload)
@@ -4555,6 +4668,10 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "episodeNumber": 1,
                 "airDate": "2024-01-01",
                 "monitored": True,
+                "hasFile": False,
+                "runtime": "0h 45m",
+                "overview": "An overview.",
+                "series.title": "Severance",
             },
         )
 
@@ -4568,6 +4685,8 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
             }
         ]
         rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
@@ -4583,6 +4702,8 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "client": "qbit",
             },
         )
 
@@ -4618,6 +4739,8 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                     "eventType": "downloadFolderImported",
                     "series": {"title": "Star Trek: Strange New Worlds"},
                     "episode": {"title": "Orders of Magnitude"},
+                    "language": {"name": "English"},
+                    "downloadClient": "qbit",
                 }
             ],
         }
@@ -4638,6 +4761,8 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2026-09-18T01:59:01Z",
                 "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "client": "qbit",
             },
         )
         # Nested-object projection: Sonarr populates these when the
@@ -4852,6 +4977,31 @@ def _columns_for(service: str, command: str) -> list[str]:
             "overview",
             "added",
             "studio",
+        ]
+    if (service, command) == ("sonarr", "series_id"):
+        return [
+            "title",
+            "year",
+            "runtime",
+            "status",
+            "monitored",
+            "statistics",
+            "genres",
+            "firstAired",
+            "lastAired",
+        ]
+    if (service, command) == ("sonarr", "series"):
+        return [
+            "title",
+            "year",
+            "monitored",
+            "status",
+            "tvdbId",
+            "seasons",
+            "statistics",
+            "genres",
+            "firstAired",
+            "lastAired",
         ]
     module = importlib.import_module(f"arr_cli.{service}")
     source = inspect.getsource(module)
@@ -5142,6 +5292,10 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "episodeNumber": 2,
                 "airDate": "2024-01-01",
                 "monitored": True,
+                "hasFile": False,
+                "runtime": 45,
+                "overview": "An overview.",
+                "series": {"title": "Severance"},
             }
         ],
         ("sonarr", "queue"): [
@@ -5151,6 +5305,10 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "trackedDownloadStatus": "ok",
                 "size": 1000,
                 "sizeleft": 500,
+                "series": {"title": "Severance"},
+                "episode": {"title": "The Work Is Never Done"},
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "timeleft": "00:30:00",
             }
         ],
         ("sonarr", "recent"): [
@@ -5162,10 +5320,63 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01T00:00:00Z",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
                 "series": {"title": "Severance"},
                 "episode": {"title": "The Work Is Never Done"},
             }
         ],
+        ("sonarr", "calendar"): [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "series": {"title": "Severance"},
+                "monitored": True,
+                "hasFile": False,
+                "runtime": 45,
+                "overview": "An overview.",
+            }
+        ],
+        ("sonarr", "lookup"): [
+            {
+                "title": "Doctor Who",
+                "year": 2005,
+                "tvdbId": 78804,
+                "tvMazeId": 210,
+                "monitored": True,
+                "statistics": {"episodeFileCount": 42, "episodeCount": 85},
+                "genres": [{"name": "Sci-Fi"}],
+                "overview": "An overview.",
+                "status": "continuing",
+            }
+        ],
+        ("sonarr", "series"): [
+            {
+                "title": "Severance",
+                "year": 2022,
+                "monitored": True,
+                "status": "continuing",
+                "tvdbId": 371918,
+                "seasons": [],
+                "statistics": {"episodeFileCount": 42, "episodeCount": 85},
+                "genres": [{"name": "Drama"}],
+                "firstAired": "2022-02-17T00:00:00Z",
+                "lastAired": "2022-04-17T00:00:00Z",
+            }
+        ],
+        ("sonarr", "series_id"): {
+            "title": "Severance",
+            "year": 2022,
+            "runtime": 45,
+            "status": "continuing",
+            "monitored": True,
+            "statistics": {"episodeFileCount": 42, "episodeCount": 85},
+            "genres": [{"name": "Drama"}],
+            "firstAired": "2022-02-17T00:00:00Z",
+            "lastAired": "2022-04-17T00:00:00Z",
+        },
         ("seerr", "requests"): [
             {
                 "type": "movie",

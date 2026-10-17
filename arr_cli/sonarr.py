@@ -130,19 +130,29 @@ def _emit(
     args: argparse.Namespace,
     *,
     columns: Sequence[str] | None = None,
+    command: str | None = None,
 ) -> int:
     """Render ``payload`` via :func:`output.emit` and return exit code 0.
 
     Centralised so every command handler has the same JSON-vs-tabular
     decision point; the per-command handler only decides which columns
     to surface when ``--human`` is requested.
+
+    The ``command`` kwarg overrides ``args.command`` for the dispatch
+    table lookup -- used by ``cmd_series`` to distinguish the no-id
+    branch (dispatches on ``("sonarr", "series")``) from the with-id
+    branch (dispatches on ``("sonarr", "series_id")``); the
+    argparse subcommand is the same ``"series"`` for both branches.
+    Mirrors the radarr ``_emit`` ``command=`` kwarg.
     """
     output.emit(
         payload,
         human_mode=bool(getattr(args, "human", False)),
         verbose_mode=bool(getattr(args, "verbose", False)),
         service=SERVICE_NAME,
-        command=str(getattr(args, "command", "") or ""),
+        command=command if command is not None else str(
+            getattr(args, "command", "") or ""
+        ),
         columns=columns,
         limit=int(getattr(args, "limit", 20) or 20),
     )
@@ -205,13 +215,22 @@ def cmd_calendar(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     )
     # Sonarr's calendar payload is an array of episodes with
     # ``series`` and ``episode`` nested objects; pick the columns
-    # to surface for human-rendering.
+    # to surface for human-rendering. The audit-asked columns
+    # (``monitored``, ``hasFile``, ``runtime`` formatted as
+    # ``"<X>h <Y>m"`` via ``_format_runtime_minutes_whole``, and a
+    # truncated ``overview`` via ``_truncate_overview``) are
+    # appended after the pre-change columns so the audit request
+    # stays additive-only.
     columns = [
         "title",
         "seasonNumber",
         "episodeNumber",
         "airDate",
         "series.title",
+        "monitored",
+        "hasFile",
+        "runtime",
+        "overview",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -227,13 +246,22 @@ def cmd_wanted(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # Tabular columns match the summary-shape keys emitted by
     # ``_summary_sonarr_wanted`` (flat top-level keys); the summary
     # renderer does not emit ``seriesId`` so it is intentionally
-    # absent from the column list.
+    # absent from the column list. The audit-asked columns
+    # (``hasFile``, ``runtime`` formatted as ``"<X>h <Y>m"`` via
+    # ``_format_runtime_minutes_whole``, a truncated ``overview``
+    # via ``_truncate_overview``, and ``series.title`` lifted
+    # from the nested ``series`` envelope) are appended after the
+    # pre-change columns so the audit request stays additive-only.
     columns = [
         "title",
         "seasonNumber",
         "episodeNumber",
         "airDate",
         "monitored",
+        "hasFile",
+        "runtime",
+        "overview",
+        "series.title",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -247,13 +275,25 @@ def cmd_queue(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         op="queue",
     )
     # Tabular columns match the summary-shape keys emitted by
-    # ``_summary_sonarr_queue`` (flat top-level keys).
+    # ``_summary_sonarr_queue`` (flat top-level keys). The audit-
+    # asked columns (``series.title`` lifted from the nested
+    # ``series`` envelope, ``episode`` projected from the nested
+    # ``episode`` envelope, ``quality`` from the flat ``quality``
+    # key, and ``timeLeft`` lifted from ``timeleft``) are
+    # appended after the pre-change columns. ``status`` is a pre-
+    # change column and MUST NOT be re-appended at the tail; the
+    # audit does not add a ``progress`` column and none should be
+    # invented.
     columns = [
         "title",
         "status",
         "trackedDownloadStatus",
         "size",
         "sizeleft",
+        "series.title",
+        "episode",
+        "quality",
+        "timeLeft",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -302,7 +342,10 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # ``episode.title`` are resolved via dot-path traversal in
     # ``_row_from_mapping``. ``sourceTitle`` is retained as a
     # download-path audit trail (dropping it would widen the fix's
-    # blast radius beyond the sister Radarr fix).
+    # blast radius beyond the sister Radarr fix). The audit-asked
+    # columns (``language`` and ``client`` lifted from
+    # ``downloadClient``) are appended after the pre-change
+    # columns so the audit request stays additive-only.
     columns = [
         "series.title",
         "episode.title",
@@ -310,6 +353,8 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "date",
         "sourceTitle",
         "quality",
+        "language",
+        "client",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -347,6 +392,10 @@ def cmd_lookup(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "tvMazeId",
         "id",
         "monitored",
+        "statistics",
+        "genres",
+        "overview",
+        "status",
     ]
     if not term:
         # Short-circuit on empty term to ``[]``; mirrors the
@@ -386,15 +435,22 @@ def cmd_series(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             op=f"series id={raw_id}",
         )
         # Single-id row is the operator's library row; columns match
-        # the original REQ-8 AC7 contract and stay unchanged here
-        # (REQ-4 only renames the column on the lookup endpoint).
+        # the audit-asked shape (see _summary_sonarr_series_id). The
+        # ``command="series_id"`` kwarg overrides ``args.command``
+        # so the dispatcher routes to ``("sonarr", "series_id")``
+        # rather than ``("sonarr", "series")``; both branches share
+        # the same argparse subcommand name (mirrors the radarr
+        # ``cmd_movie`` with-id branch).
         columns = [
             "title",
             "year",
             "runtime",
-            "genres",
-            "monitored",
             "status",
+            "monitored",
+            "statistics",
+            "genres",
+            "firstAired",
+            "lastAired",
         ]
     else:
         payload = _get(
@@ -403,10 +459,10 @@ def cmd_series(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             cfg,
             op="series",
         )
-        # Library-list columns are pinned by REQ-1 AC2: the rendered
-        # table MUST show exactly these six columns in this order.
-        # ``monitored`` here is the operator's library flag on a
-        # library row, not the source default that REQ-4 renames.
+        # Library-list columns match the audit-asked shape (see
+        # _summary_sonarr_series). ``monitored`` here is the
+        # operator's library flag on a library row, not the source
+        # default that REQ-4 renames.
         columns = [
             "title",
             "year",
@@ -414,8 +470,17 @@ def cmd_series(args: argparse.Namespace, cfg: ServiceConfig) -> int:
             "status",
             "tvdbId",
             "seasons",
+            "statistics",
+            "genres",
+            "firstAired",
+            "lastAired",
         ]
-    return _emit(payload, args, columns=columns)
+    return _emit(
+        payload,
+        args,
+        columns=columns,
+        command="series_id" if raw_id else None,
+    )
 
 
 # ---------------------------------------------------------------------------
