@@ -711,6 +711,13 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "mediaCount": 42,
             "deleteAfterDays": 14,
             "isOnHold": False,
+            "arrAction": "delete",
+            "addDate": "2026-01-01T00:00:00Z",
+            "mediaServerType": "plex",
+            "type": "movie",
+            "description": "Old movies that have been watched",
+            "isActive": True,
+            "visibleOnHome": False,
             "collectionId": 7,
         }
     ],
@@ -4317,6 +4324,13 @@ class TestSummaryMaintainerrPending(unittest.TestCase):
                 "mediaCount": 42,
                 "deleteAfterDays": 14,
                 "isOnHold": False,
+                "arrAction": "delete",
+                "addDate": "2026-01-01T00:00:00Z",
+                "mediaServerType": "plex",
+                "type": "movie",
+                "description": "Old movies that have been watched",
+                "isActive": True,
+                "visibleOnHome": False,
             }
         ]
         rendered = _SUMMARY_RENDERERS[("maintainerr", "pending")](payload)
@@ -4327,6 +4341,13 @@ class TestSummaryMaintainerrPending(unittest.TestCase):
                 "mediaCount": 42,
                 "deleteAfterDays": 14,
                 "isOnHold": False,
+                "arrAction": "delete",
+                "addDate": "2026-01-01T00:00:00Z",
+                "mediaServerType": "plex",
+                "type": "movie",
+                "description": "Old movies that have been watched",
+                "isActive": True,
+                "visibleOnHome": False,
             },
         )
 
@@ -5470,6 +5491,13 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "mediaCount": 42,
                 "deleteAfterDays": 14,
                 "isOnHold": False,
+                "arrAction": "delete",
+                "addDate": "2026-01-01T00:00:00Z",
+                "mediaServerType": "plex",
+                "type": "movie",
+                "description": "Old movies that have been watched",
+                "isActive": True,
+                "visibleOnHome": False,
             }
         ],
         ("seerr", "discover-movies"): [

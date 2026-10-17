@@ -2314,7 +2314,31 @@ def _summary_radarr_lookup(payload: Any) -> list[dict[str, Any]]:
 
 
 def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
-    """Render a Maintainerr ``pending`` payload as the curated summary."""
+    """Render a Maintainerr ``pending`` payload as the curated summary.
+
+    ``GET /api/collections/overlay-data`` returns the per-collection
+    overlay records Maintainerr uses to decide what is about to be
+    cleaned up. The pre-change projection surfaced ``title``,
+    ``mediaCount``, ``deleteAfterDays``, and ``isOnHold``; the audit
+    widens the row to eleven keys so the operator can identify the
+    collection, see how it will be cleaned up, when it was added,
+    and whether it is currently active without having to re-fetch
+    the record with ``--verbose``.
+
+    The new keys are appended in the audit's left-to-right order so
+    the renderer body and ``cmd_pending``'s column list stay
+    byte-identical: ``arrAction``, ``addDate`` (ISO-8601 timestamp
+    the collection was added), ``mediaServerType`` (e.g.
+    ``"plex"`` / ``"jellyfin"`` / ``"emby"``), ``type`` (the
+    collection's action category), a truncated ``description`` (via
+    :func:`_truncate_overview` with the documented 80-character
+    budget; same helper the sibling Radarr / Sonarr ``overview``
+    projections use, keeping cell widths visually consistent across
+    the five CLIs), ``isActive``, and ``visibleOnHome``. Missing
+    fields default to ``None`` / ``0`` / ``False`` per the per-type
+    contract so the renderer stays well-formed even when upstream
+    drops a field (defensive against future Maintainerr drift).
+    """
     if not isinstance(payload, list):
         return []
     return [
@@ -2325,6 +2349,17 @@ def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
                 item, "deleteAfterDays", default=0
             ),
             "isOnHold": _safe_get(item, "isOnHold", default=False),
+            "arrAction": _safe_get(item, "arrAction", default=None),
+            "addDate": _safe_get(item, "addDate", default=None),
+            "mediaServerType": _safe_get(
+                item, "mediaServerType", default=None
+            ),
+            "type": _safe_get(item, "type", default=None),
+            "description": _truncate_overview(item.get("description")),
+            "isActive": _safe_get(item, "isActive", default=False),
+            "visibleOnHome": _safe_get(
+                item, "visibleOnHome", default=False
+            ),
         }
         for item in payload
         if isinstance(item, Mapping)

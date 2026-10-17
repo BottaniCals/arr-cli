@@ -206,6 +206,13 @@ def cmd_pending(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "mediaCount",
         "deleteAfterDays",
         "isOnHold",
+        "arrAction",
+        "addDate",
+        "mediaServerType",
+        "type",
+        "description",
+        "isActive",
+        "visibleOnHome",
     ]
     return _emit(payload, args, columns=columns)
 

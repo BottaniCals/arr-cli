@@ -450,7 +450,19 @@ class TestHumanMode(unittest.TestCase):
         kwargs = mock_emit.call_args.kwargs
         self.assertEqual(
             kwargs["columns"],
-            ["title", "mediaCount", "deleteAfterDays", "isOnHold"],
+            [
+                "title",
+                "mediaCount",
+                "deleteAfterDays",
+                "isOnHold",
+                "arrAction",
+                "addDate",
+                "mediaServerType",
+                "type",
+                "description",
+                "isActive",
+                "visibleOnHome",
+            ],
         )
 
     def test_human_mode_columns_for_storage(self) -> None:
