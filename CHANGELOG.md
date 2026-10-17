@@ -137,9 +137,9 @@ within the pre-1.0 contract documented in `README.md`.
   not publish a categorical rating) renders as `<null>` next to
   the populated `criticsScore` -- clearly distinguishable from
   "no ratings fetched". The previous key-name matrix (singular
-  `criticScore` / plural `criticsScore` etc.) and the
-  `ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED` env-var gate are
-  removed. The `seerr user` `permissions` cell becomes an
+  `criticScore` / plural `criticsScore` etc.) is dropped: the
+  previous env-var gate deferral is retired in favour
+  of the verified direct projection. The `seerr user` `permissions` cell becomes an
   integer-bitfield decoder -- the live `/api/v1/auth/me`
   envelope (verified directly on 2026-10-17) carries
   `"permissions": <int>`, a single integer bitfield with the
@@ -151,11 +151,9 @@ within the pre-1.0 contract documented in `README.md`.
   the defensive `<null>` fallback for non-integer shapes), and
   the historical Overseerr `permissions` list / mapping shape
   falls back to `None` per the AGENTS.md §4.1 defensive
-  contract. The `ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED`,
-  `ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED`, and
-  `ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED` env-var gates --
-  and the three `_spec_*` helper functions they backed -- are
-  removed. CI stays hermetic: no live OpenAPI fetch from CI,
+  contract. The three hermetic-gate helpers and their associated
+  deferral gates are removed so the renderer body reflects the
+  live spec directly. CI stays hermetic: no live OpenAPI fetch from CI,
   the bitfield map / live key names are committed constants in
   the renderer body. The deferral-vs-direct-projection choice
   is preserved in this entry because the previous "deferred
