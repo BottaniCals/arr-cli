@@ -112,31 +112,58 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Changed
 
-- `seerr --human` deferred-decision notes (the documented
-  hermetic gate): the audit-asked `title` column on
-  `seerr available` is gated by
-  `_spec_status_field_present()` (env-var override
-  `ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED=1`) -- default `False`
-  so the renderer keeps the pre-change seven-column shape
-  until the operator confirms the live `/api/v1/media` payload
-  populates the field on their Seer instance. The audit-vs-
-  upstream `criticScore` / `criticsScore` reconciliation on
-  `seerr movie <id>` and `seerr tv <id>` `--ratings` is gated by
-  `_spec_ratings_key_present()` (env-var override
-  `ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED=1`) -- default `False`
-  keeps the pre-change plural `criticsScore` / `audienceScore`
-  for plumbing compatibility; the singular keys ship only after
-  the operator confirms the live OpenAPI `Ratings` schema
-  against their instance. The `permissions` flattening on
-  `seerr user` is gated by
-  `_spec_permissions_shape_flattenable()` (env-var override
-  `ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED=1`) -- default
-  `False` so the renderer returns `permissions: <null>` on any
-  unverified (third, undocumented) envelope shape rather than
-  crashing; the flattened `key=value` join ships only after the
-  operator confirms the live `/api/v1/auth/me` shape against
-  their instance. CI stays hermetic in every branch; no live
-  OpenAPI fetch runs from CI.
+- `seerr --human` live-spec correction (the previous entry's
+  hermetic-gate deferral is retired in favour of the verified
+  direct projection): the audit-asked `title` column on
+  `seerr available` is gone for good -- the live `/api/v1/media`
+  envelope carries identity fields only and does not populate
+  a `title` field on the operator's Seer instance (verified
+  directly on 2026-10-17); the renderer follows the AGENTS.md §1
+  identity-only contract and never projects a `title` cell, with
+  a regression test (`tests/unit/test_output.py
+  ::TestSummarySeerrAvailable::test_seerr_available_does_not_render_title_even_when_present`)
+  pinning the contract and naming the 2026-09-18
+  `seerr-available-no-title-filter` regression vector so any
+  future contributor who tries to add a `title` projection back
+  sees a hard test failure with the audit context preserved.
+  The `seerr movie <id>` / `seerr tv <id>` `--ratings` projection
+  ships the live-spec key names the operator verified directly:
+  `criticsScore` (plural-with-s integer, RT's Tomatometer
+  percentage 0-100) and `audienceRating` (categorical string
+  such as `"Spilled"` / `"Upright"`); RT does not expose a
+  numeric audience score on this Seer instance, so the
+  audit-asked `audienceScore` numeric key is dropped rather than
+  fabricated, and a missing `audienceRating` (e.g. when RT did
+  not publish a categorical rating) renders as `<null>` next to
+  the populated `criticsScore` -- clearly distinguishable from
+  "no ratings fetched". The previous key-name matrix (singular
+  `criticScore` / plural `criticsScore` etc.) and the
+  `ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED` env-var gate are
+  removed. The `seerr user` `permissions` cell becomes an
+  integer-bitfield decoder -- the live `/api/v1/auth/me`
+  envelope (verified directly on 2026-10-17) carries
+  `"permissions": <int>`, a single integer bitfield with the
+  documented map `1=request, 2=admin, 4=manage_users,
+  8=manage_issues, 16=auto_approve, 32=view_users`, decoded
+  into a sorted-by-bit comma-joined name list (e.g. `7 ->
+  "request, admin, manage_users"`); `0` renders as `""` (the
+  documented "no bits set" blank-cell contract; distinct from
+  the defensive `<null>` fallback for non-integer shapes), and
+  the historical Overseerr `permissions` list / mapping shape
+  falls back to `None` per the AGENTS.md §4.1 defensive
+  contract. The `ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED`,
+  `ARR_SEERR_RATINGS_KEY_NAME_SPEC_VERIFIED`, and
+  `ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED` env-var gates --
+  and the three `_spec_*` helper functions they backed -- are
+  removed. CI stays hermetic: no live OpenAPI fetch from CI,
+  the bitfield map / live key names are committed constants in
+  the renderer body. The deferral-vs-direct-projection choice
+  is preserved in this entry because the previous "deferred
+  behind env-var gates" framing was correct in spirit (the
+  audit was working from an incorrect field-name map) but the
+  gate mechanics were wrong: the live Seer spec was verified
+  directly by the operator on 2026-10-17, so there is no
+  remaining decision to defer.
 
 ## [0.1.0]
 
