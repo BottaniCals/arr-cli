@@ -3531,6 +3531,108 @@ class TestSummarySeerrAvailable(unittest.TestCase):
             [],
         )
 
+    def test_title_gate_closed_by_default_omits_title_cell(self) -> None:
+        # US-1.4: when the operator has not flipped
+        # ``ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED`` the renderer keeps
+        # the pre-change seven-column shape so a Seer instance whose
+        # ``/api/v1/media`` payload does not populate ``title`` does
+        # not project ``title: null`` on every row (the documented
+        # ``seerr-available-no-title-filter`` regression).
+        from arr_cli.facade.output import (
+            _spec_status_field_present,
+        )
+        self.assertFalse(
+            _spec_status_field_present(),
+            msg=(
+                "_spec_status_field_present() default must be False "
+                "so the title regression is not re-introduced without "
+                "an explicit operator opt-in via "
+                "ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED=1"
+            ),
+        )
+        payload = [
+            {
+                "id": 1,
+                "mediaType": "movie",
+                "tmdbId": 999,
+                "title": "Foo",  # upstream may now populate it; gate
+                #              decides whether to project it
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "available")](payload)
+        self.assertNotIn(
+            "title",
+            rendered[0],
+            msg=(
+                "title cell projected without an explicit "
+                "ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED=1 opt-in: "
+                f"{rendered[0]!r}"
+            ),
+        )
+
+    def test_title_gate_open_projects_title_cell(self) -> None:
+        # US-1.3: when the operator has flipped
+        # ``ARR_SEERR_MEDIA_TITLE_SPEC_VERIFIED=1`` after confirming
+        # the live OpenAPI spec populates ``title`` on
+        # ``/api/v1/media``, the renderer emits the audit-asked
+        # ``title`` cell alongside the pre-change seven identity
+        # columns. The positive-case arm of the gate is exercised
+        # via ``unittest.mock.patch`` so CI neither needs the
+        # operator's live instance nor silently strips the
+        # audit-asked column.
+        import unittest.mock
+        from arr_cli.facade import output as output_module
+
+        with unittest.mock.patch.object(
+            output_module,
+            "_spec_status_field_present",
+            return_value=True,
+        ):
+            rendered = _SUMMARY_RENDERERS[("seerr", "available")](
+                [
+                    {
+                        "id": 1,
+                        "mediaType": "movie",
+                        "tmdbId": 999,
+                        "tvdbId": 76107,
+                        "externalServiceSlug": "tmdb",
+                        "status": 5,
+                        "mediaAddedAt": "2024-01-01T00:00:00Z",
+                        "title": "The Matrix",
+                    }
+                ]
+            )
+        self.assertEqual(rendered[0]["title"], "The Matrix")
+        # Pre-change identity fields survive intact under the
+        # gate-open branch.
+        self.assertEqual(rendered[0]["id"], 1)
+        self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[0]["tmdbId"], 999)
+
+    def test_title_gate_open_missing_title_projects_none(self) -> None:
+        # US-1.3 / US-1.5: under the gate-open branch a row whose
+        # upstream payload omits ``title`` surfaces ``None`` (renders
+        # as ``<null>``) rather than crashing; the renderer stays
+        # well-formed even when upstream drops the field.
+        import unittest.mock
+        from arr_cli.facade import output as output_module
+
+        with unittest.mock.patch.object(
+            output_module,
+            "_spec_status_field_present",
+            return_value=True,
+        ):
+            rendered = _SUMMARY_RENDERERS[("seerr", "available")](
+                [
+                    {
+                        "id": 1,
+                        "mediaType": "movie",
+                        "tmdbId": 999,
+                    }
+                ]
+            )
+        self.assertIsNone(rendered[0]["title"])
+
 
 class TestSummarySeerrGenres(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("seerr", "genres")]`` matches the spec.
@@ -4429,6 +4531,167 @@ class TestSummarySeerrMovie(unittest.TestCase):
         self.assertEqual(
             _SUMMARY_RENDERERS[("seerr", "movie")](42), {}
         )
+
+
+class TestSummarySeerrUser(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "user")]`` matches the spec.
+
+    The audit asks :func:`_summary_seerr_user` for a curated
+    five-key projection (``username``, ``email``, ``userType``,
+    ``permissions``, ``requestCount``) so the auth self-check
+    answers "who am I and what can I do here?" without the
+    operator having to drop to ``--verbose``.
+
+    The renderer is gated by
+    :func:`_spec_permissions_shape_flattenable` (default ``False``)
+    so a live payload whose ``permissions`` field exposes a third
+    (undocumented) shape is rendered as ``permissions: <null>``
+    rather than crashing; an operator who has confirmed the
+    live OpenAPI shape can flip the gate with
+    ``ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED=1`` so the
+    flattened projection ships.
+    """
+
+    def test_user_shape_full_fields(self) -> None:
+        # US-4.1: the curated five-key projection populates every
+        # field from the upstream payload via :func:`_safe_get`.
+        payload = {
+            "id": 1,
+            "username": "alice",
+            "email": "alice@example.com",
+            "userType": 1,
+            "permissions": ["ADMIN", "MANAGE_REQUESTS"],
+            "requestCount": 42,
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(
+            rendered,
+            {
+                "username": "alice",
+                "email": "alice@example.com",
+                "userType": 1,
+                "permissions": None,  # gate closed by default
+                "requestCount": 42,
+            },
+        )
+
+    def test_user_missing_optional_fields_default_to_none(self) -> None:
+        # US-4.2: every audit-asked field defaults to ``None`` per
+        # the documented ``_safe_get`` contract so the renderer
+        # stays well-formed even when upstream drops a field.
+        payload = {
+            "id": 1,
+            "username": "alice",
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["username"], "alice")
+        self.assertIsNone(rendered["email"])
+        self.assertIsNone(rendered["userType"])
+        self.assertIsNone(rendered["permissions"])
+        self.assertIsNone(rendered["requestCount"])
+
+    def test_user_permissions_gate_open_flattens_list(self) -> None:
+        # US-4.1: when the operator has confirmed the live
+        # ``/api/v1/auth/me`` ``permissions`` shape via
+        # ``ARR_SEERR_PERMISSIONS_SHAPE_SPEC_VERIFIED=1``, a list of
+        # strings is comma-joined so the operator sees a single
+        # ``permissions`` cell with all role tokens in one place.
+        import unittest.mock
+        from arr_cli.facade import output as output_module
+
+        with unittest.mock.patch.object(
+            output_module,
+            "_spec_permissions_shape_flattenable",
+            return_value=True,
+        ):
+            rendered = _SUMMARY_RENDERERS[("seerr", "user")](
+                {"permissions": ["ADMIN", "MANAGE_REQUESTS"]}
+            )
+        self.assertEqual(
+            rendered["permissions"], "ADMIN, MANAGE_REQUESTS"
+        )
+
+    def test_user_permissions_gate_open_flattens_mapping(self) -> None:
+        # US-4.1: under the gate-open branch a mapping of
+        # ``{key: value}`` flattens to ``"key=value, key=value"``
+        # per ``AGENTS.md §4.1`` so the operator sees the role /
+        # capability pairs in a single cell.
+        import unittest.mock
+        from arr_cli.facade import output as output_module
+
+        with unittest.mock.patch.object(
+            output_module,
+            "_spec_permissions_shape_flattenable",
+            return_value=True,
+        ):
+            rendered = _SUMMARY_RENDERERS[("seerr", "user")](
+                {
+                    "permissions": {
+                        "admin": True,
+                        "requests": 5,
+                    }
+                }
+            )
+        self.assertIn("admin=True", rendered["permissions"])
+        self.assertIn("requests=5", rendered["permissions"])
+
+    def test_user_permissions_gate_closed_returns_none(self) -> None:
+        # US-4.2: with the gate closed (the documented default so
+        # the renderer is hermetic in CI without a live
+        # verification), the renderer returns ``None`` for any
+        # ``permissions`` value rather than crashing on a
+        # third (undocumented) shape or silently shipping a
+        # malformed join.
+        payload = {
+            "permissions": ["ADMIN", "MANAGE_REQUESTS"],
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertIsNone(rendered["permissions"])
+
+    def test_user_request_count_walks_both_paths(self) -> None:
+        # US-4.1: ``requestCount`` is sourced from the nested
+        # ``permissions.requestCount`` field or the top-level
+        # ``requestCount`` field -- ``_safe_get`` walks both
+        # paths so the renderer stays well-formed on either
+        # envelope shape.
+        nested = _SUMMARY_RENDERERS[("seerr", "user")](
+            {"permissions": {"requestCount": 7}}
+        )
+        self.assertEqual(nested["requestCount"], 7)
+        top = _SUMMARY_RENDERERS[("seerr", "user")](
+            {"requestCount": 11}
+        )
+        self.assertEqual(top["requestCount"], 11)
+
+    def test_user_list_fixture_shape(self) -> None:
+        # Mirrors the test-fixture convention used by
+        # :func:`_summary_seerr_movie` /
+        # :func:`_summary_seerr_tv`: a list with one ``Mapping``
+        # element extracts element 0 and renders the same
+        # five-key projection as the single-mapping CLI-layer
+        # payload.
+        payload = [{
+            "username": "alice",
+            "email": "alice@example.com",
+        }]
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["username"], "alice")
+        self.assertEqual(rendered["email"], "alice@example.com")
+        self.assertIsNone(rendered["userType"])
+        self.assertIsNone(rendered["permissions"])
+        self.assertIsNone(rendered["requestCount"])
+
+    def test_user_non_mapping_payload_returns_empty_dict(self) -> None:
+        # Non-Mapping / list-with-no-mapping / scalar / ``None``
+        # payloads gracefully degrade to ``{}`` rather than
+        # crashing; ``emit()`` then takes the verbatim
+        # pass-through branch on the empty dict.
+        for value in (None, [], [1, 2], 42, "foo"):
+            self.assertEqual(
+                _SUMMARY_RENDERERS[("seerr", "user")](value),
+                {},
+                msg=f"expected empty dict for {value!r}",
+            )
 
 
 class TestSummaryMaintainerrPending(unittest.TestCase):
