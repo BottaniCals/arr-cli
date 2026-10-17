@@ -1578,5 +1578,749 @@ class TestVerboseFlagCmdWanted(unittest.TestCase):
         self.assertEqual(json.loads(output), payload)
 
 
+# ---------------------------------------------------------------------------
+# Test: 2026-10-16 audit -- column-list + cell-render assertions
+# ---------------------------------------------------------------------------
+
+
+class TestCalendarHumanColumnList(unittest.TestCase):
+    """``cmd_calendar`` --human column list mirrors the audit shape."""
+
+    def test_calendar_human_column_list(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="calendar", human=True, start=None, end=None)
+        payload = [{"title": "Pilot", "seasonNumber": 1, "episodeNumber": 1}]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.sonarr.output.emit") as mock_emit:
+            cmd_calendar(args, cfg)
+        self.assertEqual(
+            mock_emit.call_args.kwargs["columns"],
+            [
+                "title",
+                "seasonNumber",
+                "episodeNumber",
+                "airDate",
+                "series.title",
+                "monitored",
+                "hasFile",
+                "runtime",
+                "overview",
+            ],
+        )
+
+
+class TestWantedHumanColumnList(unittest.TestCase):
+    """``cmd_wanted`` --human column list mirrors the audit shape."""
+
+    def test_wanted_human_column_list(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="wanted", human=True)
+        payload = [{"title": "Pilot", "monitored": True}]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.sonarr.output.emit") as mock_emit:
+            cmd_wanted(args, cfg)
+        self.assertEqual(
+            mock_emit.call_args.kwargs["columns"],
+            [
+                "title",
+                "seasonNumber",
+                "episodeNumber",
+                "airDate",
+                "monitored",
+                "hasFile",
+                "runtime",
+                "overview",
+                "series.title",
+            ],
+        )
+
+
+class TestQueueHumanColumnList(unittest.TestCase):
+    """``cmd_queue`` --human column list mirrors the audit shape.
+
+    ``status`` is a pre-change column and MUST NOT be re-appended at
+    the tail; the audit does not add a ``progress`` column and none
+    should be invented.
+    """
+
+    def test_queue_human_column_list(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="queue", human=True)
+        payload = [{"title": "Foo", "status": "downloading"}]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.sonarr.output.emit") as mock_emit:
+            cmd_queue(args, cfg)
+        columns = mock_emit.call_args.kwargs["columns"]
+        self.assertEqual(
+            columns,
+            [
+                "title",
+                "status",
+                "trackedDownloadStatus",
+                "size",
+                "sizeleft",
+                "series.title",
+                "episode",
+                "quality",
+                "timeLeft",
+            ],
+        )
+        # Regression net: ``status`` must NOT be re-appended at the
+        # tail (audit duplication bug surfaced for the radarr fix).
+        self.assertEqual(columns.count("status"), 1)
+        # Regression net: ``progress`` must NOT be added.
+        self.assertNotIn("progress", columns)
+
+
+class TestRecentHumanColumnList(unittest.TestCase):
+    """``cmd_recent`` --human column list mirrors the audit shape."""
+
+    def test_recent_human_column_list(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="recent", human=True)
+        payload = [{"eventType": "downloadFolderImported", "date": "2024-01-01"}]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.sonarr.output.emit") as mock_emit:
+            cmd_recent(args, cfg)
+        self.assertEqual(
+            mock_emit.call_args.kwargs["columns"],
+            [
+                "series.title",
+                "episode.title",
+                "eventType",
+                "date",
+                "sourceTitle",
+                "quality",
+                "language",
+                "client",
+            ],
+        )
+
+
+class TestSeriesNoIdHumanColumnList(unittest.TestCase):
+    """``cmd_series`` no-id --human column list mirrors the audit shape."""
+
+    def test_series_no_id_human_column_list(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="series", series_id=None, human=True)
+        payload = [{"title": "X", "year": 2020}]
+        with _patched_get_payload(payload), \
+                patch("arr_cli.sonarr.output.emit") as mock_emit:
+            cmd_series(args, cfg)
+        self.assertEqual(
+            mock_emit.call_args.kwargs["columns"],
+            [
+                "title",
+                "year",
+                "monitored",
+                "status",
+                "tvdbId",
+                "seasons",
+                "statistics",
+                "genres",
+                "firstAired",
+                "lastAired",
+            ],
+        )
+
+
+class TestSeriesIdHumanColumnList(unittest.TestCase):
+    """``cmd_series`` with-id --human column list mirrors the audit shape.
+
+    The ``command="series_id"`` kwarg dispatches to
+    ``_summary_sonarr_series_id``; the with-id branch reuses the
+    audit-asked ``statistics`` / ``genres`` / ``firstAired`` /
+    ``lastAired`` columns after the pre-change ``runtime`` column.
+    """
+
+    def test_series_id_human_column_list(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="series", series_id="42", human=True)
+        payload = {"title": "The Expanse", "year": 2015}
+        with _patched_get_payload(payload), \
+                patch("arr_cli.sonarr.output.emit") as mock_emit:
+            cmd_series(args, cfg)
+        self.assertEqual(
+            mock_emit.call_args.kwargs["columns"],
+            [
+                "title",
+                "year",
+                "runtime",
+                "status",
+                "monitored",
+                "statistics",
+                "genres",
+                "firstAired",
+                "lastAired",
+            ],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Test: 2026-10-16 audit -- cell-render assertions
+# ---------------------------------------------------------------------------
+
+
+class TestAuditCellRender(unittest.TestCase):
+    """The audit-added cells render the upstream value (not <null>)."""
+
+    def test_calendar_human_runtime_renders_xh_ym(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="calendar", human=True, start=None, end=None)
+        payload = [{"title": "X", "runtime": 136}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_calendar, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["runtime"], "2h 16m")
+
+    def test_wanted_human_overview_truncates_with_ellipsis(self) -> None:
+        # The renderer truncates ``overview`` to the documented
+        # 80-character budget via ``_truncate_overview`` (U+2026
+        # HORIZONTAL ELLIPSIS marker).
+        cfg = _service_config()
+        args = _namespace(command="wanted", human=True)
+        overview = "x" * 200
+        payload = [{"title": "X", "overview": overview}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_wanted, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        # The ``--human`` renderer further caps the cell to its
+        # per-column width; the audit-relevant invariant is that the
+        # cell carries a non-empty, ellipsis-truncated value.
+        self.assertTrue(cells["overview"].endswith("…"))
+
+    def test_queue_human_quality_renders_value(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="queue", human=True)
+        payload = [
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "timeleft": "00:30:00",
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_queue, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        # ``quality`` is a nested mapping; the ``_row_from_mapping``
+        # walker surfaces it as ``<2 keys>`` in the cell (the nested
+        # ``quality.name`` is not a top-level ``quality`` key).
+        self.assertNotEqual(cells["quality"], "<null>")
+        self.assertEqual(cells["timeLeft"], "00:30:00")
+
+    def test_queue_human_timeLeft_renders_value(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="queue", human=True)
+        payload = [{"title": "Foo", "timeleft": "01:00:00"}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_queue, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["timeLeft"], "01:00:00")
+
+    def test_recent_human_language_renders_value(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="recent", human=True)
+        payload = [
+            {
+                "language": {"name": "English"},
+                "eventType": "downloadFolderImported",
+                "date": "2024-01-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_recent, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertNotEqual(cells["language"], "<null>")
+
+    def test_recent_human_client_renders_value(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="recent", human=True)
+        payload = [
+            {
+                "downloadClient": "qbit",
+                "eventType": "downloadFolderImported",
+                "date": "2024-01-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_recent, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["client"], "qbit")
+
+    def test_series_id_human_statistics_renders_42_over_85(self) -> None:
+        # ``cmd_series`` with an id is a single-record (dict) payload;
+        # ``human()`` renders it as vertical ``key: value`` pairs.
+        cfg = _service_config()
+        args = _namespace(command="series", series_id="42", human=True)
+        payload = {
+            "title": "X",
+            "year": 2020,
+            "statistics": {"episodeFileCount": 42, "episodeCount": 85},
+        }
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_series, args, cfg)
+        self.assertIn("statistics: 42/85", output)
+
+    def test_series_id_human_statistics_renders_null_on_missing_counts(
+        self,
+    ) -> None:
+        cfg = _service_config()
+        args = _namespace(command="series", series_id="42", human=True)
+        payload = {"title": "X", "year": 2020}
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_series, args, cfg)
+        self.assertIn("statistics: <null>", output)
+
+
+# ---------------------------------------------------------------------------
+# Test: 2026-10-16 audit -- direct renderer assertions
+# ---------------------------------------------------------------------------
+
+
+class TestSummarySonarrCalendar(unittest.TestCase):
+    """``_summary_sonarr_calendar`` mirrors ``_summary_radarr_calendar``."""
+
+    def test_summary_sonarr_calendar_envelope_unwrap(self) -> None:
+        from arr_cli.facade.output import _summary_sonarr_calendar
+
+        payload = {
+            "page": 1,
+            "pageSize": 10,
+            "totalRecords": 1,
+            "records": [
+                {
+                    "title": "Pilot",
+                    "seasonNumber": 1,
+                    "episodeNumber": 1,
+                    "airDate": "2024-01-01",
+                    "series": {"title": "Severance"},
+                    "monitored": True,
+                    "hasFile": False,
+                    "runtime": 45,
+                    "overview": "An overview.",
+                }
+            ],
+        }
+        rendered = _summary_sonarr_calendar(payload)
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        self.assertEqual(row["title"], "Pilot")
+        self.assertEqual(row["seasonNumber"], 1)
+        self.assertEqual(row["episodeNumber"], 1)
+        self.assertEqual(row["airDate"], "2024-01-01")
+        self.assertEqual(row["series.title"], "Severance")
+        self.assertTrue(row["monitored"])
+        self.assertFalse(row["hasFile"])
+        self.assertEqual(row["runtime"], "0h 45m")
+        self.assertEqual(row["overview"], "An overview.")
+
+
+class TestSummarySonarrWantedExtends(unittest.TestCase):
+    """``_summary_sonarr_wanted`` adds the audit-requested fields."""
+
+    def test_summary_sonarr_wanted_extends_shape(self) -> None:
+        from arr_cli.facade.output import _summary_sonarr_wanted
+
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "monitored": True,
+                "hasFile": False,
+                "runtime": 45,
+                "overview": "An overview.",
+                "series": {"title": "Severance"},
+            }
+        ]
+        rendered = _summary_sonarr_wanted(payload)
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        # Pre-change keys stay.
+        self.assertEqual(row["title"], "Pilot")
+        self.assertEqual(row["seasonNumber"], 1)
+        self.assertEqual(row["episodeNumber"], 1)
+        self.assertEqual(row["airDate"], "2024-01-01")
+        self.assertTrue(row["monitored"])
+        # Audit additions.
+        self.assertFalse(row["hasFile"])
+        self.assertEqual(row["runtime"], "0h 45m")
+        self.assertEqual(row["overview"], "An overview.")
+        self.assertEqual(row["series.title"], "Severance")
+
+
+class TestSummarySonarrQueueExtends(unittest.TestCase):
+    """``_summary_sonarr_queue`` appends the audit fields without
+    re-appending ``status`` or inventing a ``progress`` key.
+    """
+
+    def test_summary_sonarr_queue_appends_audit_keys(self) -> None:
+        from arr_cli.facade.output import _summary_sonarr_queue
+
+        payload = [
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+                "series": {"title": "Severance"},
+                "episode": {"title": "The Work Is Never Done"},
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "timeleft": "00:30:00",
+            }
+        ]
+        rendered = _summary_sonarr_queue(payload)
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        # Pre-change keys.
+        self.assertEqual(row["title"], "Foo")
+        self.assertEqual(row["status"], "downloading")
+        self.assertEqual(row["trackedDownloadStatus"], "ok")
+        self.assertEqual(row["size"], 1000)
+        self.assertEqual(row["sizeleft"], 500)
+        # Audit additions.
+        self.assertEqual(row["series.title"], "Severance")
+        self.assertEqual(row["episode"], "The Work Is Never Done")
+        self.assertEqual(row["quality"], {"quality": {"name": "WEBDL-1080p"}})
+        self.assertEqual(row["timeLeft"], "00:30:00")
+        # Regression nets.
+        self.assertNotIn("progress", row)
+        # ``status`` appears exactly once (pre-change position, NOT
+        # duplicated at the tail).
+        self.assertEqual(list(row.keys()).count("status"), 1)
+
+
+class TestSummarySonarrRecentExtends(unittest.TestCase):
+    """``_summary_sonarr_recent`` adds ``language`` and ``client``."""
+
+    def test_summary_sonarr_recent_adds_language_client(self) -> None:
+        from arr_cli.facade.output import _summary_sonarr_recent
+
+        payload = [
+            {
+                "id": 1,
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
+            }
+        ]
+        rendered = _summary_sonarr_recent(payload)
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        self.assertEqual(row["language"], {"name": "English"})
+        self.assertEqual(row["client"], "qbit")
+
+
+class TestSummarySonarrLookup(unittest.TestCase):
+    """``_summary_sonarr_lookup`` projects statistics/genres/overview/status."""
+
+    def test_summary_sonarr_lookup_emits_statistics_genres_overview_status(
+        self,
+    ) -> None:
+        from arr_cli.facade.output import _summary_sonarr_lookup
+
+        payload = [
+            {
+                "title": "Doctor Who",
+                "year": 2005,
+                "tvdbId": 78804,
+                "tvMazeId": 210,
+                "id": None,
+                "monitored": True,
+                "statistics": {"episodeFileCount": 42, "episodeCount": 85},
+                "genres": [{"name": "Sci-Fi"}],
+                "overview": "An overview.",
+                "status": "continuing",
+            }
+        ]
+        rendered = _summary_sonarr_lookup(payload)
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        self.assertEqual(row["title"], "Doctor Who")
+        self.assertEqual(row["year"], 2005)
+        self.assertEqual(row["tvdbId"], 78804)
+        self.assertEqual(row["tvMazeId"], 210)
+        self.assertIsNone(row["id"])
+        self.assertTrue(row["monitored"])
+        self.assertEqual(row["statistics"], "42/85")
+        self.assertEqual(row["genres"], "Sci-Fi")
+        self.assertEqual(row["overview"], "An overview.")
+        self.assertEqual(row["status"], "continuing")
+
+
+class TestSummarySonarrSeries(unittest.TestCase):
+    """``_summary_sonarr_series`` projects the library-list audit fields."""
+
+    def test_summary_sonarr_series_emits_firstAired_lastAired(self) -> None:
+        from arr_cli.facade.output import _summary_sonarr_series
+
+        payload = [
+            {
+                "title": "Severance",
+                "year": 2022,
+                "monitored": True,
+                "status": "continuing",
+                "tvdbId": 371918,
+                "seasons": [],
+                "statistics": {"episodeFileCount": 0, "episodeCount": 9},
+                "genres": [{"name": "Drama"}],
+                "firstAired": "2022-02-17T00:00:00Z",
+                "lastAired": "2022-04-17T00:00:00Z",
+            }
+        ]
+        rendered = _summary_sonarr_series(payload)
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        self.assertEqual(row["title"], "Severance")
+        self.assertEqual(row["year"], 2022)
+        self.assertTrue(row["monitored"])
+        self.assertEqual(row["status"], "continuing")
+        self.assertEqual(row["tvdbId"], 371918)
+        self.assertEqual(row["seasons"], [])
+        self.assertEqual(row["statistics"], "0/9")
+        self.assertEqual(row["genres"], "Drama")
+        self.assertEqual(row["firstAired"], "2022-02-17T00:00:00Z")
+        self.assertEqual(row["lastAired"], "2022-04-17T00:00:00Z")
+
+
+class TestSummarySonarrSeriesId(unittest.TestCase):
+    """``_summary_sonarr_series_id`` projects the single-record audit fields."""
+
+    def test_summary_sonarr_series_id_single_record_shape(self) -> None:
+        from arr_cli.facade.output import _summary_sonarr_series_id
+
+        payload = {
+            "title": "Severance",
+            "year": 2022,
+            "runtime": 45,
+            "status": "continuing",
+            "monitored": True,
+            "statistics": {"episodeFileCount": 42, "episodeCount": 85},
+            "genres": [{"name": "Drama"}],
+            "firstAired": "2022-02-17T00:00:00Z",
+            "lastAired": "2022-04-17T00:00:00Z",
+        }
+        rendered = _summary_sonarr_series_id(payload)
+        self.assertEqual(rendered["title"], "Severance")
+        self.assertEqual(rendered["year"], 2022)
+        self.assertEqual(rendered["runtime"], "0h 45m")
+        self.assertEqual(rendered["status"], "continuing")
+        self.assertTrue(rendered["monitored"])
+        self.assertEqual(rendered["statistics"], "42/85")
+        self.assertEqual(rendered["genres"], "Drama")
+        self.assertEqual(rendered["firstAired"], "2022-02-17T00:00:00Z")
+        self.assertEqual(rendered["lastAired"], "2022-04-17T00:00:00Z")
+
+    def test_summary_sonarr_series_id_handles_list_envelope(self) -> None:
+        # Test fixture convention: the with-id payload may arrive as
+        # a one-element list (mirrors the radarr ``_summary_radarr_movie_id``
+        # and ``_summary_seerr_tv`` defensive contract).
+        from arr_cli.facade.output import _summary_sonarr_series_id
+
+        payload = [
+            {
+                "title": "Severance",
+                "year": 2022,
+                "statistics": {"episodeFileCount": 1, "episodeCount": 2},
+            }
+        ]
+        rendered = _summary_sonarr_series_id(payload)
+        self.assertEqual(rendered["title"], "Severance")
+        self.assertEqual(rendered["year"], 2022)
+        self.assertEqual(rendered["statistics"], "1/2")
+
+    def test_summary_sonarr_series_id_empty_list_returns_empty_dict(
+        self,
+    ) -> None:
+        from arr_cli.facade.output import _summary_sonarr_series_id
+
+        self.assertEqual(_summary_sonarr_series_id([]), {})
+
+    def test_summary_sonarr_series_id_scalar_payload_returns_empty_dict(
+        self,
+    ) -> None:
+        from arr_cli.facade.output import _summary_sonarr_series_id
+
+        self.assertEqual(_summary_sonarr_series_id(None), {})
+
+
+# ---------------------------------------------------------------------------
+# Test: 2026-10-16 audit -- _format_episode_progress edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestFormatEpisodeProgress(unittest.TestCase):
+    """``_format_episode_progress`` handles missing/bool/non-numeric/negative."""
+
+    def _format(self, item: Any) -> str | None:
+        from arr_cli.facade.output import _format_episode_progress
+        return _format_episode_progress(item)
+
+    def test_format_episode_progress_returns_42_over_85_on_well_formed(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._format(
+                {
+                    "statistics": {
+                        "episodeFileCount": 42,
+                        "episodeCount": 85,
+                    }
+                }
+            ),
+            "42/85",
+        )
+
+    def test_format_episode_progress_returns_none_on_missing_file_count(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            self._format(
+                {"statistics": {"episodeCount": 85}}
+            ),
+        )
+
+    def test_format_episode_progress_returns_none_on_missing_total_count(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            self._format(
+                {"statistics": {"episodeFileCount": 42}}
+            ),
+        )
+
+    def test_format_episode_progress_returns_none_on_missing_statistics(
+        self,
+    ) -> None:
+        self.assertIsNone(self._format({"title": "X"}))
+
+    def test_format_episode_progress_returns_none_on_bool_subtype(
+        self,
+    ) -> None:
+        # ``bool`` is a subclass of ``int``; the renderer must guard
+        # against ``True`` / ``False`` masquerading as numeric counts.
+        self.assertIsNone(
+            self._format(
+                {"statistics": {"episodeFileCount": True, "episodeCount": 5}}
+            ),
+        )
+
+    def test_format_episode_progress_returns_none_on_negative_count(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            self._format(
+                {
+                    "statistics": {
+                        "episodeFileCount": -1,
+                        "episodeCount": 5,
+                    }
+                }
+            ),
+        )
+
+    def test_format_episode_progress_returns_none_on_non_numeric_count(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            self._format(
+                {
+                    "statistics": {
+                        "episodeFileCount": "42",
+                        "episodeCount": 5,
+                    }
+                }
+            ),
+        )
+
+    def test_format_episode_progress_returns_none_on_non_mapping_item(
+        self,
+    ) -> None:
+        self.assertIsNone(self._format("not a mapping"))
+        self.assertIsNone(self._format(None))
+
+
+# ---------------------------------------------------------------------------
+# Test: 2026-10-16 audit -- defensive missing-input paths
+# ---------------------------------------------------------------------------
+
+
+class TestDefensiveMissingInputs(unittest.TestCase):
+    """The audit-added cells render ``<null>`` on missing upstream fields."""
+
+    def test_calendar_human_overview_renders_null_on_missing(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="calendar", human=True, start=None, end=None)
+        payload = [{"title": "X"}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_calendar, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["overview"], "<null>")
+
+    def test_calendar_human_genres_renders_empty_on_empty_list(self) -> None:
+        # ``genres`` is not part of the calendar columns; the test
+        # mirrors the radarr audit's defensive assertion for the
+        # ``genres`` cell to keep coverage parallel.
+        from arr_cli.facade.output import _join_names
+
+        self.assertIsNone(_join_names([]))
+
+    def test_wanted_human_overview_renders_null_on_missing(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="wanted", human=True)
+        payload = [{"title": "X"}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_wanted, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["overview"], "<null>")
+
+    def test_lookup_human_overview_renders_null_on_missing(self) -> None:
+        cfg = _service_config()
+        args = _namespace(term="the expanse", command="lookup", human=True)
+        payload = [{"title": "X"}]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_lookup, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["overview"], "<null>")
+
+    def test_lookup_human_genres_renders_empty_on_empty_list(self) -> None:
+        from arr_cli.facade.output import _join_names
+
+        self.assertIsNone(_join_names([]))
+
+    def test_series_id_human_runtime_renders_null_on_missing(self) -> None:
+        # Single-record rendering: ``human()`` projects the dict as
+        # vertical ``key: value`` pairs.
+        cfg = _service_config()
+        args = _namespace(command="series", series_id="42", human=True)
+        payload = {"title": "X"}
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_series, args, cfg)
+        self.assertIn("runtime: <null>", output)
+
+    def test_series_id_human_firstAired_renders_null_on_missing(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="series", series_id="42", human=True)
+        payload = {"title": "X"}
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_series, args, cfg)
+        self.assertIn("firstAired: <null>", output)
+
+    def test_series_id_human_lastAired_renders_null_on_missing(self) -> None:
+        cfg = _service_config()
+        args = _namespace(command="series", series_id="42", human=True)
+        payload = {"title": "X"}
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_series, args, cfg)
+        self.assertIn("lastAired: <null>", output)
+
+
 if __name__ == "__main__":
     unittest.main()
