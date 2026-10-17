@@ -518,10 +518,13 @@ def cmd_user(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     payload = _get(USER_ME_PATH, args, cfg, op="user")
     # Tabular columns match the curated five-key projection emitted
     # by ``_summary_seerr_user``: ``email``, ``userType``,
-    # ``permissions`` (flattened per ``AGENTS.md §4.1``), and
-    # ``requestCount`` (sourced from the nested ``permissions``
-    # sub-dict or top-level ``requestCount`` field; ``_safe_get``
-    # walks both). Switched from the pre-change ``columns=None``
+    # ``permissions`` (decoded from the live ``/api/v1/auth/me``
+    # integer bitfield into a sorted-by-bit comma-joined name list
+    # via ``_decode_permissions_bitfield``; non-integer shapes fall
+    # back to ``None`` per ``AGENTS.md §4.1``), and ``requestCount``
+    # (sourced from the nested ``permissions`` sub-dict or
+    # top-level ``requestCount`` field; ``_safe_get`` walks both).
+    # Switched from the pre-change ``columns=None``
     # (verbatim pass-through) to the explicit five-key literal so
     # the ``--human`` table matches the curated default-mode JSON
     # (mirrors the sibling ``cmd_pending`` widening in the
@@ -840,8 +843,12 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         )
         if isinstance(payload, Mapping) and isinstance(ratings, Mapping):
             # Merge under a dedicated ``ratings`` key so the renderer
-            # can detect the optional block and surface ``criticsScore``
-            # / ``audienceScore`` rather than silently dropping them.
+            # can detect the optional block and surface the live-spec
+            # ``criticsScore`` (plural-with-s integer) and
+            # ``audienceRating`` (categorical string) keys rather
+            # than silently dropping them. Mirrors the same defensive
+            # merge guard ``cmd_tv`` uses so a non-Mapping ratings
+            # response never crashes the command.
             payload = {**payload, "ratings": ratings}
         else:
             # Defensive: an unexpected shape on either side (e.g. an
@@ -953,9 +960,10 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         )
         if isinstance(payload, Mapping) and isinstance(ratings, Mapping):
             # Merge under a dedicated ``ratings`` key so the renderer
-            # can detect the optional block and surface
-            # ``criticsScore`` / ``audienceScore`` rather than
-            # silently dropping them. Mirrors the same defensive
+            # can detect the optional block and surface the live-spec
+            # ``criticsScore`` (plural-with-s integer) and
+            # ``audienceRating`` (categorical string) keys rather
+            # than silently dropping them. Mirrors the same defensive
             # merge guard ``cmd_tv`` uses so a non-Mapping ratings
             # response never crashes the command.
             payload = {**payload, "ratings": ratings}
