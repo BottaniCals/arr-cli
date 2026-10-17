@@ -690,9 +690,9 @@ class TestCmdRecent(unittest.TestCase):
         # pre-pagination contract), ``_unwrap_envelope`` passes it
         # through unchanged. The renderer then projects each row
         # to the curated ``{series, episode, id, seriesId,
-        # episodeId, sourceTitle, eventType, date, quality}``
-        # summary shape (the upstream ``sourceTitle`` / identity
-        # fields flow through verbatim).
+        # episodeId, sourceTitle, eventType, date, quality,
+        # language, client}`` summary shape (the upstream
+        # ``sourceTitle`` / identity fields flow through verbatim).
         cfg = _service_config()
         args = _namespace(command="recent")
         payload = [
@@ -706,18 +706,38 @@ class TestCmdRecent(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": "WEBDL-1080p",
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
             }
         ]
         with _patched_get_payload(payload):
             rendered = _capture_stdout(cmd_recent, args, cfg)
-        self.assertEqual(json.loads(rendered), payload)
+        rows = json.loads(rendered)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        # Identity fields upstream actually carries are projected
+        # verbatim; nothing fabricated.
+        self.assertEqual(row["series"], {"title": "Severance"})
+        self.assertEqual(row["episode"], {"title": "The Work Is Never Done"})
+        self.assertEqual(row["id"], 1)
+        self.assertEqual(row["seriesId"], 99)
+        self.assertEqual(row["episodeId"], 7)
+        self.assertEqual(row["sourceTitle"], "Severance.S02E07.720p.mkv")
+        self.assertEqual(row["eventType"], "downloadFolderImported")
+        self.assertEqual(row["date"], "2024-06-01")
+        self.assertEqual(row["quality"], "WEBDL-1080p")
+        # Audit-added ``language`` / ``client`` (lifted from
+        # ``downloadClient``) are also present.
+        self.assertEqual(row["language"], {"name": "English"})
+        self.assertEqual(row["client"], "qbit")
 
     def test_recent_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
         args = _namespace(human=False, command="recent")
         # Carry every column the renderer projects so the output
-        # is a verbatim forward of the input; missing fields
-        # surface as ``None`` per ``_safe_get(..., default=None)``.
+        # is a verbatim forward of the identity / nested fields;
+        # ``client`` is lifted from ``downloadClient`` so the input
+        # key surfaces as ``client`` in the summary shape.
         payload = [
             {
                 "id": 1,
@@ -729,13 +749,26 @@ class TestCmdRecent(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": "WEBDL-1080p",
+                "language": {"name": "English"},
+                "downloadClient": "qbit",
             }
         ]
         with _patched_get_payload(payload):
             rendered = _capture_stdout(cmd_recent, args, cfg)
-        # The curated summary is a verbatim forward of the bare
-        # envelope row because every projected column is present.
-        self.assertEqual(json.loads(rendered), payload)
+        rows = json.loads(rendered)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["series"], {"title": "Severance"})
+        self.assertEqual(row["episode"], {"title": "The Work Is Never Done"})
+        self.assertEqual(row["id"], 1)
+        self.assertEqual(row["seriesId"], 99)
+        self.assertEqual(row["episodeId"], 7)
+        self.assertEqual(row["sourceTitle"], "Severance.S02E07.720p.mkv")
+        self.assertEqual(row["eventType"], "downloadFolderImported")
+        self.assertEqual(row["date"], "2024-06-01")
+        self.assertEqual(row["quality"], "WEBDL-1080p")
+        self.assertEqual(row["language"], {"name": "English"})
+        self.assertEqual(row["client"], "qbit")
 
 
 # ---------------------------------------------------------------------------
@@ -834,6 +867,9 @@ class TestCmdLookup(unittest.TestCase):
         # instead of ``None``. ``monitored`` reflects the source
         # default (TVDB for Sonarr); ``id`` disambiguates library
         # rows (numeric ``id``) from candidates (no ``id`` key).
+        # The audit-asked columns (``statistics``, ``genres``,
+        # ``overview``, ``status``) are appended after the pre-
+        # change columns.
         cfg = _service_config()
         args = _namespace(term="the expanse", human=True)
         payload = [
@@ -850,7 +886,18 @@ class TestCmdLookup(unittest.TestCase):
         columns = mock_emit.call_args.kwargs["columns"]
         self.assertEqual(
             columns,
-            ["title", "year", "tvdbId", "tvMazeId", "id", "monitored"],
+            [
+                "title",
+                "year",
+                "tvdbId",
+                "tvMazeId",
+                "id",
+                "monitored",
+                "statistics",
+                "genres",
+                "overview",
+                "status",
+            ],
         )
         # Regression net: the buggy ``defaultMonitored`` rename from
         # PR #7 must not be reintroduced because no upstream API
@@ -1002,12 +1049,31 @@ class TestCmdSeries(unittest.TestCase):
         self.assertEqual(positional[1], "/api/v3/series/42%2Fx")
 
     def test_series_emits_json_when_not_human(self) -> None:
+        # ``cmd_series`` with a series id is now a size-to-summary
+        # candidate (the audit registered ``_summary_sonarr_series_id``),
+        # so the default JSON path returns the curated single-record
+        # summary -- not the raw upstream payload. Pass ``--verbose``
+        # to surface the verbatim record.
         cfg = _service_config()
         args = _namespace(series_id="42", human=False)
-        payload = {"title": "The Expanse", "year": 2015}
+        payload = {
+            "title": "The Expanse",
+            "year": 2015,
+            "monitored": True,
+            "status": "ended",
+        }
         with _patched_get_payload(payload):
             output = _capture_stdout(cmd_series, args, cfg)
-        self.assertEqual(json.loads(output), payload)
+        rendered = json.loads(output)
+        self.assertEqual(rendered["title"], "The Expanse")
+        self.assertEqual(rendered["year"], 2015)
+        self.assertEqual(rendered["monitored"], True)
+        self.assertEqual(rendered["status"], "ended")
+        self.assertIn("runtime", rendered)
+        self.assertIn("statistics", rendered)
+        self.assertIn("genres", rendered)
+        self.assertIn("firstAired", rendered)
+        self.assertIn("lastAired", rendered)
 
     def test_series_no_id_hits_series_list_path(self) -> None:
         # REQ-1 AC1, REQ-7 AC1: ``sonarr series`` with no id MUST
@@ -1037,10 +1103,12 @@ class TestCmdSeries(unittest.TestCase):
         self.assertEqual(json.loads(output), payload)
 
     def test_series_no_id_human_renders_table(self) -> None:
-        # REQ-1 AC2: the --human column list for the no-id branch
-        # is exactly these six columns in this order. ``monitored``
-        # here is the operator's library flag (NOT the source-default
-        # column that REQ-4 renames on lookup).
+        # The audit-asked --human column list for the no-id branch
+        # extends the pre-change six columns with ``statistics``,
+        # ``genres``, ``firstAired``, and ``lastAired``. The pre-
+        # change columns (``title``, ``year``, ``monitored``,
+        # ``status``, ``tvdbId``, ``seasons``) are kept in their
+        # existing positions; the audit additions are appended.
         cfg = _service_config()
         args = _namespace(series_id=None, human=True)
         payload = [{"title": "X", "year": 2020}]
@@ -1050,7 +1118,18 @@ class TestCmdSeries(unittest.TestCase):
         kwargs = mock_emit.call_args.kwargs
         self.assertEqual(
             kwargs["columns"],
-            ["title", "year", "monitored", "status", "tvdbId", "seasons"],
+            [
+                "title",
+                "year",
+                "monitored",
+                "status",
+                "tvdbId",
+                "seasons",
+                "statistics",
+                "genres",
+                "firstAired",
+                "lastAired",
+            ],
         )
 
     def test_series_no_id_row_count_matches_payload(self) -> None:
@@ -1110,6 +1189,11 @@ class TestHumanMode(unittest.TestCase):
         self.assertTrue(kwargs["human_mode"])
 
     def test_human_mode_columns_for_calendar(self) -> None:
+        # The audit-asked --human column list on calendar extends
+        # the pre-change five columns (``title``, ``seasonNumber``,
+        # ``episodeNumber``, ``airDate``, ``series.title``) with
+        # ``monitored``, ``hasFile``, ``runtime``, and a truncated
+        # ``overview``; the audit additions are appended.
         cfg = _service_config()
         args = _namespace(human=True, start=None, end=None)
         payload = [{"title": "Episode", "seasonNumber": 1, "episodeNumber": 1}]
@@ -1125,6 +1209,10 @@ class TestHumanMode(unittest.TestCase):
                 "episodeNumber",
                 "airDate",
                 "series.title",
+                "monitored",
+                "hasFile",
+                "runtime",
+                "overview",
             ],
         )
 
@@ -1316,7 +1404,20 @@ class TestMainEntryPoint(unittest.TestCase):
         mock_get.assert_not_called()
 
     def test_main_lookup_emits_payload(self) -> None:
-        payload = [{"title": "The Expanse", "year": 2015}]
+        # ``cmd_lookup`` is now a size-to-summary candidate (the audit
+        # registered ``_summary_sonarr_lookup``), so the default JSON
+        # path returns the curated list -- not the raw upstream
+        # payload. Pass ``--verbose`` to surface the verbatim payload.
+        payload = [
+            {
+                "title": "The Expanse",
+                "year": 2015,
+                "tvdbId": 38058,
+                "status": "continuing",
+                "statistics": {"episodeFileCount": 0, "episodeCount": 6},
+                "overview": "An overview.",
+            }
+        ]
         with patch(
             "arr_cli.sonarr.transport.get",
             return_value=payload,
@@ -1330,7 +1431,14 @@ class TestMainEntryPoint(unittest.TestCase):
                     "the expanse",
                 ],
             )
-        self.assertEqual(json.loads(stdout), payload)
+        rendered = json.loads(stdout)
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["title"], "The Expanse")
+        self.assertEqual(rendered[0]["year"], 2015)
+        self.assertEqual(rendered[0]["tvdbId"], 38058)
+        self.assertEqual(rendered[0]["status"], "continuing")
+        self.assertEqual(rendered[0]["statistics"], "0/6")
+        self.assertIn("overview", rendered[0])
 
     def test_main_human_renders_table(self) -> None:
         # ``--human`` switches from JSON pass-through to tabular
