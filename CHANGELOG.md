@@ -66,6 +66,31 @@ within the pre-1.0 contract documented in `README.md`.
   with-id branch dispatches on `("sonarr", "series_id")` via the
   `command=` kwarg so the renderer routes correctly while sharing
   the same argparse subcommand name with the no-id branch.
+- `maintainerr --human`: every size-to-summary table now carries
+  the audit-requested fields. `maintainerr pending` adds
+  `arrAction`, `addDate`, `mediaServerType`, `type`, a truncated
+  `description`, `isActive`, and `visibleOnHome`; `maintainerr
+  storage` flattens the upstream `instances[]` envelope onto one
+  row per volume with `mount`, `used`, `free`, `total`, and
+  `usedPercent`; `maintainerr health` is now a size-to-summary
+  candidate that emits a single-line `OK` / `DEGRADED` token
+  instead of dumping the raw upstream object. Long `description`
+  strings are truncated via the existing `_truncate_overview`
+  helper.
+- `maintainerr storage` and `maintainerr health`: registered two
+  new renderers (`_summary_maintainerr_storage`,
+  `_summary_maintainerr_health`) in `_SUMMARY_RENDERERS`, so both
+  commands now return a curated summary in default mode. The
+  `storage` renderer flattens the nested `instances[]` envelope
+  with a fall-back to the parent item's keys (legacy shape);
+  the `health` renderer maps `status == "ok"` to `"OK"` and
+  every other shape (degraded / down / unknown string, bare
+  `False`, non-mapping) to `"DEGRADED"` as the defensive default.
+  `cmd_storage`'s `columns = [...]` literal widened to
+  `["mount", "used", "free", "total", "usedPercent"]`; `cmd_health`
+  continues to pass `columns=None` so the scalar `"OK"` /
+  `"DEGRADED"` flows through the output module's `_render_scalar`
+  branch.
 
 ## [0.1.0]
 
