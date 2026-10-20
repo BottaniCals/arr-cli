@@ -516,7 +516,27 @@ def cmd_user(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     inspect or echo the credential.
     """
     payload = _get(USER_ME_PATH, args, cfg, op="user")
-    return _emit(payload, args, columns=None)
+    # Tabular columns match the curated five-key projection emitted
+    # by ``_summary_seerr_user``: ``email``, ``userType``,
+    # ``permissions`` (decoded from the live ``/api/v1/auth/me``
+    # integer bitfield into a sorted-by-bit comma-joined name list
+    # via ``_decode_permissions_bitfield``; non-integer shapes fall
+    # back to ``None`` per ``AGENTS.md §4.1``), and ``requestCount``
+    # (sourced from the nested ``permissions`` sub-dict or
+    # top-level ``requestCount`` field; ``_safe_get`` walks both).
+    # Switched from the pre-change ``columns=None``
+    # (verbatim pass-through) to the explicit five-key literal so
+    # the ``--human`` table matches the curated default-mode JSON
+    # (mirrors the sibling ``cmd_pending`` widening in the
+    # maintainerr-human-fields PR).
+    columns = [
+        "username",
+        "email",
+        "userType",
+        "permissions",
+        "requestCount",
+    ]
+    return _emit(payload, args, columns=columns)
 
 
 # ---------------------------------------------------------------------------
@@ -578,6 +598,9 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "type",
         "status",
         "createdAt",
+        "requestedByUsername",
+        "mediaAddedAt",
+        "seasonCount",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -655,6 +678,9 @@ def cmd_search(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "title",
         "mediaType",
         "releaseDate",
+        "overview",
+        "popularity",
+        "genreIds",
     ]
     if not query:
         # Short-circuit on empty query to ``[]``; mirrors
@@ -817,8 +843,12 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         )
         if isinstance(payload, Mapping) and isinstance(ratings, Mapping):
             # Merge under a dedicated ``ratings`` key so the renderer
-            # can detect the optional block and surface ``criticsScore``
-            # / ``audienceScore`` rather than silently dropping them.
+            # can detect the optional block and surface the live-spec
+            # ``criticsScore`` (plural-with-s integer) and
+            # ``audienceRating`` (categorical string) keys rather
+            # than silently dropping them. Mirrors the same defensive
+            # merge guard ``cmd_tv`` uses so a non-Mapping ratings
+            # response never crashes the command.
             payload = {**payload, "ratings": ratings}
         else:
             # Defensive: an unexpected shape on either side (e.g. an
@@ -843,10 +873,14 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "name",
         "originalName",
         "firstAirDate",
+        "lastAirDate",
+        "numberOfSeasons",
+        "numberOfEpisodes",
         "genres",
         "networks",
-        "numberOfSeasons",
+        "overview",
         "status",
+        "mediaInfoStatus",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -926,9 +960,10 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         )
         if isinstance(payload, Mapping) and isinstance(ratings, Mapping):
             # Merge under a dedicated ``ratings`` key so the renderer
-            # can detect the optional block and surface
-            # ``criticsScore`` / ``audienceScore`` rather than
-            # silently dropping them. Mirrors the same defensive
+            # can detect the optional block and surface the live-spec
+            # ``criticsScore`` (plural-with-s integer) and
+            # ``audienceRating`` (categorical string) keys rather
+            # than silently dropping them. Mirrors the same defensive
             # merge guard ``cmd_tv`` uses so a non-Mapping ratings
             # response never crashes the command.
             payload = {**payload, "ratings": ratings}
@@ -958,6 +993,9 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "runtime",
         "genres",
         "tagline",
+        "overview",
+        "status",
+        "mediaInfoStatus",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -1021,6 +1059,8 @@ def cmd_trending(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "title",
         "mediaType",
         "releaseDate",
+        "popularity",
+        "overview",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -1082,6 +1122,8 @@ def cmd_upcoming_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "title",
         "mediaType",
         "releaseDate",
+        "popularity",
+        "overview",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -1142,6 +1184,8 @@ def cmd_upcoming_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "title",
         "mediaType",
         "releaseDate",
+        "popularity",
+        "overview",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -1224,6 +1268,9 @@ def cmd_discover_movies(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "title",
         "mediaType",
         "releaseDate",
+        "popularity",
+        "overview",
+        "genreIds",
     ]
     return _emit(payload, args, columns=columns)
 
@@ -1299,6 +1346,9 @@ def cmd_discover_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "title",
         "mediaType",
         "releaseDate",
+        "popularity",
+        "overview",
+        "genreIds",
     ]
     return _emit(payload, args, columns=columns)
 

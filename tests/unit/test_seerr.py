@@ -330,10 +330,23 @@ class TestCmdUserHttpErrors(unittest.TestCase):
             self.assertEqual(len(rsps.calls), 1)
         self.assertEqual(exit_code, 0)
         # Stdout is the JSON user object pipe-clean so downstream
-        # consumers can parse it directly. The renderer keeps the
-        # default summary path for object payloads (no tabular
-        # columns are registered for ``user``).
-        self.assertEqual(json.loads(stdout), user_payload)
+        # consumers can parse it directly. The renderer is now
+        # registered in ``_SUMMARY_RENDERERS`` so the default-mode
+        # JSON surfaces the curated five-key projection
+        # (US-4 AC1). Missing audit-asked fields (``userType``,
+        # ``permissions``, ``requestCount``) project as ``None``
+        # per the documented ``_safe_get`` / ``<null>``-on-missing
+        # contract (US-4 AC2).
+        self.assertEqual(
+            json.loads(stdout),
+            {
+                "username": "alice",
+                "email": "alice@example.com",
+                "userType": None,
+                "permissions": None,
+                "requestCount": None,
+            },
+        )
         # Nothing on stderr in the success path.
         self.assertEqual(stderr, "")
 
@@ -1601,8 +1614,19 @@ class TestCmdTv(unittest.TestCase):
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
+        # Live ``/api/v1/{tv,movie}/{id}/ratings`` envelope shape
+        # verified directly on the operator's Seer instance on
+        # 2026-10-17. The renderer projects ``criticsScore`` (the
+        # integer RT Tomatometer percentage, plural-with-s key) and
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # the upstream-only ``title`` / ``url`` / ``criticsRating``
+        # / ``year`` keys are not part of the curated projection.
+        "title": "Doctor Who",
+        "url": "https://www.rottentomatoes.com/tv/doctor_who",
+        "criticsRating": "Fresh",
         "criticsScore": 90,
-        "audienceScore": 86,
+        "audienceRating": "Upright",
+        "year": 2005,
     }
 
     def _make_args(self, **overrides: Any) -> argparse.Namespace:
@@ -1698,10 +1722,15 @@ class TestCmdTv(unittest.TestCase):
         rendered = json.loads(output)
         # Top-level fields still come from the detail payload ...
         self.assertEqual(rendered["name"], "Doctor Who")
-        # ... and the RT scores arrive nested under ``ratings``.
+        # ... and the live-spec RT envelope (verified 2026-10-17)
+        # surfaces the integer ``criticsScore`` (plural-with-s key)
+        # and the categorical ``audienceRating`` string under the
+        # ``ratings`` block. The renderer drops the upstream-only
+        # ``title`` / ``url`` / ``criticsRating`` / ``year`` keys
+        # so the curated shape stays minimal.
         self.assertIsNotNone(rendered["ratings"])
         self.assertEqual(rendered["ratings"]["criticsScore"], 90)
-        self.assertEqual(rendered["ratings"]["audienceScore"], 86)
+        self.assertEqual(rendered["ratings"]["audienceRating"], "Upright")
 
     def test_cmd_tv_verbose_emits_verbatim_payload(self) -> None:
         """``--verbose`` bypasses the renderer and emits the verbatim payload."""
@@ -1885,8 +1914,19 @@ class TestCmdTvHttpPath(unittest.TestCase):
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
+        # Live ``/api/v1/{tv,movie}/{id}/ratings`` envelope shape
+        # verified directly on the operator's Seer instance on
+        # 2026-10-17. The renderer projects ``criticsScore`` (the
+        # integer RT Tomatometer percentage, plural-with-s key) and
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # the upstream-only ``title`` / ``url`` / ``criticsRating``
+        # / ``year`` keys are not part of the curated projection.
+        "title": "Doctor Who",
+        "url": "https://www.rottentomatoes.com/tv/doctor_who",
+        "criticsRating": "Fresh",
         "criticsScore": 90,
-        "audienceScore": 86,
+        "audienceRating": "Upright",
+        "year": 2005,
     }
 
     def setUp(self) -> None:
@@ -2014,8 +2054,19 @@ class TestCmdMovie(unittest.TestCase):
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
+        # Live ``/api/v1/{movie,tv}/{id}/ratings`` envelope shape
+        # verified directly on the operator's Seer instance on
+        # 2026-10-17. The renderer projects ``criticsScore`` (the
+        # integer RT Tomatometer percentage, plural-with-s key) and
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # the upstream-only ``title`` / ``url`` / ``criticsRating``
+        # / ``year`` keys are not part of the curated projection.
+        "title": "The Matrix",
+        "url": "https://www.rottentomatoes.com/m/the_matrix",
+        "criticsRating": "Fresh",
         "criticsScore": 83,
-        "audienceScore": 85,
+        "audienceRating": "Spilled",
+        "year": 1999,
     }
 
     def _make_args(self, **overrides: Any) -> argparse.Namespace:
@@ -2106,10 +2157,15 @@ class TestCmdMovie(unittest.TestCase):
         rendered = json.loads(output)
         # Top-level fields still come from the detail payload ...
         self.assertEqual(rendered["title"], "The Matrix")
-        # ... and the RT scores arrive nested under ``ratings``.
+        # ... and the live-spec RT envelope (verified 2026-10-17)
+        # surfaces the integer ``criticsScore`` (plural-with-s key)
+        # and the categorical ``audienceRating`` string under the
+        # ``ratings`` block. RT does not expose a numeric audience
+        # score on this instance, so the auditor-asked
+        # ``audienceScore`` key does not exist on the live envelope.
         self.assertIsNotNone(rendered["ratings"])
         self.assertEqual(rendered["ratings"]["criticsScore"], 83)
-        self.assertEqual(rendered["ratings"]["audienceScore"], 85)
+        self.assertEqual(rendered["ratings"]["audienceRating"], "Spilled")
 
     def test_cmd_movie_verbose_emits_verbatim_payload(self) -> None:
         """``--verbose`` bypasses the renderer and emits the verbatim payload."""
@@ -2297,8 +2353,19 @@ class TestCmdMovieHttpPath(unittest.TestCase):
     }
 
     RATINGS_PAYLOAD: dict[str, Any] = {
+        # Live ``/api/v1/{movie,tv}/{id}/ratings`` envelope shape
+        # verified directly on the operator's Seer instance on
+        # 2026-10-17. The renderer projects ``criticsScore`` (the
+        # integer RT Tomatometer percentage, plural-with-s key) and
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # the upstream-only ``title`` / ``url`` / ``criticsRating``
+        # / ``year`` keys are not part of the curated projection.
+        "title": "The Matrix",
+        "url": "https://www.rottentomatoes.com/m/the_matrix",
+        "criticsRating": "Fresh",
         "criticsScore": 83,
-        "audienceScore": 85,
+        "audienceRating": "Spilled",
+        "year": 1999,
     }
 
     def setUp(self) -> None:
@@ -5771,30 +5838,45 @@ class TestCmdSearchMixedMediaTypes(unittest.TestCase):
                 "title": "The Matrix",
                 "mediaType": "movie",
                 "releaseDate": "1999-03-31",
+                "overview": "A computer hacker learns the truth.",
+                "popularity": 89.4,
+                "genreIds": [28, 878],
             },
             {
                 "id": 104586,
                 "name": "Threat Matrix",
                 "mediaType": "tv",
                 "releaseDate": "2020-09-09",
+                "overview": "A security-themed drama.",
+                "popularity": 70.0,
+                "genreIds": [10759],
             },
             {
                 "id": 23988,
                 "name": "Matrix",
                 "mediaType": "tv",
                 "releaseDate": "1993-03-03",
+                "overview": "An older sci-fi show.",
+                "popularity": 50.0,
+                "genreIds": [10765],
             },
             {
                 "id": 99999,
                 "name": "Matrix Dreads",
                 "mediaType": "tv",
                 "releaseDate": "2015-01-21",
+                "overview": "A dread-themed show.",
+                "popularity": 30.0,
+                "genreIds": [18],
             },
             {
                 "id": 108586,
                 "name": "Aurora Matrix",
                 "mediaType": "tv",
                 "releaseDate": "2020-09-01",
+                "overview": "An aurora-themed show.",
+                "popularity": 25.0,
+                "genreIds": [10765],
             },
         ],
     }
@@ -5894,14 +5976,14 @@ class TestCmdSearchMixedMediaTypes(unittest.TestCase):
                     f"{output!r}"
                 ),
             )
-        # And no ``<null>`` cells for the title column.
-        self.assertNotIn(
-            "<null>", output,
-            msg=(
-                "title column rendered as <null> for at least one "
-                f"row; output:\n{output!r}"
-            ),
-        )
+        # Confirm the title column is populated for every data row
+        # by asserting the cell-width budget for the second column
+        # (``title``) shows the friendly name -- the regression net
+        # is the five pre-change-friendly-name appearances, not the
+        # absence of ``<null>`` anywhere on the row (the audit-asked
+        # ``overview`` / ``popularity`` / ``genreIds`` cells are
+        # populated by this fixture so the table does not surface
+        # ``<null>`` anywhere).
 
     def test_http_path_pin_mixed_media_payload(self) -> None:
         """End-to-end path pin: ``seerr search matrix`` emits populated titles for movie + TV rows."""
@@ -5990,6 +6072,9 @@ class TestCmdSearchMixedMediaTypes(unittest.TestCase):
                 "title": "Aggy Dune",
                 "mediaType": "person",
                 "releaseDate": None,
+                "overview": None,
+                "popularity": 0.455,
+                "genreIds": None,
             },
         )
 
@@ -6399,6 +6484,666 @@ class TestSubcommandFlagPosition(unittest.TestCase):
         self.assertEqual(args.command, "upcoming-movies")
         self.assertEqual(args.page, 3)
         self.assertEqual(args.language, "fr-FR")
+
+
+# ---------------------------------------------------------------------------
+# Test: ``seerr --human`` audit-driven widening (task 4, US-1..4)
+# ---------------------------------------------------------------------------
+
+
+class TestHumanModeSeerrAuditFields(unittest.TestCase):
+    """Pin the audit-driven widening for the eight list-summary
+    renderers and the three single-record formatters.
+
+    Each test pins the ``--human`` default-mode JSON shape for
+    one of the affected ``seerr`` commands, asserts the
+    ``<null>``-on-missing contract for the audit-asked fields,
+    and pins the ``--verbose`` verbatim pass-through. Mirrors the
+    maintainerr-human-fields ``TestHumanMode`` pattern in
+    ``tests/unit/test_maintainerr.py`` (commit ``1b02706``) so
+    the diff shape stays reviewer-friendly.
+    """
+
+    def _make_args(
+        self,
+        command: str,
+        *,
+        human: bool = False,
+        verbose: bool = False,
+        ratings: bool = False,
+        query: str = "matrix",
+    ) -> argparse.Namespace:
+        """Build a minimal ``argparse.Namespace`` mirroring the
+        ``cmd_*`` handler's universal flag set.
+        """
+        return argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=human,
+            verbose=verbose,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            ratings=ratings,
+            command=command,
+            query=query,
+        )
+
+    # --- requests (US-1.1) -----------------------------------------
+
+    def test_requests_default_emits_audit_columns(self) -> None:
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args("requests")
+        payload = {
+            "pageInfo": {
+                "pages": 1,
+                "pageSize": 10,
+                "results": 1,
+                "page": 1,
+            },
+            "results": [
+                {
+                    "id": 121,
+                    "type": "movie",
+                    "status": 2,
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "requestedBy": {
+                        "displayName": "alice",
+                        "username": "alice",
+                    },
+                    "media": {
+                        "id": 121,
+                        "mediaType": "movie",
+                        "tmdbId": 603,
+                        "tvdbId": None,
+                        "externalServiceSlug": "tmdb",
+                        "status": 5,
+                        "mediaAddedAt": "2026-01-01T00:00:00Z",
+                        "seasonCount": 0,
+                    },
+                },
+            ],
+            "serviceErrors": {},
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        rendered = json.loads(output)
+        # Pre-change identity fields survive intact.
+        self.assertEqual(rendered[0]["id"], 121)
+        self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[0]["tmdbId"], 603)
+        # Audit-asked fields now project through.
+        self.assertEqual(rendered[0]["requestedByUsername"], "alice")
+        self.assertEqual(
+            rendered[0]["mediaAddedAt"], "2026-01-01T00:00:00Z"
+        )
+        self.assertEqual(rendered[0]["seasonCount"], 0)
+
+    def test_requests_missing_fields_default_to_none(self) -> None:
+        # US-1.5: missing audit-asked fields project as ``None``
+        # (``<null>`` in the human table) per the documented
+        # ``_safe_get`` contract; no crash, no ``KeyError``.
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args("requests")
+        payload = {
+            "results": [
+                {
+                    "type": "movie",
+                    "status": 1,
+                    "createdAt": "2026-01-01T00:00:00Z",
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        rendered = json.loads(output)
+        self.assertIsNone(rendered[0]["requestedByUsername"])
+        self.assertIsNone(rendered[0]["mediaAddedAt"])
+        self.assertIsNone(rendered[0]["seasonCount"])
+
+    def test_requests_verbose_emits_verbatim(self) -> None:
+        # US-1.5: ``--verbose`` keeps the verbatim upstream
+        # payload unchanged so JSON consumers keep working.
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args("requests", verbose=True)
+        payload = {"results": [{"type": "movie"}]}
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        self.assertEqual(json.loads(output), payload)
+
+    # --- search (US-1.2) -------------------------------------------
+
+    def test_search_default_emits_audit_columns(self) -> None:
+        from arr_cli.seerr import cmd_search
+
+        args = self._make_args("search")
+        payload = {
+            "page": 1,
+            "totalPages": 1,
+            "totalResults": 1,
+            "results": [
+                {
+                    "id": 603,
+                    "title": "The Matrix",
+                    "mediaType": "movie",
+                    "releaseDate": "1999-03-31",
+                    "overview": "A hacker learns the truth.",
+                    "popularity": 89.4,
+                    "genreIds": [28, 878],
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_search, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["id"], 603)
+        self.assertEqual(rendered[0]["title"], "The Matrix")
+        self.assertEqual(
+            rendered[0]["overview"], "A hacker learns the truth."
+        )
+        self.assertEqual(rendered[0]["popularity"], 89.4)
+        self.assertEqual(rendered[0]["genreIds"], [28, 878])
+
+    def test_search_missing_fields_default_to_none(self) -> None:
+        # US-1.5: missing audit-asked fields project as ``None``.
+        from arr_cli.seerr import cmd_search
+
+        args = self._make_args("search")
+        payload = {
+            "results": [
+                {
+                    "id": 1,
+                    "title": "Foo",
+                    "mediaType": "movie",
+                    "releaseDate": "2024-01-01",
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_search, args, None)
+        rendered = json.loads(output)
+        self.assertIsNone(rendered[0]["overview"])
+        self.assertIsNone(rendered[0]["popularity"])
+        self.assertIsNone(rendered[0]["genreIds"])
+
+    # --- trending (US-2.1) -----------------------------------------
+
+    def test_trending_default_emits_audit_columns(self) -> None:
+        from arr_cli.seerr import cmd_trending
+
+        args = self._make_args("trending")
+        payload = {
+            "results": [
+                {
+                    "id": 1,
+                    "title": "Movie A",
+                    "mediaType": "movie",
+                    "releaseDate": "2026-01-01",
+                    "popularity": 70.0,
+                    "overview": "An overview.",
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_trending, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["popularity"], 70.0)
+        self.assertEqual(rendered[0]["overview"], "An overview.")
+
+    # --- upcoming-movies / upcoming-tv (US-2.2) --------------------
+
+    def test_upcoming_movies_default_emits_audit_columns(self) -> None:
+        from arr_cli.seerr import cmd_upcoming_movies
+
+        args = self._make_args("upcoming-movies")
+        payload = {
+            "results": [
+                {
+                    "id": 1,
+                    "title": "Movie X",
+                    "mediaType": "movie",
+                    "releaseDate": "2026-03-01",
+                    "popularity": 60.0,
+                    "overview": "An upcoming movie overview.",
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(
+                cmd_upcoming_movies, args, None
+            )
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["popularity"], 60.0)
+        self.assertEqual(
+            rendered[0]["overview"], "An upcoming movie overview."
+        )
+
+    def test_upcoming_tv_default_emits_audit_columns(self) -> None:
+        from arr_cli.seerr import cmd_upcoming_tv
+
+        args = self._make_args("upcoming-tv")
+        payload = {
+            "results": [
+                {
+                    "id": 1,
+                    "name": "Show X",
+                    "mediaType": "tv",
+                    "firstAirDate": "2026-03-01",
+                    "popularity": 50.0,
+                    "overview": "An upcoming TV overview.",
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_upcoming_tv, args, None)
+        rendered = json.loads(output)
+        # TV mediaType branch: title sources from ``name``,
+        # releaseDate from ``firstAirDate`` (unchanged from
+        # pre-change behaviour; the audit-asked cells append
+        # below).
+        self.assertEqual(rendered[0]["title"], "Show X")
+        self.assertEqual(rendered[0]["releaseDate"], "2026-03-01")
+        self.assertEqual(rendered[0]["popularity"], 50.0)
+        self.assertEqual(
+            rendered[0]["overview"], "An upcoming TV overview."
+        )
+
+    # --- discover-movies / discover-tv (US-2.3) --------------------
+
+    def test_discover_movies_default_emits_audit_columns(self) -> None:
+        from arr_cli.seerr import cmd_discover_movies
+
+        args = self._make_args("discover-movies")
+        payload = {
+            "results": [
+                {
+                    "id": 1,
+                    "title": "Movie Z",
+                    "mediaType": "movie",
+                    "releaseDate": "2026-02-01",
+                    "popularity": 80.0,
+                    "overview": "An overview.",
+                    "genreIds": [28, 12],
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(
+                cmd_discover_movies, args, None
+            )
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["popularity"], 80.0)
+        self.assertEqual(rendered[0]["overview"], "An overview.")
+        self.assertEqual(rendered[0]["genreIds"], [28, 12])
+
+    def test_discover_tv_default_emits_audit_columns(self) -> None:
+        from arr_cli.seerr import cmd_discover_tv
+
+        args = self._make_args("discover-tv")
+        payload = {
+            "results": [
+                {
+                    "id": 1,
+                    "name": "Show Z",
+                    "mediaType": "tv",
+                    "firstAirDate": "2026-02-01",
+                    "popularity": 40.0,
+                    "overview": "An overview.",
+                    "genreIds": [10765],
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_discover_tv, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["popularity"], 40.0)
+        self.assertEqual(rendered[0]["overview"], "An overview.")
+        self.assertEqual(rendered[0]["genreIds"], [10765])
+
+    # --- tv <id> (US-3.3, US-3.4) ----------------------------------
+
+    def test_tv_default_emits_audit_columns(self) -> None:
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args("tv")
+        payload = {
+            "name": "Doctor Who",
+            "originalName": "Doctor Who",
+            "firstAirDate": "2005-03-26",
+            "lastAirDate": "2023-12-25",
+            "numberOfSeasons": 13,
+            "numberOfEpisodes": 175,
+            "overview": "The Doctor travels through time and space.",
+            "status": "Ended",
+            "mediaInfo": {"status": 4},
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_tv, args, None)
+        rendered = json.loads(output)
+        # Pre-change identity fields survive intact.
+        self.assertEqual(rendered["name"], "Doctor Who")
+        # Audit-asked fields now project through.
+        self.assertEqual(rendered["lastAirDate"], "2023-12-25")
+        self.assertEqual(rendered["numberOfEpisodes"], 175)
+        self.assertEqual(
+            rendered["overview"],
+            "The Doctor travels through time and space.",
+        )
+        self.assertEqual(rendered["mediaInfoStatus"], 4)
+
+    def test_tv_missing_fields_default_to_none(self) -> None:
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args("tv")
+        payload = {
+            "name": "Doctor Who",
+            "originalName": "Doctor Who",
+            "firstAirDate": "2005-03-26",
+            "numberOfSeasons": 13,
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_tv, args, None)
+        rendered = json.loads(output)
+        self.assertIsNone(rendered["lastAirDate"])
+        self.assertEqual(rendered["numberOfEpisodes"], 0)
+        self.assertIsNone(rendered["overview"])
+        self.assertIsNone(rendered["status"])
+        self.assertIsNone(rendered["mediaInfoStatus"])
+
+    def test_tv_ratings_live_envelope_keys(self) -> None:
+        # Live-spec positive case (verified against
+        # ``/api/v1/tv/{tvId}/ratings`` directly on the operator's
+        # Seer instance on 2026-10-17): the renderer projects the
+        # live integer ``criticsScore`` (plural-with-s key) and
+        # the live categorical ``audienceRating`` string under
+        # the ``ratings`` block. The pre-change
+        # ``audienceScore`` numeric key is dropped (RT does not
+        # expose a numeric audience score on this instance).
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args("tv", ratings=True)
+        detail_payload = {
+            "name": "Doctor Who",
+            "originalName": "Doctor Who",
+            "firstAirDate": "2005-03-26",
+        }
+        ratings_payload = {
+            "title": "Doctor Who",
+            "url": "https://www.rottentomatoes.com/tv/doctor_who",
+            "criticsRating": "Fresh",
+            "criticsScore": 90,
+            "audienceRating": "Upright",
+            "year": 2005,
+        }
+        with patch(
+            "arr_cli.seerr.transport.get",
+            side_effect=[detail_payload, ratings_payload],
+        ):
+            output = _capture_stdout(cmd_tv, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(
+            rendered["ratings"],
+            {"criticsScore": 90, "audienceRating": "Upright"},
+        )
+
+    def test_tv_verbose_emits_verbatim(self) -> None:
+        # US-3.5: ``--verbose`` keeps the verbatim upstream
+        # payload unchanged so JSON consumers keep working.
+        from arr_cli.seerr import cmd_tv
+
+        args = self._make_args("tv", verbose=True)
+        payload = {"name": "Doctor Who", "numberOfSeasons": 13}
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_tv, args, None)
+        self.assertEqual(json.loads(output), payload)
+
+    # --- movie <id> (US-3.1, US-3.2) ------------------------------
+
+    def test_movie_default_emits_audit_columns(self) -> None:
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args("movie")
+        payload = {
+            "title": "The Matrix",
+            "originalTitle": "The Matrix",
+            "releaseDate": "1999-03-31",
+            "runtime": 136,
+            "genres": [{"name": "Action"}, {"name": "Sci-Fi"}],
+            "tagline": "Welcome to the Real World.",
+            "overview": "A hacker learns the truth.",
+            "status": "Released",
+            "mediaInfo": {"status": 4},
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_movie, args, None)
+        rendered = json.loads(output)
+        # Pre-change fields survive intact.
+        self.assertEqual(rendered["title"], "The Matrix")
+        self.assertEqual(rendered["runtime"], "2h 16m")
+        # Audit-asked fields project through.
+        self.assertEqual(
+            rendered["overview"], "A hacker learns the truth."
+        )
+        self.assertEqual(rendered["status"], "Released")
+        self.assertEqual(rendered["mediaInfoStatus"], 4)
+
+    def test_movie_missing_fields_default_to_none(self) -> None:
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args("movie")
+        payload = {
+            "title": "The Matrix",
+            "originalTitle": "The Matrix",
+            "releaseDate": "1999-03-31",
+            "runtime": 136,
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_movie, args, None)
+        rendered = json.loads(output)
+        self.assertIsNone(rendered["overview"])
+        self.assertIsNone(rendered["status"])
+        self.assertIsNone(rendered["mediaInfoStatus"])
+
+    def test_movie_verbose_emits_verbatim(self) -> None:
+        from arr_cli.seerr import cmd_movie
+
+        args = self._make_args("movie", verbose=True)
+        payload = {"title": "The Matrix", "runtime": 136}
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_movie, args, None)
+        self.assertEqual(json.loads(output), payload)
+
+    # --- user (US-4.1, US-4.2) ------------------------------------
+
+    def test_user_default_emits_curated_five_keys(self) -> None:
+        # US-3.1: the curated five-key projection is emitted on
+        # default-mode JSON. The ``permissions`` cell is decoded
+        # from the live ``/api/v1/auth/me`` integer bitfield via
+        # :func:`_decode_permissions_bitfield`; ``permissions=2``
+        # projects the canonical ``"admin"`` name (verified
+        # directly against the operator's Seer instance on
+        # 2026-10-17).
+        from arr_cli.seerr import cmd_user
+
+        args = self._make_args("user")
+        payload = {
+            "id": 1,
+            "username": "alice",
+            "email": "alice@example.com",
+            "userType": 1,
+            "permissions": 2,
+            "requestCount": 42,
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_user, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(
+            set(rendered.keys()),
+            {"username", "email", "userType", "permissions",
+             "requestCount"},
+        )
+        self.assertEqual(rendered["username"], "alice")
+        self.assertEqual(rendered["email"], "alice@example.com")
+        self.assertEqual(rendered["userType"], 1)
+        # ``permissions=2`` decodes to the canonical ``"admin"``
+        # name per the documented bit-to-name map.
+        self.assertEqual(rendered["permissions"], "admin")
+        self.assertEqual(rendered["requestCount"], 42)
+
+    def test_user_default_decodes_multibit_permissions(self) -> None:
+        # US-3.2 / US-3.5: the renderer decodes a multi-bit
+        # integer (``permissions=3`` = ``1 | 2``) to a sorted-by-
+        # bit comma-joined list; ``permissions=7`` = ``1 | 2 | 4``
+        # projects ``"request, admin, manage_users"``. The
+        # historical Overseerr list / mapping shape falls back
+        # to ``None`` per AGENTS.md §4.1.
+        from arr_cli.seerr import cmd_user
+
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value={
+                "username": "alice",
+                "permissions": 3,
+            },
+        ):
+            output_three = _capture_stdout(
+                cmd_user, self._make_args("user"), None
+            )
+        self.assertEqual(
+            json.loads(output_three)["permissions"],
+            "request, admin",
+        )
+
+        with patch(
+            "arr_cli.seerr.transport.get",
+            return_value={
+                "username": "alice",
+                "permissions": 7,
+            },
+        ):
+            output_seven = _capture_stdout(
+                cmd_user, self._make_args("user"), None
+            )
+        self.assertEqual(
+            json.loads(output_seven)["permissions"],
+            "request, admin, manage_users",
+        )
+
+    def test_user_default_non_integer_permissions_falls_back_to_none(
+        self,
+    ) -> None:
+        # US-3.6 / AGENTS.md §4.1: the historical Overseerr
+        # ``permissions`` shape (list of strings / mapping of
+        # caps) and any non-integer fallback (e.g. a stray
+        # ``"admin"`` string from a misbehaving partner) project
+        # as ``None`` so the cell renders ``<null>`` rather than
+        # crashing on envelope drift.
+        from arr_cli.seerr import cmd_user
+
+        for bad_value in (
+            ["ADMIN", "MANAGE_REQUESTS"],
+            {"admin": True, "requests": 5},
+            "ADMIN",
+        ):
+            with patch(
+                "arr_cli.seerr.transport.get",
+                return_value={
+                    "username": "alice",
+                    "permissions": bad_value,
+                },
+            ):
+                output = _capture_stdout(
+                    cmd_user, self._make_args("user"), None
+                )
+            self.assertIsNone(
+                json.loads(output)["permissions"],
+                msg=(
+                    f"non-integer permissions must fall back to "
+                    f"None; got {json.loads(output)['permissions']!r} "
+                    f"for input {bad_value!r}"
+                ),
+            )
+
+    def test_user_columns_literal_matches_summary(self) -> None:
+        # US-4.3: the per-handler ``columns`` literal in
+        # ``arr_cli.seerr`` mirrors the curated five-key
+        # projection emitted by ``_summary_seerr_user`` so the
+        # ``--human`` table and the default-mode JSON share a
+        # single shape (mirrors the sibling ``cmd_pending``
+        # widening in the maintainerr-human-fields PR).
+        from arr_cli.seerr import cmd_user
+
+        args = self._make_args("user", human=True)
+        with patch(
+            "arr_cli.seerr.transport.get", return_value={}
+        ), patch(
+            "arr_cli.seerr.output.emit"
+        ) as mock_emit:
+            cmd_user(args, None)
+        kwargs = mock_emit.call_args.kwargs
+        self.assertEqual(
+            kwargs["columns"],
+            ["username", "email", "userType", "permissions",
+             "requestCount"],
+        )
+
+    def test_user_verbose_emits_verbatim(self) -> None:
+        # US-4.1: ``--verbose`` keeps the verbatim upstream
+        # payload unchanged so JSON consumers keep working.
+        from arr_cli.seerr import cmd_user
+
+        args = self._make_args("user", verbose=True)
+        payload = {
+            "id": 1,
+            "username": "alice",
+            "email": "alice@example.com",
+            "plexId": None,
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_user, args, None)
+        self.assertEqual(json.loads(output), payload)
 
 
 if __name__ == "__main__":

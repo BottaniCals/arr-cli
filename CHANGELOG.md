@@ -91,6 +91,77 @@ within the pre-1.0 contract documented in `README.md`.
   continues to pass `columns=None` so the scalar `"OK"` /
   `"DEGRADED"` flows through the output module's `_render_scalar`
   branch.
+- `seerr --human` widening per the `audit-2026-10-16` UX audit:
+  `seerr requests` adds `requestedByUsername`, `mediaAddedAt`,
+  `seasonCount`; `seerr search` adds a truncated `overview`,
+  `popularity`, and `genreIds`; `seerr trending` and the
+  upcoming / discover buckets add `popularity` and a truncated
+  `overview`, with `discover-movies` / `discover-tv` additionally
+  surfacing `genreIds`; `seerr movie <id>` adds a truncated
+  `overview`, `status`, and `mediaInfoStatus`; `seerr tv <id>`
+  adds `lastAirDate`, `numberOfEpisodes`, a truncated `overview`,
+  `status`, and `mediaInfoStatus`; `seerr user` is now a
+  size-to-summary candidate that projects `username`, `email`,
+  `userType`, `permissions` (flattened via the documented list /
+  mapping guard), and `requestCount`. All eleven affected `cmd_*`
+  `columns` literals in `arr_cli/seerr.py` mirror the renderer
+  body's left-to-right key order so the `--human` table and the
+  default-mode JSON share a single shape. Missing fields default
+  to `None` (rendered as `<null>`) so the renderer stays
+  well-formed even when upstream drops a field.
+
+### Changed
+
+- `seerr --human` live-spec correction (the previous entry's
+  hermetic-gate deferral is retired in favour of the verified
+  direct projection): the audit-asked `title` column on
+  `seerr available` is gone for good -- the live `/api/v1/media`
+  envelope carries identity fields only and does not populate
+  a `title` field on the operator's Seer instance (verified
+  directly on 2026-10-17); the renderer follows the AGENTS.md §1
+  identity-only contract and never projects a `title` cell, with
+  a regression test (`tests/unit/test_output.py
+  ::TestSummarySeerrAvailable::test_seerr_available_does_not_render_title_even_when_present`)
+  pinning the contract and naming the 2026-09-18
+  `seerr-available-no-title-filter` regression vector so any
+  future contributor who tries to add a `title` projection back
+  sees a hard test failure with the audit context preserved.
+  The `seerr movie <id>` / `seerr tv <id>` `--ratings` projection
+  ships the live-spec key names the operator verified directly:
+  `criticsScore` (plural-with-s integer, RT's Tomatometer
+  percentage 0-100) and `audienceRating` (categorical string
+  such as `"Spilled"` / `"Upright"`); RT does not expose a
+  numeric audience score on this Seer instance, so the
+  audit-asked `audienceScore` numeric key is dropped rather than
+  fabricated, and a missing `audienceRating` (e.g. when RT did
+  not publish a categorical rating) renders as `<null>` next to
+  the populated `criticsScore` -- clearly distinguishable from
+  "no ratings fetched". The previous key-name matrix (singular
+  `criticScore` / plural `criticsScore` etc.) is dropped: the
+  previous env-var gate deferral is retired in favour
+  of the verified direct projection. The `seerr user` `permissions` cell becomes an
+  integer-bitfield decoder -- the live `/api/v1/auth/me`
+  envelope (verified directly on 2026-10-17) carries
+  `"permissions": <int>`, a single integer bitfield with the
+  documented map `1=request, 2=admin, 4=manage_users,
+  8=manage_issues, 16=auto_approve, 32=view_users`, decoded
+  into a sorted-by-bit comma-joined name list (e.g. `7 ->
+  "request, admin, manage_users"`); `0` renders as `""` (the
+  documented "no bits set" blank-cell contract; distinct from
+  the defensive `<null>` fallback for non-integer shapes), and
+  the historical Overseerr `permissions` list / mapping shape
+  falls back to `None` per the AGENTS.md §4.1 defensive
+  contract. The three hermetic-gate helpers and their associated
+  deferral gates are removed so the renderer body reflects the
+  live spec directly. CI stays hermetic: no live OpenAPI fetch from CI,
+  the bitfield map / live key names are committed constants in
+  the renderer body. The deferral-vs-direct-projection choice
+  is preserved in this entry because the previous "deferred
+  behind env-var gates" framing was correct in spirit (the
+  audit was working from an incorrect field-name map) but the
+  gate mechanics were wrong: the live Seer spec was verified
+  directly by the operator on 2026-10-17, so there is no
+  remaining decision to defer.
 
 ## [0.1.0]
 

@@ -730,6 +730,14 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "usedPercent": 70.0,
         }
     ],
+    ("seerr", "user"): {
+        "id": 1,
+        "username": "alice",
+        "email": "alice@example.com",
+        "userType": 1,
+        "permissions": ["ADMIN", "MANAGE_REQUESTS"],
+        "requestCount": 42,
+    },
 }
 
 
@@ -3202,7 +3210,10 @@ class TestSummarySeerrRequests(unittest.TestCase):
                 "type": "movie",
                 "status": 2,
                 "createdAt": "2026-09-13T12:56:58.000Z",
-                "requestedBy": {"displayName": "alice"},
+                "requestedBy": {
+                    "displayName": "alice",
+                    "username": "alice",
+                },
                 "media": {
                     "id": 121,
                     "mediaType": "movie",
@@ -3210,6 +3221,8 @@ class TestSummarySeerrRequests(unittest.TestCase):
                     "tvdbId": None,
                     "externalServiceSlug": "tmdb",
                     "status": 5,
+                    "mediaAddedAt": "2026-09-10T00:00:00Z",
+                    "seasonCount": None,
                 },
             }
         ]
@@ -3225,6 +3238,9 @@ class TestSummarySeerrRequests(unittest.TestCase):
                 "type": "movie",
                 "status": 2,
                 "createdAt": "2026-09-13T12:56:58.000Z",
+                "requestedByUsername": "alice",
+                "mediaAddedAt": "2026-09-10T00:00:00Z",
+                "seasonCount": None,
             },
         )
 
@@ -3343,6 +3359,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "title": "The Matrix",
                 "mediaType": "movie",
                 "releaseDate": "1999-03-31",
+                "overview": "A computer hacker learns...",
+                "popularity": 89.4,
+                "genreIds": [28, 878],
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
@@ -3353,6 +3372,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "title": "The Matrix",
                 "mediaType": "movie",
                 "releaseDate": "1999-03-31",
+                "overview": "A computer hacker learns...",
+                "popularity": 89.4,
+                "genreIds": [28, 878],
             },
         )
 
@@ -3364,6 +3386,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "name": "Doctor Who",
                 "mediaType": "tv",
                 "releaseDate": "2005-03-26",
+                "overview": "A long-running sci-fi series.",
+                "popularity": 92.1,
+                "genreIds": [10759, 18],
             }
         ]
         rendered = _SUMMARY_RENDERERS[("seerr", "search")](payload)
@@ -3374,6 +3399,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "title": "Doctor Who",
                 "mediaType": "tv",
                 "releaseDate": "2005-03-26",
+                "overview": "A long-running sci-fi series.",
+                "popularity": 92.1,
+                "genreIds": [10759, 18],
             },
         )
 
@@ -3406,6 +3434,9 @@ class TestSummarySeerrSearch(unittest.TestCase):
                 "title": "Aggy Dune",
                 "mediaType": "person",
                 "releaseDate": None,
+                "overview": None,
+                "popularity": 0.455,
+                "genreIds": None,
             },
         )
 
@@ -3498,6 +3529,58 @@ class TestSummarySeerrAvailable(unittest.TestCase):
         self.assertEqual(
             _SUMMARY_RENDERERS[("seerr", "available")](None),
             [],
+        )
+
+    def test_seerr_available_does_not_render_title_even_when_present(
+        self,
+    ) -> None:
+        # Regression-vector protection for the 2026-09-18
+        # ``seerr-available-no-title-filter`` ticket (see
+        # AGENTS.md \u00a71 "Seer endpoint drift on ``request`` /
+        # ``media`` records"). The live ``/api/v1/media`` envelope
+        # does NOT populate a ``title`` field; the renderer is
+        # therefore contracted to omit the ``title`` cell even when
+        # an upstream payload does include one. A future contributor
+        # who tries to add a ``title`` projection back sees a hard
+        # test failure with the audit context preserved in the
+        # assertion message.
+        payload = [
+            {
+                "id": 1,
+                "mediaType": "movie",
+                "tmdbId": 999,
+                "tvdbId": 76107,
+                "externalServiceSlug": "tmdb",
+                "status": 5,
+                "mediaAddedAt": "2024-01-01T00:00:00Z",
+                "title": "The Matrix",  # stray upstream value;
+                #                            must be ignored
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "available")](payload)
+        self.assertNotIn(
+            "title",
+            rendered[0],
+            msg=(
+                "AGENTS.md \u00a71 identity-only contract violated: "
+                "the live /api/v1/media envelope does not populate a "
+                "``title`` field, so ``_summary_seerr_available`` "
+                "must not project a ``title`` cell. Regression vector: "
+                "2026-09-18 seerr-available-no-title-filter. "
+                f"Got row: {rendered[0]!r}"
+            ),
+        )
+        # Sanity: the pre-change seven identity columns are still
+        # projected verbatim; dropping ``title`` must not regress
+        # the other seven keys.
+        self.assertEqual(rendered[0]["id"], 1)
+        self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[0]["tmdbId"], 999)
+        self.assertEqual(rendered[0]["tvdbId"], 76107)
+        self.assertEqual(rendered[0]["externalServiceSlug"], "tmdb")
+        self.assertEqual(rendered[0]["status"], 5)
+        self.assertEqual(
+            rendered[0]["mediaAddedAt"], "2024-01-01T00:00:00Z"
         )
 
 
@@ -3646,6 +3729,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                     "name": "Monster: The Lizzie Borden Story",
                     "firstAirDate": "2026-09-17",
                     "mediaType": "tv",
+                    "popularity": 73.2,
+                    "overview": "A retelling of the case.",
                 }
             ],
         }
@@ -3657,6 +3742,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                 "title": "Monster: The Lizzie Borden Story",
                 "mediaType": "tv",
                 "releaseDate": "2026-09-17",
+                "popularity": 73.2,
+                "overview": "A retelling of the case.",
             },
         )
 
@@ -3675,6 +3762,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                     "title": "Spider-Man: Brand New Day",
                     "releaseDate": "2026-07-29",
                     "mediaType": "movie",
+                    "popularity": 88.5,
+                    "overview": "The next chapter in the saga.",
                 }
             ],
         }
@@ -3686,6 +3775,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                 "title": "Spider-Man: Brand New Day",
                 "mediaType": "movie",
                 "releaseDate": "2026-07-29",
+                "popularity": 88.5,
+                "overview": "The next chapter in the saga.",
             },
         )
 
@@ -3703,12 +3794,16 @@ class TestSummarySeerrTrending(unittest.TestCase):
                     "title": "Movie A",
                     "releaseDate": "2026-01-01",
                     "mediaType": "movie",
+                    "popularity": 70.0,
+                    "overview": "Movie A overview",
                 },
                 {
                     "id": 2,
                     "name": "Show A",
                     "firstAirDate": "2026-02-02",
                     "mediaType": "tv",
+                    "popularity": 80.0,
+                    "overview": "Show A overview",
                 },
             ],
         }
@@ -3718,10 +3813,14 @@ class TestSummarySeerrTrending(unittest.TestCase):
         self.assertEqual(rendered[0]["title"], "Movie A")
         self.assertEqual(rendered[0]["releaseDate"], "2026-01-01")
         self.assertEqual(rendered[0]["mediaType"], "movie")
+        self.assertEqual(rendered[0]["popularity"], 70.0)
+        self.assertEqual(rendered[0]["overview"], "Movie A overview")
         self.assertEqual(rendered[1]["id"], 2)
         self.assertEqual(rendered[1]["title"], "Show A")
         self.assertEqual(rendered[1]["releaseDate"], "2026-02-02")
         self.assertEqual(rendered[1]["mediaType"], "tv")
+        self.assertEqual(rendered[1]["popularity"], 80.0)
+        self.assertEqual(rendered[1]["overview"], "Show A overview")
 
     def test_tv_item_missing_keys_surface_as_none(self) -> None:
         # A TV item missing ``name`` / ``firstAirDate`` surfaces
@@ -3743,6 +3842,8 @@ class TestSummarySeerrTrending(unittest.TestCase):
                 "title": None,
                 "mediaType": "tv",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])
@@ -3803,6 +3904,8 @@ class TestSummarySeerrUpcomingMovies(unittest.TestCase):
                     "title": "Mickey 17",
                     "releaseDate": "2025-03-07",
                     "mediaType": "movie",
+                    "popularity": 75.0,
+                    "overview": "A clone goes on a mission.",
                 }
             ],
         }
@@ -3814,6 +3917,8 @@ class TestSummarySeerrUpcomingMovies(unittest.TestCase):
                 "title": "Mickey 17",
                 "mediaType": "movie",
                 "releaseDate": "2025-03-07",
+                "popularity": 75.0,
+                "overview": "A clone goes on a mission.",
             },
         )
 
@@ -3832,6 +3937,8 @@ class TestSummarySeerrUpcomingMovies(unittest.TestCase):
                 "title": None,
                 "mediaType": "movie",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])
@@ -3887,6 +3994,8 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
                     "name": "The Scandal",
                     "firstAirDate": "2026-09-18",
                     "mediaType": "tv",
+                    "popularity": 60.0,
+                    "overview": "A scandalous drama.",
                 }
             ],
         }
@@ -3898,6 +4007,8 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
                 "title": "The Scandal",
                 "mediaType": "tv",
                 "releaseDate": "2026-09-18",
+                "popularity": 60.0,
+                "overview": "A scandalous drama.",
             },
         )
 
@@ -3916,6 +4027,8 @@ class TestSummarySeerrUpcomingTv(unittest.TestCase):
                 "title": None,
                 "mediaType": "tv",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])
@@ -3978,6 +4091,9 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
                     "name": "The Vampire Diaries",
                     "firstAirDate": "2009-09-10",
                     "mediaType": "tv",
+                    "popularity": 81.0,
+                    "overview": "A supernatural teen drama.",
+                    "genreIds": [10765, 18],
                 }
             ],
         }
@@ -3989,6 +4105,9 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
                 "title": "The Vampire Diaries",
                 "mediaType": "tv",
                 "releaseDate": "2009-09-10",
+                "popularity": 81.0,
+                "overview": "A supernatural teen drama.",
+                "genreIds": [10765, 18],
             },
         )
 
@@ -4007,6 +4126,9 @@ class TestSummarySeerrDiscoverTv(unittest.TestCase):
                 "title": None,
                 "mediaType": "tv",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
+                "genreIds": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])
@@ -4067,6 +4189,9 @@ class TestSummarySeerrDiscoverMovies(unittest.TestCase):
                     "title": "Captain America: Brave New World",
                     "releaseDate": "2025-02-14",
                     "mediaType": "movie",
+                    "popularity": 90.0,
+                    "overview": "A new chapter in the MCU.",
+                    "genreIds": [28, 878],
                 }
             ],
         }
@@ -4078,6 +4203,9 @@ class TestSummarySeerrDiscoverMovies(unittest.TestCase):
                 "title": "Captain America: Brave New World",
                 "mediaType": "movie",
                 "releaseDate": "2025-02-14",
+                "popularity": 90.0,
+                "overview": "A new chapter in the MCU.",
+                "genreIds": [28, 878],
             },
         )
 
@@ -4096,6 +4224,9 @@ class TestSummarySeerrDiscoverMovies(unittest.TestCase):
                 "title": None,
                 "mediaType": "movie",
                 "releaseDate": None,
+                "popularity": None,
+                "overview": None,
+                "genreIds": None,
             },
         )
         self.assertNotIn("mediaInfo", rendered[0])
@@ -4127,10 +4258,14 @@ class TestSummarySeerrTv(unittest.TestCase):
             "name": "Doctor Who",
             "originalName": "Doctor Who",
             "firstAirDate": "2005-03-26",
+            "lastAirDate": "2023-12-25",
             "genres": [{"name": "Action & Adventure"}],
             "networks": [{"name": "BBC One"}],
             "numberOfSeasons": 13,
+            "numberOfEpisodes": 175,
+            "overview": "The Doctor travels through time and space.",
             "status": "Ended",
+            "mediaInfo": {"status": 4},
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "tv")](payload)
         self.assertEqual(
@@ -4139,10 +4274,14 @@ class TestSummarySeerrTv(unittest.TestCase):
                 "name": "Doctor Who",
                 "originalName": "Doctor Who",
                 "firstAirDate": "2005-03-26",
+                "lastAirDate": "2023-12-25",
+                "numberOfSeasons": 13,
+                "numberOfEpisodes": 175,
                 "genres": "Action & Adventure",
                 "networks": "BBC One",
-                "numberOfSeasons": 13,
+                "overview": "The Doctor travels through time and space.",
                 "status": "Ended",
+                "mediaInfoStatus": 4,
                 "ratings": None,
             },
         )
@@ -4162,8 +4301,22 @@ class TestSummarySeerrTv(unittest.TestCase):
         # as "the show has no genres".
         self.assertIsNone(rendered["genres"])
         self.assertIsNone(rendered["networks"])
+        # Missing audit-asked fields also default to ``None`` /
+        # ``0`` so the renderer stays well-formed on sparse payloads.
+        self.assertIsNone(rendered["lastAirDate"])
+        self.assertEqual(rendered["numberOfEpisodes"], 0)
+        self.assertIsNone(rendered["overview"])
+        self.assertIsNone(rendered["mediaInfoStatus"])
 
     def test_tv_ratings_merged_under_ratings_key(self) -> None:
+        # Live envelope shape verified directly on the operator's
+        # Seer instance on 2026-10-17: ``/api/v1/tv/{tvId}/ratings``
+        # returns ``{"title": ..., "url": ..., "criticsRating": ...,
+        # "criticsScore": <int>, "audienceRating": "...", "year": ...}``.
+        # The renderer projects ``criticsScore`` (plural-with-s, the
+        # live integer RT Tomatometer percentage) and
+        # ``audienceRating`` (the categorical string, RT does not
+        # expose a numeric audience score on this instance).
         payload = {
             "name": "Doctor Who",
             "originalName": "Doctor Who",
@@ -4172,12 +4325,41 @@ class TestSummarySeerrTv(unittest.TestCase):
             "networks": [{"name": "BBC One"}],
             "numberOfSeasons": 13,
             "status": "Ended",
-            "ratings": {"criticsScore": 90, "audienceScore": 86},
+            "ratings": {
+                "title": "Doctor Who",
+                "url": "https://www.rottentomatoes.com/tv/doctor_who",
+                "criticsRating": "Fresh",
+                "criticsScore": 90,
+                "audienceRating": "Upright",
+                "year": 2005,
+            },
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "tv")](payload)
+        # Live-spec keys surface verbatim; the upstream-only keys
+        # (``title`` / ``url`` / ``criticsRating`` / ``year``) are
+        # not part of the curated projection and are dropped.
+        self.assertEqual(
+            rendered["ratings"],
+            {"criticsScore": 90, "audienceRating": "Upright"},
+        )
+
+    def test_tv_ratings_audience_rating_none_renders_null(self) -> None:
+        # RT numeric-vs-categorical gap: when RT did not publish a
+        # categorical rating for the title the upstream envelope
+        # carries ``audienceRating: null``. The renderer projects
+        # ``None`` (renders as ``<null>``) rather than fabricating a
+        # number; the critic ``criticsScore`` is still populated
+        # so the operator can tell "RT has critic data but no
+        # audience badge" from "no ratings fetched".
+        payload = {
+            "name": "Doctor Who",
+            "originalName": "Doctor Who",
+            "ratings": {"criticsScore": 90, "audienceRating": None},
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "tv")](payload)
         self.assertEqual(
             rendered["ratings"],
-            {"criticsScore": 90, "audienceScore": 86},
+            {"criticsScore": 90, "audienceRating": None},
         )
 
     def test_non_mapping_payload_returns_empty_dict(self) -> None:
@@ -4205,6 +4387,9 @@ class TestSummarySeerrMovie(unittest.TestCase):
                 {"id": 878, "name": "Science Fiction"},
             ],
             "tagline": "Welcome to the Real World.",
+            "overview": "A computer hacker learns the truth about his reality.",
+            "status": "Released",
+            "mediaInfo": {"status": 4},
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
         # Raw runtime minutes ``136`` reformats as ``"2h 16m"``;
@@ -4219,6 +4404,9 @@ class TestSummarySeerrMovie(unittest.TestCase):
                 "runtime": "2h 16m",
                 "genres": "Action, Science Fiction",
                 "tagline": "Welcome to the Real World.",
+                "overview": "A computer hacker learns the truth about his reality.",
+                "status": "Released",
+                "mediaInfoStatus": 4,
                 "ratings": None,
             },
         )
@@ -4237,6 +4425,11 @@ class TestSummarySeerrMovie(unittest.TestCase):
         # instead of an empty cell that masquerades as "the
         # movie has no genres".
         self.assertIsNone(rendered["genres"])
+        # Missing audit-asked fields default to ``None`` so the
+        # renderer stays well-formed on sparse payloads.
+        self.assertIsNone(rendered["overview"])
+        self.assertIsNone(rendered["status"])
+        self.assertIsNone(rendered["mediaInfoStatus"])
 
     def test_movie_missing_runtime_renders_none(self) -> None:
         payload = {
@@ -4265,6 +4458,14 @@ class TestSummarySeerrMovie(unittest.TestCase):
         self.assertIsNone(rendered["runtime"])
 
     def test_movie_ratings_merged_under_ratings_key(self) -> None:
+        # Live envelope shape verified directly on the operator's
+        # Seer instance on 2026-10-17: ``/api/v1/movie/{movieId}/ratings``
+        # returns ``{"title": ..., "url": ..., "criticsRating": ...,
+        # "criticsScore": <int>, "audienceRating": "...", "year": ...}``.
+        # The renderer projects ``criticsScore`` (plural-with-s, the
+        # live integer RT Tomatometer percentage) and
+        # ``audienceRating`` (the categorical string, RT does not
+        # expose a numeric audience score on this instance).
         payload = {
             "title": "The Matrix",
             "originalTitle": "The Matrix",
@@ -4272,12 +4473,35 @@ class TestSummarySeerrMovie(unittest.TestCase):
             "runtime": 136,
             "genres": [{"name": "Action"}],
             "tagline": "Welcome to the Real World.",
-            "ratings": {"criticsScore": 83, "audienceScore": 85},
+            "ratings": {
+                "title": "The Matrix",
+                "url": "https://www.rottentomatoes.com/m/the_matrix",
+                "criticsRating": "Fresh",
+                "criticsScore": 83,
+                "audienceRating": "Spilled",
+                "year": 1999,
+            },
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
         self.assertEqual(
             rendered["ratings"],
-            {"criticsScore": 83, "audienceScore": 85},
+            {"criticsScore": 83, "audienceRating": "Spilled"},
+        )
+
+    def test_movie_ratings_audience_rating_none_renders_null(self) -> None:
+        # RT numeric-vs-categorical gap: when RT did not publish a
+        # categorical rating for the title the upstream envelope
+        # carries ``audienceRating: null``. The renderer projects
+        # ``None`` (renders as ``<null>``) rather than fabricating a
+        # number.
+        payload = {
+            "title": "The Matrix",
+            "ratings": {"criticsScore": 83, "audienceRating": None},
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
+        self.assertEqual(
+            rendered["ratings"],
+            {"criticsScore": 83, "audienceRating": None},
         )
 
     def test_movie_runtime_format_from_minutes(self) -> None:
@@ -4325,6 +4549,223 @@ class TestSummarySeerrMovie(unittest.TestCase):
         self.assertEqual(
             _SUMMARY_RENDERERS[("seerr", "movie")](42), {}
         )
+
+
+class TestSummarySeerrUser(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("seerr", "user")]`` matches the spec.
+
+    The audit asks :func:`_summary_seerr_user` for a curated
+    five-key projection (``username``, ``email``, ``userType``,
+    ``permissions``, ``requestCount``) so the auth self-check
+    answers "who am I and what can I do here?" without the
+    operator having to drop to ``--verbose``.
+
+    Live Seer ``/api/v1/auth/me`` (verified directly on 2026-10-17)
+    carries ``"permissions": 2`` -- a single integer bitfield, not
+    a list / mapping as the historical Overseerr shape exposed.
+    The renderer decodes the bitfield into a sorted-by-bit
+    comma-joined name list via
+    :func:`_decode_permissions_bitfield`. Non-integer shapes fall
+    back to ``None`` so the AGENTS.md §4.1 defensive contract is
+    preserved.
+    """
+
+    def test_user_shape_full_fields(self) -> None:
+        # US-3.1 / US-3.2: the curated five-key projection
+        # populates every field from the upstream payload via
+        # :func:`_safe_get`. ``permissions=3`` is the bitwise-OR of
+        # ``1`` (``request``) and ``2`` (``admin``), sorted in the
+        # documented bit-value order.
+        payload = {
+            "id": 1,
+            "username": "alice",
+            "email": "alice@example.com",
+            "userType": 1,
+            "permissions": 3,
+            "requestCount": 42,
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(
+            rendered,
+            {
+                "username": "alice",
+                "email": "alice@example.com",
+                "userType": 1,
+                "permissions": "request, admin",
+                "requestCount": 42,
+            },
+        )
+
+    def test_user_missing_optional_fields_default_to_none(self) -> None:
+        # US-3.6 / AGENTS.md \u00a74.1: every audit-asked field
+        # defaults to ``None`` per the documented ``_safe_get``
+        # contract so the renderer stays well-formed even when
+        # upstream drops a field. The ``permissions`` cell also
+        # falls back to ``None`` for non-integer / missing shapes.
+        payload = {
+            "id": 1,
+            "username": "alice",
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["username"], "alice")
+        self.assertIsNone(rendered["email"])
+        self.assertIsNone(rendered["userType"])
+        self.assertIsNone(rendered["permissions"])
+        self.assertIsNone(rendered["requestCount"])
+
+    # US-3.1 / US-3.3 / US-3.4 -- single-bit value decoding. The
+    # documented bit-to-name mapping is:
+    # 1=request, 2=admin, 4=manage_users, 8=manage_issues,
+    # 16=auto_approve, 32=view_users.
+
+    def test_user_permissions_bit_zero_renders_empty_string(self) -> None:
+        # US-3.3: ``permissions=0`` projects ``""`` (the documented
+        # "no bits set" contract; renders as a blank cell, distinct
+        # from the ``None`` defensive fallback).
+        payload = {"username": "alice", "permissions": 0}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["permissions"], "")
+
+    def test_user_permissions_bit_one_is_request(self) -> None:
+        payload = {"username": "alice", "permissions": 1}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["permissions"], "request")
+
+    def test_user_permissions_bit_two_is_admin(self) -> None:
+        # US-3.1: the canonical admin-only projection verified
+        # directly against the operator's Seer instance on
+        # 2026-10-17 (``"permissions": 2`` -> ``"admin"``).
+        payload = {"username": "alice", "permissions": 2}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["permissions"], "admin")
+
+    def test_user_permissions_bit_four_is_manage_users(self) -> None:
+        payload = {"username": "alice", "permissions": 4}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["permissions"], "manage_users")
+
+    def test_user_permissions_bit_eight_is_manage_issues(self) -> None:
+        payload = {"username": "alice", "permissions": 8}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["permissions"], "manage_issues")
+
+    def test_user_permissions_bit_sixteen_is_auto_approve(self) -> None:
+        payload = {"username": "alice", "permissions": 16}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["permissions"], "auto_approve")
+
+    def test_user_permissions_bit_thirty_two_is_view_users(self) -> None:
+        payload = {"username": "alice", "permissions": 32}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["permissions"], "view_users")
+
+    def test_user_permissions_bit_three_sorted_by_bit_value(self) -> None:
+        # US-3.2: ``permissions=3`` is ``1 | 2`` -> ``"request,
+        # admin"`` (sorted by bit value per the documented contract).
+        payload = {"username": "alice", "permissions": 3}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["permissions"], "request, admin")
+
+    def test_user_permissions_bit_seven_includes_three_names(
+        self,
+    ) -> None:
+        # US-3.5: ``permissions=7`` is ``1 | 2 | 4`` ->
+        # ``"request, admin, manage_users"``.
+        payload = {"username": "alice", "permissions": 7}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(
+            rendered["permissions"], "request, admin, manage_users"
+        )
+
+    def test_user_permissions_unknown_bit_silently_dropped(self) -> None:
+        # Defensive: bits outside the documented table are silently
+        # dropped so a future Seer release that adds a new bit the
+        # renderer has not been taught yet does not surface as a
+        # malformed join (e.g. trailing comma).
+        payload = {"username": "alice", "permissions": 0b1000000}
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["permissions"], "")
+
+    def test_user_permissions_non_integer_falls_back_to_none(self) -> None:
+        # US-3.6 / AGENTS.md \u00a74.1: a non-integer ``permissions``
+        # value (the historical Overseerr string / list / mapping
+        # shape, or future envelope drift) renders as ``None``
+        # (``<null>``) rather than crashing. Pins the defensive
+        # contract so a regression on the bitfield decoder's
+        # isinstance guard surfaces as a hard test failure.
+        for bad_value in (
+            ["ADMIN", "MANAGE_REQUESTS"],  # historical Overseerr list
+            {"admin": True, "requests": 5},  # historical mapping
+            "ADMIN",  # historical string
+        ):
+            rendered = _SUMMARY_RENDERERS[("seerr", "user")](
+                {"username": "alice", "permissions": bad_value}
+            )
+            self.assertIsNone(
+                rendered["permissions"],
+                msg=(
+                    f"non-integer permissions must fall back to "
+                    f"None; got {rendered['permissions']!r} for "
+                    f"input {bad_value!r}"
+                ),
+            )
+
+    def test_user_permissions_bool_does_not_decode_as_bit(self) -> None:
+        # ``bool`` is a subclass of ``int``; reject it explicitly
+        # so ``permissions: True`` does not decode as bit ``1``
+        # (``request``). The Seer envelope only ever carries an
+        # ``int`` here, but the defensive guard prevents a future
+        # ``"permissions": True`` regression on a sibling payload
+        # where the partner happens to ship a Python boolean.
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](
+            {"username": "alice", "permissions": True}
+        )
+        self.assertIsNone(rendered["permissions"])
+
+    def test_user_request_count_walks_both_paths(self) -> None:
+        # US-3.7: ``requestCount`` is sourced from the nested
+        # ``permissions.requestCount`` field or the top-level
+        # ``requestCount`` field -- ``_safe_get`` walks both
+        # paths so the renderer stays well-formed on either
+        # envelope shape.
+        nested = _SUMMARY_RENDERERS[("seerr", "user")](
+            {"permissions": {"requestCount": 7}}
+        )
+        self.assertEqual(nested["requestCount"], 7)
+        top = _SUMMARY_RENDERERS[("seerr", "user")](
+            {"requestCount": 11}
+        )
+        self.assertEqual(top["requestCount"], 11)
+
+    def test_user_list_fixture_shape(self) -> None:
+        # Mirrors the test-fixture convention used by
+        # :func:`_summary_seerr_movie` /
+        # :func:`_summary_seerr_tv`: a list with one ``Mapping``
+        # element extracts element 0 and renders the same
+        # five-key projection as the single-mapping CLI-layer
+        # payload.
+        payload = [{
+            "username": "alice",
+            "email": "alice@example.com",
+        }]
+        rendered = _SUMMARY_RENDERERS[("seerr", "user")](payload)
+        self.assertEqual(rendered["username"], "alice")
+        self.assertEqual(rendered["email"], "alice@example.com")
+        self.assertIsNone(rendered["userType"])
+        self.assertIsNone(rendered["permissions"])
+        self.assertIsNone(rendered["requestCount"])
+
+    def test_user_non_mapping_payload_returns_empty_dict(self) -> None:
+        # Non-Mapping / list-with-no-mapping / scalar / ``None``
+        # payloads gracefully degrade to ``{}`` rather than
+        # crashing; ``emit()`` then takes the verbatim
+        # pass-through branch on the empty dict.
+        for value in (None, [], [1, 2], 42, "foo"):
+            self.assertEqual(
+                _SUMMARY_RENDERERS[("seerr", "user")](value),
+                {},
+                msg=f"expected empty dict for {value!r}",
+            )
 
 
 class TestSummaryMaintainerrPending(unittest.TestCase):
@@ -5609,7 +6050,7 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "type": "movie",
                 "status": 2,
                 "createdAt": "2024-01-01T00:00:00Z",
-                "requestedBy": {"displayName": "alice"},
+                "requestedBy": {"displayName": "alice", "username": "alice"},
                 "media": {
                     "id": 121,
                     "mediaType": "movie",
@@ -5617,6 +6058,8 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                     "tvdbId": 76107,
                     "externalServiceSlug": "tmdb",
                     "status": 5,
+                    "mediaAddedAt": "2024-01-01T00:00:00Z",
+                    "seasonCount": 0,
                 },
             }
         ],
@@ -5626,6 +6069,9 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "title": "Foo",
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
+                "overview": "An overview.",
+                "popularity": 50.0,
+                "genreIds": [28],
             }
         ],
         ("seerr", "available"): [
@@ -5641,26 +6087,32 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         ],
         ("seerr", "trending"): [
             {
+                "id": 1,
                 "title": "Foo",
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
             }
         ],
         ("seerr", "upcoming-movies"): [
             {
+                "id": 1,
                 "title": "Foo",
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
             }
         ],
         ("seerr", "upcoming-tv"): [
             {
+                "id": 1,
                 "name": "Foo",
                 "mediaType": "tv",
                 "firstAirDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
             }
         ],
         ("seerr", "tv"): [
@@ -5720,18 +6172,24 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
         },
         ("seerr", "discover-movies"): [
             {
+                "id": 1,
                 "title": "Foo",
                 "mediaType": "movie",
                 "releaseDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
+                "genreIds": [28],
             }
         ],
         ("seerr", "discover-tv"): [
             {
+                "id": 1,
                 "name": "Foo",
                 "mediaType": "tv",
                 "firstAirDate": "2024-01-01",
-                "mediaInfo": {"tmdbId": 999},
+                "popularity": 50.0,
+                "overview": "An overview.",
+                "genreIds": [10759],
             }
         ],
         ("seerr", "genres"): [
@@ -5740,6 +6198,17 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "name": "Action",
             }
         ],
+        ("seerr", "user"): {
+            "id": 1,
+            "username": "alice",
+            "email": "alice@example.com",
+            "userType": 1,
+            "permissions": [
+                "ADMIN",
+                "MANAGE_REQUESTS",
+            ],
+            "requestCount": 42,
+        },
     }
     return payloads[(svc, cmd)]
 
