@@ -404,8 +404,11 @@ class TestCmdCalendar(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(positional[0], "sonarr")
         self.assertEqual(positional[1], "/api/v3/calendar")
-        # No start/end -> params is None so the URL stays clean.
-        self.assertIsNone(kwargs.get("params"))
+        # No start/end, but the include flag is always sent: Sonarr
+        # only populates the nested ``series: {title}`` envelope
+        # when the caller opts in via ``includeSeries=true``, so the
+        # URL is deliberately no longer parameter-free.
+        self.assertEqual(kwargs.get("params"), {"includeSeries": "true"})
 
     def test_calendar_start_only(self) -> None:
         cfg = _service_config()
@@ -413,7 +416,10 @@ class TestCmdCalendar(unittest.TestCase):
         with _patched_get_payload([]) as mock_get:
             cmd_calendar(args, cfg)
         kwargs = mock_get.call_args.kwargs
-        self.assertEqual(kwargs["params"], {"start": "2026-01-01"})
+        self.assertEqual(
+            kwargs["params"],
+            {"start": "2026-01-01", "includeSeries": "true"},
+        )
 
     def test_calendar_start_and_end(self) -> None:
         cfg = _service_config()
@@ -423,7 +429,25 @@ class TestCmdCalendar(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(
             kwargs["params"],
-            {"start": "2026-01-01", "end": "2026-01-31"},
+            {
+                "start": "2026-01-01",
+                "end": "2026-01-31",
+                "includeSeries": "true",
+            },
+        )
+
+    def test_calendar_param_order_matches_documented_path(self) -> None:
+        # The query-parameter order is the wire order, so the
+        # documented path (``?start=<start>&end=<end>&includeSeries=true``)
+        # holds verbatim.
+        cfg = _service_config()
+        args = _namespace(start="2026-01-01", end="2026-01-31")
+        with _patched_get_payload([]) as mock_get:
+            cmd_calendar(args, cfg)
+        params = mock_get.call_args.kwargs["params"]
+        self.assertEqual(
+            list(params.keys()),
+            ["start", "end", "includeSeries"],
         )
 
     def test_calendar_accepts_datetime_form(self) -> None:
@@ -440,6 +464,7 @@ class TestCmdCalendar(unittest.TestCase):
             {
                 "start": "2026-01-01T00:00:00Z",
                 "end": "2026-01-31T23:59:59Z",
+                "includeSeries": "true",
             },
         )
 
@@ -498,7 +523,10 @@ class TestCmdWanted(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(positional[0], "sonarr")
         self.assertEqual(positional[1], "/api/v3/wanted/missing")
-        self.assertIsNone(kwargs.get("params"))
+        # The include flag is always sent so the nested
+        # ``series: {title}`` envelope is populated; the URL is
+        # deliberately no longer parameter-free.
+        self.assertEqual(kwargs.get("params"), {"includeSeries": "true"})
 
     def test_wanted_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
@@ -535,7 +563,14 @@ class TestCmdQueue(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(positional[0], "sonarr")
         self.assertEqual(positional[1], "/api/v3/queue")
-        self.assertIsNone(kwargs.get("params"))
+        # Both include flags are always sent so the nested
+        # ``series: {title}`` / ``episode: {title}`` envelopes are
+        # populated; the URL is deliberately no longer
+        # parameter-free.
+        self.assertEqual(
+            kwargs.get("params"),
+            {"includeSeries": "true", "includeEpisode": "true"},
+        )
 
     def test_queue_emits_json_when_not_human(self) -> None:
         cfg = _service_config()
@@ -1495,7 +1530,11 @@ class TestMainEntryPoint(unittest.TestCase):
         kwargs = mock_get.call_args.kwargs
         self.assertEqual(
             kwargs["params"],
-            {"start": "2026-01-01", "end": "2026-01-31"},
+            {
+                "start": "2026-01-01",
+                "end": "2026-01-31",
+                "includeSeries": "true",
+            },
         )
 
 

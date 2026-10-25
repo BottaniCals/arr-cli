@@ -2936,6 +2936,108 @@ class TestSummarySonarrWanted(unittest.TestCase):
             [],
         )
 
+    def test_wanted_series_title_resolves_from_nested_envelope(self) -> None:
+        # The nested ``series: {title}`` envelope is only populated
+        # upstream when the request carries ``includeSeries=true``;
+        # the projection resolves it into the flat ``series.title``
+        # key.
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "series": {"title": "Severance"},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "wanted")](payload)
+        self.assertEqual(rendered[0]["series.title"], "Severance")
+
+    def test_wanted_without_series_envelope_renders_null(self) -> None:
+        # A row without the nested envelope degrades to ``None``
+        # instead of raising.
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "wanted")](payload)
+        self.assertIsNone(rendered[0]["series.title"])
+
+    def test_wanted_null_series_envelope_renders_null(self) -> None:
+        # A ``null`` nested envelope is tolerated the same way.
+        payload = [{"title": "Pilot", "series": None}]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "wanted")](payload)
+        self.assertIsNone(rendered[0]["series.title"])
+
+
+class TestSummarySonarrCalendar(unittest.TestCase):
+    """``_SUMMARY_RENDERERS[("sonarr", "calendar")]`` matches the spec."""
+
+    def test_calendar_shape(self) -> None:
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "series": {"title": "Severance"},
+                "monitored": True,
+                "hasFile": False,
+                "runtime": 45,
+                "overview": "An overview.",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "calendar")](payload)
+        self.assertEqual(
+            rendered[0],
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "series.title": "Severance",
+                "monitored": True,
+                "hasFile": False,
+                "runtime": "0h 45m",
+                "overview": "An overview.",
+            },
+        )
+
+    def test_calendar_series_title_resolves_from_nested_envelope(self) -> None:
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+                "series": {"title": "Severance"},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "calendar")](payload)
+        self.assertEqual(rendered[0]["series.title"], "Severance")
+
+    def test_calendar_without_series_envelope_renders_null(self) -> None:
+        payload = [
+            {
+                "title": "Pilot",
+                "seasonNumber": 1,
+                "episodeNumber": 1,
+                "airDate": "2024-01-01",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "calendar")](payload)
+        self.assertIsNone(rendered[0]["series.title"])
+
+    def test_non_list_returns_empty_list(self) -> None:
+        self.assertEqual(
+            _SUMMARY_RENDERERS[("sonarr", "calendar")](None),
+            [],
+        )
+
 
 class TestSummarySonarrQueue(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("sonarr", "queue")]`` matches the spec."""
@@ -2975,6 +3077,45 @@ class TestSummarySonarrQueue(unittest.TestCase):
             _SUMMARY_RENDERERS[("sonarr", "queue")](None),
             [],
         )
+
+    def test_queue_envelope_titles_resolve_from_nested_objects(self) -> None:
+        # The nested ``series: {title}`` / ``episode: {title}``
+        # envelopes are only populated upstream when the request
+        # carries ``includeSeries=true&includeEpisode=true``; the
+        # projections resolve them into the flat ``series.title`` /
+        # ``episode`` keys.
+        payload = [
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "series": {"title": "Severance"},
+                "episode": {"title": "The Work Is Never Done"},
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "queue")](payload)
+        self.assertEqual(rendered[0]["series.title"], "Severance")
+        self.assertEqual(rendered[0]["episode"], "The Work Is Never Done")
+
+    def test_queue_without_envelopes_renders_null(self) -> None:
+        # A row without the nested envelopes degrades to ``None``
+        # instead of raising.
+        payload = [{"title": "Foo", "status": "downloading"}]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "queue")](payload)
+        self.assertIsNone(rendered[0]["series.title"])
+        self.assertIsNone(rendered[0]["episode"])
+
+    def test_queue_null_envelopes_render_null(self) -> None:
+        # ``null`` nested envelopes are tolerated the same way.
+        payload = [
+            {
+                "title": "Foo",
+                "series": None,
+                "episode": None,
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("sonarr", "queue")](payload)
+        self.assertIsNone(rendered[0]["series.title"])
+        self.assertIsNone(rendered[0]["episode"])
 
     def test_envelope_unwrapped(self) -> None:
         """``GET /api/v3/queue`` returns the paginated envelope."""
