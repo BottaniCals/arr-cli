@@ -1209,11 +1209,22 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
     The per-row projection lifts ``movie.title`` and ``movie.year``
     to the top-level ``title`` / ``year`` keys (matching the audit's
     column-set ask) and adds ``sourceTitle``, ``quality``,
-    ``language``, and ``client`` (Radarr's ``downloadClient`` is
-    mapped to the ``client`` summary key for the audit's column
-    name). The original ``movie`` envelope is preserved in the row
-    so ``--verbose`` consumers chaining on the original nested
-    ``movie.title`` / ``movie.year`` shape keep working.
+    ``language``, and ``client``. The original ``movie`` envelope is
+    preserved in the row so ``--verbose`` consumers chaining on the
+    original nested ``movie.title`` / ``movie.year`` shape keep
+    working.
+
+    The upstream activity-log row carries the language as a
+    ``languages`` array of ``{"id": int, "name": str}`` objects and
+    the download client inside the nested ``data`` envelope as
+    ``data.downloadClient``; there is no top-level ``language`` or
+    ``downloadClient`` key on the row. ``language`` is therefore the
+    comma-joined language names (via :func:`_join_names`, the same
+    treatment ``genres`` already gets) and ``client`` is resolved
+    from ``data`` -> ``downloadClient``. An absent / empty
+    ``languages`` array or a missing ``data`` envelope degrades to
+    ``None`` so the human renderer prints ``<null>`` instead of a
+    stray ``", "`` or raising.
     """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
@@ -1243,9 +1254,9 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
                     item, "sourceTitle", default=None
                 ),
                 "quality": _safe_get(item, "quality", default=None),
-                "language": _safe_get(item, "language", default=None),
+                "language": _join_names(item.get("languages")),
                 "client": _safe_get(
-                    item, "downloadClient", default=None
+                    item, "data", "downloadClient", default=None
                 ),
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
@@ -1354,6 +1365,18 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
     a row from an older Sonarr version that ignores the include
     flag, or a defensive fallback for an unflagged payload) renders
     as ``{title: None}`` instead of crashing.
+
+    The upstream activity-log row carries the language as a
+    ``languages`` array of ``{"id": int, "name": str}`` objects and
+    the download client inside the nested ``data`` envelope as
+    ``data.downloadClient``; there is no top-level ``language`` or
+    ``downloadClient`` key on the row. ``language`` is therefore the
+    comma-joined language names (via :func:`_join_names`, the same
+    treatment ``genres`` already gets) and ``client`` is resolved
+    from ``data`` -> ``downloadClient``. An absent / empty
+    ``languages`` array or a missing ``data`` envelope degrades to
+    ``None`` so the human renderer prints ``<null>`` instead of a
+    stray ``", "`` or raising.
     """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
@@ -1387,9 +1410,9 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
                 "quality": _safe_get(item, "quality", default=None),
-                "language": _safe_get(item, "language", default=None),
+                "language": _join_names(item.get("languages")),
                 "client": _safe_get(
-                    item, "downloadClient", default=None
+                    item, "data", "downloadClient", default=None
                 ),
             }
         )
