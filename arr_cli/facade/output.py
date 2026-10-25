@@ -984,13 +984,21 @@ def _summary_radarr_calendar(payload: Any) -> list[dict[str, Any]]:
     :func:`_format_runtime_minutes_whole`; Radarr's whole-minute
     ``runtime`` must not be fed into the Jellyfin-ticks formatter
     -- see the cross-reference in that function's docstring), the
-    literal flat-with-dots ``collection.name`` key (so the
+    literal flat-with-dots ``collection.title`` key (so the
     ``_row_from_mapping`` dot-path walker resolves the nested
     collection envelope), and the three ISO-8601 release dates
     (``inCinemas``, ``physicalRelease``, ``digitalRelease``). Missing
     fields default to ``None`` so the human renderer prints ``<null>``
     rather than crashing on an upstream payload that omits any of
     them.
+
+    The upstream ``collection`` envelope is the live Radarr
+    ``CollectionResource`` of the shape ``{"title": str, "tmdbId":
+    int}`` -- the collection's *title* is the human-readable name,
+    so the projection resolves ``collection`` -> ``title``. A movie
+    without a collection (an absent / ``null`` envelope, or an
+    envelope carrying no ``title`` key) degrades to ``None`` and the
+    human renderer prints ``<null>``.
     """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
@@ -1005,8 +1013,8 @@ def _summary_radarr_calendar(payload: Any) -> list[dict[str, Any]]:
             "runtime": _format_runtime_minutes_whole(
                 item.get("runtime")
             ),
-            "collection.name": _safe_get(
-                item, "collection", "name", default=None
+            "collection.title": _safe_get(
+                item, "collection", "title", default=None
             ),
             "inCinemas": _safe_get(item, "inCinemas", default=None),
             "physicalRelease": _safe_get(
@@ -2459,12 +2467,20 @@ def _summary_radarr_movie(payload: Any) -> list[dict[str, Any]]:
     projection surfaces ``hasFile`` (so the operator can see at a
     glance which library movies already have a file), ``genres``
     (via :func:`_join_names`), ``added`` (the ISO-8601 timestamp
-    the movie was added to the library), ``collection.name`` (a
+    the movie was added to the library), ``collection.title`` (a
     literal flat-with-dots key so :func:`_row_from_mapping`'s
     nested-walk fallback resolves the nested ``collection``
     envelope), and ``studio``. Missing fields default to ``None``
     so the human renderer prints ``<null>`` rather than crashing
     on an upstream payload that omits any of them.
+
+    The upstream ``collection`` envelope is the live Radarr
+    ``CollectionResource`` of the shape ``{"title": str, "tmdbId":
+    int}`` -- the collection's *title* is the human-readable name,
+    so the projection resolves ``collection`` -> ``title``. A movie
+    without a collection (an absent / ``null`` envelope, or an
+    envelope carrying no ``title`` key) degrades to ``None`` and the
+    human renderer prints ``<null>``.
     """
     if not isinstance(payload, list):
         return []
@@ -2475,8 +2491,8 @@ def _summary_radarr_movie(payload: Any) -> list[dict[str, Any]]:
             "hasFile": _safe_get(item, "hasFile", default=False),
             "genres": _join_names(item.get("genres")),
             "added": _safe_get(item, "added", default=None),
-            "collection.name": _safe_get(
-                item, "collection", "name", default=None
+            "collection.title": _safe_get(
+                item, "collection", "title", default=None
             ),
             "studio": _safe_get(item, "studio", default=None),
         }
