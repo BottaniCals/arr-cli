@@ -2731,11 +2731,52 @@ class TestSummaryRadarrQueue(unittest.TestCase):
             {
                 "title": "Foo",
                 "year": 2024,
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "status": "downloading",
                 "timeLeft": "00:30:00",
             },
         )
+
+    def test_quality_without_name_projects_none(self) -> None:
+        """A quality envelope with no resolvable name projects ``None``."""
+        payload = [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "quality": {"quality": {"id": 3}},
+                "status": "downloading",
+                "timeleft": "00:30:00",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
+        self.assertIsNone(rendered[0]["quality"])
+
+    def test_missing_quality_projects_none(self) -> None:
+        """A row without a ``quality`` key projects ``None``."""
+        payload = [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "status": "downloading",
+                "timeleft": "00:30:00",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
+        self.assertIsNone(rendered[0]["quality"])
+
+    def test_plain_string_quality_projects_verbatim(self) -> None:
+        """An upstream ``quality`` that is already a string is verbatim."""
+        payload = [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "quality": "WEBDL-1080p",
+                "status": "downloading",
+                "timeleft": "00:30:00",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
+        self.assertEqual(rendered[0]["quality"], "WEBDL-1080p")
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
@@ -2805,7 +2846,7 @@ class TestSummaryRadarrRecent(unittest.TestCase):
                 "year": 2024,
                 "movie": {"title": "Foo", "year": 2024},
                 "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "language": "English",
                 "client": "qbit",
                 "eventType": "downloadFolderImported",
@@ -3068,7 +3109,7 @@ class TestSummarySonarrQueue(unittest.TestCase):
                 "sizeleft": 500,
                 "series.title": "Severance",
                 "episode": "The Work Is Never Done",
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "timeLeft": "00:30:00",
             },
         )
@@ -3152,7 +3193,7 @@ class TestSummarySonarrQueue(unittest.TestCase):
                     "sizeleft": 500,
                     "series.title": "Severance",
                     "episode": "Pilot",
-                    "quality": {"quality": {"name": "WEBDL-1080p"}},
+                    "quality": "WEBDL-1080p",
                     "timeLeft": "00:30:00",
                 }
             ],
@@ -3304,7 +3345,7 @@ class TestSummarySonarrFlatFieldsIndependentOfEnvelopes(unittest.TestCase):
                 "trackedDownloadStatus": "ok",
                 "size": 1000,
                 "sizeleft": 500,
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "timeLeft": "00:30:00",
             },
         )
@@ -3363,7 +3404,7 @@ class TestSummarySonarrRecent(unittest.TestCase):
                 "sourceTitle": "Pilot",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
-                "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "language": "English",
                 "client": "qbit",
             },
@@ -4650,7 +4691,9 @@ class TestSummarySeerrTv(unittest.TestCase):
                 "overview": "The Doctor travels through time and space.",
                 "status": "Ended",
                 "mediaInfoStatus": 4,
-                "ratings": None,
+                "criticsScore": None,
+                "audienceRating": None,
+                "audienceScore": None,
             },
         )
 
@@ -4681,10 +4724,10 @@ class TestSummarySeerrTv(unittest.TestCase):
         # Seer instance on 2026-10-17: ``/api/v1/tv/{tvId}/ratings``
         # returns ``{"title": ..., "url": ..., "criticsRating": ...,
         # "criticsScore": <int>, "audienceRating": "...", "year": ...}``.
-        # The renderer projects ``criticsScore`` (plural-with-s, the
-        # live integer RT Tomatometer percentage) and
-        # ``audienceRating`` (the categorical string, RT does not
-        # expose a numeric audience score on this instance).
+        # The renderer projects the three flat score cells
+        # (``criticsScore`` -- the live integer RT Tomatometer
+        # percentage, ``audienceRating`` -- the categorical string,
+        # and ``audienceScore`` -- the numeric RT audience score).
         payload = {
             "name": "Doctor Who",
             "originalName": "Doctor Who",
@@ -4706,13 +4749,31 @@ class TestSummarySeerrTv(unittest.TestCase):
         # Live-spec keys surface verbatim; the upstream-only keys
         # (``title`` / ``url`` / ``criticsRating`` / ``year``) are
         # not part of the curated projection and are dropped.
-        self.assertEqual(
-            rendered["ratings"],
-            {"criticsScore": 90, "audienceRating": "Upright"},
-        )
+        self.assertEqual(rendered["criticsScore"], 90)
+        self.assertEqual(rendered["audienceRating"], "Upright")
+        self.assertIsNone(rendered["audienceScore"])
+        # The nested ratings mapping is not part of the summary.
+        self.assertNotIn("ratings", rendered)
+
+    def test_tv_ratings_projected_as_flat_cells(self) -> None:
+        # A fully-populated ratings envelope projects all three
+        # scores verbatim onto the flat top-level cells.
+        payload = {
+            "name": "Doctor Who",
+            "ratings": {
+                "criticsScore": 83,
+                "audienceRating": "Certified Fresh",
+                "audienceScore": 90,
+            },
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "tv")](payload)
+        self.assertEqual(rendered["criticsScore"], 83)
+        self.assertEqual(rendered["audienceRating"], "Certified Fresh")
+        self.assertEqual(rendered["audienceScore"], 90)
+        self.assertNotIn("ratings", rendered)
 
     def test_tv_ratings_audience_rating_none_renders_null(self) -> None:
-        # RT numeric-vs-categorical gap: when RT did not publish a
+        # Partial ratings data: when RT did not publish a
         # categorical rating for the title the upstream envelope
         # carries ``audienceRating: null``. The renderer projects
         # ``None`` (renders as ``<null>``) rather than fabricating a
@@ -4725,10 +4786,10 @@ class TestSummarySeerrTv(unittest.TestCase):
             "ratings": {"criticsScore": 90, "audienceRating": None},
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "tv")](payload)
-        self.assertEqual(
-            rendered["ratings"],
-            {"criticsScore": 90, "audienceRating": None},
-        )
+        self.assertEqual(rendered["criticsScore"], 90)
+        self.assertIsNone(rendered["audienceRating"])
+        self.assertIsNone(rendered["audienceScore"])
+        self.assertNotIn("ratings", rendered)
 
     def test_non_mapping_payload_returns_empty_dict(self) -> None:
         # A non-Mapping payload (e.g. ``None`` from an HTTP
@@ -4775,7 +4836,9 @@ class TestSummarySeerrMovie(unittest.TestCase):
                 "overview": "A computer hacker learns the truth about his reality.",
                 "status": "Released",
                 "mediaInfoStatus": 4,
-                "ratings": None,
+                "criticsScore": None,
+                "audienceRating": None,
+                "audienceScore": None,
             },
         )
 
@@ -4830,10 +4893,10 @@ class TestSummarySeerrMovie(unittest.TestCase):
         # Seer instance on 2026-10-17: ``/api/v1/movie/{movieId}/ratings``
         # returns ``{"title": ..., "url": ..., "criticsRating": ...,
         # "criticsScore": <int>, "audienceRating": "...", "year": ...}``.
-        # The renderer projects ``criticsScore`` (plural-with-s, the
-        # live integer RT Tomatometer percentage) and
-        # ``audienceRating`` (the categorical string, RT does not
-        # expose a numeric audience score on this instance).
+        # The renderer projects the three flat score cells
+        # (``criticsScore`` -- the live integer RT Tomatometer
+        # percentage, ``audienceRating`` -- the categorical string,
+        # and ``audienceScore`` -- the numeric RT audience score).
         payload = {
             "title": "The Matrix",
             "originalTitle": "The Matrix",
@@ -4851,26 +4914,44 @@ class TestSummarySeerrMovie(unittest.TestCase):
             },
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
-        self.assertEqual(
-            rendered["ratings"],
-            {"criticsScore": 83, "audienceRating": "Spilled"},
-        )
+        self.assertEqual(rendered["criticsScore"], 83)
+        self.assertEqual(rendered["audienceRating"], "Spilled")
+        self.assertIsNone(rendered["audienceScore"])
+        # The nested ratings mapping is not part of the summary.
+        self.assertNotIn("ratings", rendered)
+
+    def test_movie_ratings_projected_as_flat_cells(self) -> None:
+        # A fully-populated ratings envelope projects all three
+        # scores verbatim onto the flat top-level cells.
+        payload = {
+            "title": "The Matrix",
+            "ratings": {
+                "criticsScore": 83,
+                "audienceRating": "Certified Fresh",
+                "audienceScore": 90,
+            },
+        }
+        rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
+        self.assertEqual(rendered["criticsScore"], 83)
+        self.assertEqual(rendered["audienceRating"], "Certified Fresh")
+        self.assertEqual(rendered["audienceScore"], 90)
+        self.assertNotIn("ratings", rendered)
 
     def test_movie_ratings_audience_rating_none_renders_null(self) -> None:
-        # RT numeric-vs-categorical gap: when RT did not publish a
+        # Partial ratings data: when RT did not publish a
         # categorical rating for the title the upstream envelope
         # carries ``audienceRating: null``. The renderer projects
         # ``None`` (renders as ``<null>``) rather than fabricating a
-        # number.
+        # number; the critic ``criticsScore`` is still populated.
         payload = {
             "title": "The Matrix",
             "ratings": {"criticsScore": 83, "audienceRating": None},
         }
         rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
-        self.assertEqual(
-            rendered["ratings"],
-            {"criticsScore": 83, "audienceRating": None},
-        )
+        self.assertEqual(rendered["criticsScore"], 83)
+        self.assertIsNone(rendered["audienceRating"])
+        self.assertIsNone(rendered["audienceScore"])
+        self.assertNotIn("ratings", rendered)
 
     def test_movie_runtime_format_from_minutes(self) -> None:
         # The spec'd ``"<X>h <Y>m"`` format applies for any raw
@@ -4900,7 +4981,12 @@ class TestSummarySeerrMovie(unittest.TestCase):
         rendered = _SUMMARY_RENDERERS[("seerr", "movie")](payload)
         self.assertEqual(rendered["title"], "The Matrix")
         self.assertEqual(rendered["runtime"], "2h 16m")
-        self.assertIsNone(rendered["ratings"])
+        # No ``ratings`` block in the payload: all three score cells
+        # are ``None`` and the nested ``ratings`` key is absent.
+        self.assertIsNone(rendered["criticsScore"])
+        self.assertIsNone(rendered["audienceRating"])
+        self.assertIsNone(rendered["audienceScore"])
+        self.assertNotIn("ratings", rendered)
 
     def test_non_mapping_payload_returns_empty_dict(self) -> None:
         # A non-Mapping payload (e.g. ``None`` from an HTTP
@@ -5593,7 +5679,7 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "sourceTitle": "Pilot",
                     "eventType": "downloadFolderImported",
                     "date": "2024-06-01",
-                    "quality": {"quality": {"name": "WEBDL-1080p"}},
+                    "quality": "WEBDL-1080p",
                     "language": "English",
                     "client": "qbit",
                 }
@@ -5729,7 +5815,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "sourceTitle": "Pilot",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "language": "English",
                 "client": "qbit",
             },
@@ -5787,7 +5873,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "sourceTitle": "Show.S01E01.WEBDL-1080p.mkv",
                 "eventType": "downloadFolderImported",
                 "date": "2026-09-18T01:59:01Z",
-                "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "language": "English",
                 "client": "qbit",
             },

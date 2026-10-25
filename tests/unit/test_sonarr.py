@@ -1846,10 +1846,12 @@ class TestAuditCellRender(unittest.TestCase):
         with _patched_get_payload(payload):
             output = _capture_stdout(cmd_queue, args, cfg)
         cells = _parse_human_row(output, data_index=0)
-        # ``quality`` is a nested mapping; the ``_row_from_mapping``
-        # walker surfaces it as ``<2 keys>`` in the cell (the nested
-        # ``quality.name`` is not a top-level ``quality`` key).
+        # The ``quality`` cell carries the resolved release-quality
+        # display name (the upstream ``quality`` envelope is
+        # flattened by the summary projection), so it is never the
+        # ``<N keys>`` placeholder and never ``<null>``.
         self.assertNotEqual(cells["quality"], "<null>")
+        self.assertEqual(cells["quality"], "WEBDL-1080p")
         self.assertEqual(cells["timeLeft"], "00:30:00")
 
     def test_queue_human_timeLeft_renders_value(self) -> None:
@@ -2085,7 +2087,7 @@ class TestSummarySonarrQueueExtends(unittest.TestCase):
         # Audit additions.
         self.assertEqual(row["series.title"], "Severance")
         self.assertEqual(row["episode"], "The Work Is Never Done")
-        self.assertEqual(row["quality"], {"quality": {"name": "WEBDL-1080p"}})
+        self.assertEqual(row["quality"], "WEBDL-1080p")
         self.assertEqual(row["timeLeft"], "00:30:00")
         # Regression nets.
         self.assertNotIn("progress", row)

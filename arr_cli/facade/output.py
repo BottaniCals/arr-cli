@@ -625,6 +625,79 @@ def _join_names(items: Any) -> str | None:
     return ", ".join(names) if names else None
 
 
+_QUALITY_NAME_MAX_HOPS = 3
+
+
+def _quality_name(value: Any) -> str | None:
+    """Resolve a release-quality display name from the upstream value.
+
+    The argument is the **raw upstream ``quality`` value** (e.g.
+    ``item.get("quality")``), never the whole row -- so a row-level
+    ``name`` key can never be mistaken for a quality name.
+
+    Tolerated upstream shapes:
+
+    * a non-empty plain string -> returned verbatim;
+    * a mapping with a non-empty ``name`` -> that ``name`` (probed
+      before the nested ``quality`` hop, so a mapping carrying both
+      resolves through its ``name``);
+    * a mapping without a ``name`` but with a nested ``quality`` ->
+      the nested value is walked in turn;
+    * ``None``, a missing key, a non-mapping value, an empty string,
+      or a mapping with no resolvable name -> ``None``.
+
+    The recursion descends at most three times into a nested
+    ``quality`` key: a name found at the third descent still resolves,
+    a name that would require a fourth descent does not. The bound
+    keeps a pathological payload from looping while still resolving
+    every shape the service produces (the live
+    ``{"quality": {...}, "revision": {...}}`` envelope and the
+    single-key ``{"quality": {"name": ...}}`` fixture both resolve
+    in one descent).
+    """
+
+    def _resolve(current: Any, hops: int) -> str | None:
+        if isinstance(current, str):
+            return current or None
+        if not isinstance(current, Mapping):
+            return None
+        name = current.get("name")
+        if isinstance(name, str) and name:
+            return name
+        if hops >= _QUALITY_NAME_MAX_HOPS:
+            return None
+        nested = current.get("quality")
+        if nested is None:
+            return None
+        return _resolve(nested, hops + 1)
+
+    return _resolve(value, 0)
+
+
+def _ratings_cells(ratings: Any) -> dict[str, Any]:
+    """Project the upstream ratings envelope onto three flat cells.
+
+    Always returns exactly ``criticsScore``, ``audienceRating`` and
+    ``audienceScore`` so the summary key set never changes shape. A
+    non-mapping input (e.g. a bare detail fetch without the ratings
+    sub-resource merged in) yields the same three keys with ``None``
+    values, and an absent / ``null`` field yields ``None`` for that
+    key only -- so "critic data present, audience badge absent" stays
+    distinguishable from "no ratings fetched".
+    """
+    if not isinstance(ratings, Mapping):
+        return {
+            "criticsScore": None,
+            "audienceRating": None,
+            "audienceScore": None,
+        }
+    return {
+        "criticsScore": _safe_get(ratings, "criticsScore", default=None),
+        "audienceRating": _safe_get(ratings, "audienceRating", default=None),
+        "audienceScore": _safe_get(ratings, "audienceScore", default=None),
+    }
+
+
 def _format_runtime_minutes(value: Any) -> str | None:
     """Format Jellyfin ``RunTimeTicks`` (100-ns ticks) as ``"<X>h <Y>m"``.
 
@@ -1160,11 +1233,14 @@ def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
     """Render a Radarr ``queue`` payload as the curated summary.
 
     The Radarr ``/api/v3/queue`` rows carry ``title``, ``year``,
-    ``quality`` (a nested ``{quality: {name}}`` envelope in modern
-    Radarr versions -- the renderer surfaces the flat ``quality``
-    key the upstream payload also exposes), ``status``, and
-    ``timeLeft``. The audit reshaped the column set to surface
-    ``year``, ``quality``, and ``timeLeft`` instead of the
+    ``quality`` (the release-quality envelope -- a nested
+    ``{quality: {name}}`` object in modern Radarr versions),
+    ``status``, and ``timeLeft``. The ``quality`` cell carries the
+    resolved release-quality display name (e.g. ``"WEBDL-1080p"``)
+    via :func:`_quality_name`, never the nested envelope, so the
+    human renderer shows the release profile instead of an opaque
+    ``<N keys>`` placeholder. The audit reshaped the column set to
+    surface ``year``, ``quality``, and ``timeLeft`` instead of the
     pre-change ``trackedDownloadStatus`` / ``size`` / ``sizeleft``
     fields; the renderer mirrors that change.
 
@@ -1181,7 +1257,7 @@ def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
         {
             "title": _safe_get(item, "title", default=None),
             "year": _safe_get(item, "year", default=0),
-            "quality": _safe_get(item, "quality", default=None),
+            "quality": _quality_name(item.get("quality")),
             "status": _safe_get(item, "status", default=None),
             "timeLeft": _safe_get(item, "timeleft", default=None),
         }
@@ -1209,7 +1285,11 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
     The per-row projection lifts ``movie.title`` and ``movie.year``
     to the top-level ``title`` / ``year`` keys (matching the audit's
     column-set ask) and adds ``sourceTitle``, ``quality``,
-    ``language``, and ``client``. The original ``movie`` envelope is
+    ``language``, and ``client``. The ``quality`` cell carries the
+    resolved release-quality display name (e.g. ``"WEBDL-1080p"``)
+    via :func:`_quality_name`, never the upstream envelope, so the
+    human renderer shows the release profile instead of an opaque
+    ``<N keys>`` placeholder. The original ``movie`` envelope is
     preserved in the row so ``--verbose`` consumers chaining on the
     original nested ``movie.title`` / ``movie.year`` shape keep
     working.
@@ -1253,7 +1333,7 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
                 "sourceTitle": _safe_get(
                     item, "sourceTitle", default=None
                 ),
-                "quality": _safe_get(item, "quality", default=None),
+                "quality": _quality_name(item.get("quality")),
                 "language": _join_names(item.get("languages")),
                 "client": _safe_get(
                     item, "data", "downloadClient", default=None
@@ -1314,9 +1394,11 @@ def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
     keys in their existing positions and appends the audit-asked
     ``series.title`` (lifted from the nested ``series`` envelope),
     ``episode`` (the flat ``episode.title`` projected to the top
-    level via :func:`_safe_get`), ``quality`` (the flat ``quality``
-    key the upstream payload exposes; matches the radarr ``queue``
-    projection), and ``timeLeft`` (lifted from ``timeleft``).
+    level via :func:`_safe_get`), ``quality`` (the release-quality
+    display name, e.g. ``"WEBDL-1080p"``, resolved from the
+    upstream release-quality envelope via :func:`_quality_name`;
+    matches the radarr ``queue`` projection), and ``timeLeft``
+    (lifted from ``timeleft``).
     ``status`` is a pre-change key and MUST NOT be re-appended at
     the tail; there is no pre-change ``progress`` key on the
     queue summary and the audit does not add one. Missing fields
@@ -1341,7 +1423,7 @@ def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
             "episode": _safe_get(
                 item, "episode", "title", default=None
             ),
-            "quality": _safe_get(item, "quality", default=None),
+            "quality": _quality_name(item.get("quality")),
             "timeLeft": _safe_get(item, "timeleft", default=None),
         }
         for item in payload
@@ -1373,9 +1455,13 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
     ``downloadClient`` key on the row. ``language`` is therefore the
     comma-joined language names (via :func:`_join_names`, the same
     treatment ``genres`` already gets) and ``client`` is resolved
-    from ``data`` -> ``downloadClient``. An absent / empty
-    ``languages`` array or a missing ``data`` envelope degrades to
-    ``None`` so the human renderer prints ``<null>`` instead of a
+    from ``data`` -> ``downloadClient``. The ``quality`` cell carries
+    the resolved release-quality display name (e.g.
+    ``"WEBDL-1080p"``) via :func:`_quality_name`, never the upstream
+    envelope, so the human renderer shows the release profile
+    instead of an opaque ``<N keys>`` placeholder. An absent /
+    empty ``languages`` array or a missing ``data`` envelope degrades
+    to ``None`` so the human renderer prints ``<null>`` instead of a
     stray ``", "`` or raising.
     """
     payload = _unwrap_envelope(payload)
@@ -1409,7 +1495,7 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
                 "sourceTitle": _safe_get(item, "sourceTitle", default=None),
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
-                "quality": _safe_get(item, "quality", default=None),
+                "quality": _quality_name(item.get("quality")),
                 "language": _join_names(item.get("languages")),
                 "client": _safe_get(
                     item, "data", "downloadClient", default=None
@@ -2210,27 +2296,27 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
 
     When ``cmd_tv`` is invoked with ``--ratings``, the live Seer
     ``/api/v1/tv/{tvId}/ratings`` envelope is merged under
-    ``payload["ratings"]`` and surfaced under the ``ratings``
-    block on the curated row. The projection uses the live-spec
-    key names the operator verified on 2026-10-17:
+    ``payload["ratings"]`` and projected onto three flat top-level
+    cells via :func:`_ratings_cells`. The projection uses the
+    live-spec key names the operator verified on 2026-10-17:
 
     * ``criticsScore`` (plural-with-s, integer -- RT's
       "Tomatometer" percentage 0-100).
     * ``audienceRating`` (categorical string, e.g. ``"Spilled"``
       / ``"Upright"`` / ``"Want to See"``).
+    * ``audienceScore`` (integer -- RT's audience score 0-100).
 
-    RT does not expose a numeric audience score on this Seer
-    instance; ``audienceRating`` is the closest categorical field,
-    so it is a string on purpose (not a numeric filler). A
-    missing ``audienceRating`` (e.g. RT did not publish a
-    categorical rating for the title) renders as ``<null>`` next
-    to a populated ``criticsScore``, which is clearly
-    distinguishable from "no ratings fetched" because the
-    ``criticsScore`` is still populated.
+    A missing field (e.g. RT did not publish a categorical rating
+    for the title) renders as ``<null>`` next to its populated
+    siblings, which is clearly distinguishable from "no ratings
+    fetched" because the other cells keep their values.
 
-    A bare detail fetch (no ``--ratings``) leaves ``ratings`` as
-    ``None`` so the column is visible-but-empty in the default
-    output instead of being silently dropped.
+    A bare detail fetch (no ``--ratings``) leaves all three cells
+    ``None`` so they stay visible-but-empty in the default output
+    instead of being silently dropped. The nested ratings mapping
+    is not part of the summary -- the three scalar cells replace it
+    so the human renderer never shows an opaque ``<N keys>``
+    placeholder.
 
     Two input shapes are accepted (mirroring the
     size-to-summary-renderer convention):
@@ -2254,24 +2340,7 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
 
     raw_genres = payload.get("genres")
     raw_networks = payload.get("networks")
-    raw_ratings = payload.get("ratings")
-    if isinstance(raw_ratings, Mapping):
-        # RT numeric-vs-categorical gap: live Seer envelope
-        # carries ``criticsScore`` (plural, integer 0-100) and
-        # ``audienceRating`` (categorical string). The two share
-        # no common numeric shape, so the projection keeps them
-        # as distinct keys rather than fabricating a numeric
-        # ``audienceScore`` the upstream payload does not populate.
-        ratings_obj: dict[str, Any] = {
-            "criticsScore": _safe_get(
-                raw_ratings, "criticsScore", default=None
-            ),
-            "audienceRating": _safe_get(
-                raw_ratings, "audienceRating", default=None
-            ),
-        }
-    else:
-        ratings_obj = None
+    ratings_cells = _ratings_cells(payload.get("ratings"))
 
     media_info_status = _safe_get(
         payload, "mediaInfo", "status", default=None
@@ -2297,7 +2366,9 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
         "overview": _truncate_overview(payload.get("overview")),
         "status": _safe_get(payload, "status", default=None),
         "mediaInfoStatus": media_info_status,
-        "ratings": ratings_obj,
+        "criticsScore": ratings_cells["criticsScore"],
+        "audienceRating": ratings_cells["audienceRating"],
+        "audienceScore": ratings_cells["audienceScore"],
     }
 
 
@@ -2328,27 +2399,27 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
 
     When ``cmd_movie`` is invoked with ``--ratings``, the live
     Seer ``/api/v1/movie/{movieId}/ratings`` envelope is merged
-    under ``payload["ratings"]`` and surfaced under the
-    ``ratings`` block on the curated row. The projection uses the
-    live-spec key names the operator verified on 2026-10-17:
+    under ``payload["ratings"]`` and projected onto three flat
+    top-level cells via :func:`_ratings_cells`. The projection uses
+    the live-spec key names the operator verified on 2026-10-17:
 
     * ``criticsScore`` (plural-with-s, integer -- RT's
       "Tomatometer" percentage 0-100).
     * ``audienceRating`` (categorical string, e.g.
       ``"Spilled"`` / ``"Upright"`` / ``"Want to See"``).
+    * ``audienceScore`` (integer -- RT's audience score 0-100).
 
-    RT does not expose a numeric audience score on this Seer
-    instance; ``audienceRating`` is the closest categorical
-    field, so it is a string on purpose (not a numeric filler).
-    A missing ``audienceRating`` (e.g. RT did not publish a
-    categorical rating for the title) renders as ``<null>`` next
-    to a populated ``criticsScore``, which is clearly
-    distinguishable from "no ratings fetched" because the
-    ``criticsScore`` is still populated.
+    A missing field (e.g. RT did not publish a categorical rating
+    for the title) renders as ``<null>`` next to its populated
+    siblings, which is clearly distinguishable from "no ratings
+    fetched" because the other cells keep their values.
 
-    A bare detail fetch (no ``--ratings``) leaves ``ratings`` as
-    ``None`` so the column is visible-but-empty in the default
-    output instead of being silently dropped.
+    A bare detail fetch (no ``--ratings``) leaves all three cells
+    ``None`` so they stay visible-but-empty in the default output
+    instead of being silently dropped. The nested ratings mapping
+    is not part of the summary -- the three scalar cells replace it
+    so the human renderer never shows an opaque ``<N keys>``
+    placeholder.
 
     Two input shapes are accepted (mirroring the
     size-to-summary-renderer convention):
@@ -2372,7 +2443,7 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         return {}
 
     raw_genres = payload.get("genres")
-    raw_ratings = payload.get("ratings")
+    ratings_cells = _ratings_cells(payload.get("ratings"))
 
     def _format_runtime(minutes: Any) -> str | None:
         """Format ``minutes`` as ``"<X>h <Y>m"``.
@@ -2395,23 +2466,6 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         hours = total // 60
         mins = total % 60
         return f"{hours}h {mins}m"
-    if isinstance(raw_ratings, Mapping):
-        # RT numeric-vs-categorical gap: live Seer envelope
-        # carries ``criticsScore`` (plural, integer 0-100) and
-        # ``audienceRating`` (categorical string). The two share
-        # no common numeric shape, so the projection keeps them
-        # as distinct keys rather than fabricating a numeric
-        # ``audienceScore`` the upstream payload does not populate.
-        ratings_obj: dict[str, Any] = {
-            "criticsScore": _safe_get(
-                raw_ratings, "criticsScore", default=None
-            ),
-            "audienceRating": _safe_get(
-                raw_ratings, "audienceRating", default=None
-            ),
-        }
-    else:
-        ratings_obj = None
 
     media_info_status = _safe_get(
         payload, "mediaInfo", "status", default=None
@@ -2433,7 +2487,9 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         "overview": _truncate_overview(payload.get("overview")),
         "status": _safe_get(payload, "status", default=None),
         "mediaInfoStatus": media_info_status,
-        "ratings": ratings_obj,
+        "criticsScore": ratings_cells["criticsScore"],
+        "audienceRating": ratings_cells["audienceRating"],
+        "audienceScore": ratings_cells["audienceScore"],
     }
 
 

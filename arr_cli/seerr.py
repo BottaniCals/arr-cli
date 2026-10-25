@@ -793,9 +793,11 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     ``--ratings`` additionally calls
     ``GET /api/v1/tv/{tvId}/ratings`` and merges the small
     Rotten Tomatoes critic + audience JSON under
-    ``payload["ratings"]``. The renderer surfaces both scores via the
-    same path; a single-fetch invocation leaves ``ratings`` unset so
-    callers who don't ask for RT data don't pay the extra round trip.
+    ``payload["ratings"]``. The renderer surfaces the three flat
+    score cells (``criticsScore``, ``audienceRating`` and
+    ``audienceScore``) via the same path; a single-fetch invocation
+    leaves ``ratings`` unset so callers who don't ask for RT data
+    don't pay the extra round trip.
 
     The ``language`` query parameter is forwarded to the detail
     endpoint only; the ratings sub-resource on the operator's live
@@ -860,8 +862,10 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
                 "seerr.tv: ratings payload was not a dict; "
                 "skipping merge"
             )
-    # Top-level columns mirror the keys emitted by
-    # ``_summary_seerr_tv``; ``--human`` on a single-object payload
+    # Top-level columns mirror the ratings-free subset of the keys
+    # emitted by ``_summary_seerr_tv``; the ratings-derived keys
+    # (``criticsScore``, ``audienceRating``, ``audienceScore``) are
+    # intentionally omitted. ``--human`` on a single-object payload
     # uses ``_render_object`` which ignores columns, but pinning the
     # literal here is what lets
     # ``tests/unit/test_output.py::_columns_for`` assert the
@@ -904,10 +908,11 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     ``--ratings`` additionally calls
     ``GET /api/v1/movie/{movieId}/ratings`` and merges the small
     Rotten Tomatoes critic + audience JSON under
-    ``payload["ratings"]``. The renderer surfaces both scores via
-    the same path; a single-fetch invocation leaves ``ratings``
-    unset so callers who don't ask for RT data don't pay the
-    extra round trip.
+    ``payload["ratings"]``. The renderer surfaces the three flat
+    score cells (``criticsScore``, ``audienceRating`` and
+    ``audienceScore``) via the same path; a single-fetch invocation
+    leaves ``ratings`` unset so callers who don't ask for RT data
+    don't pay the extra round trip.
 
     The ``language`` query parameter is forwarded to the detail
     endpoint only; the ratings sub-resource on the operator's
@@ -977,10 +982,12 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
                 "seerr.movie: ratings payload was not a dict; "
                 "skipping merge"
             )
-    # Top-level columns mirror the keys emitted by
-    # ``_summary_seerr_movie``; ``--human`` on a single-object
-    # payload uses ``_render_object`` which ignores columns, but
-    # pinning the literal here is what lets
+    # Top-level columns mirror the ratings-free subset of the keys
+    # emitted by ``_summary_seerr_movie``; the ratings-derived keys
+    # (``criticsScore``, ``audienceRating``, ``audienceScore``) are
+    # intentionally omitted. ``--human`` on a single-object payload
+    # uses ``_render_object`` which ignores columns, but pinning the
+    # literal here is what lets
     # ``tests/unit/test_output.py::_columns_for`` assert the
     # columns / summary alignment (REQ-18 AC1). Plain
     # assignment (no ``: list[str]`` annotation) because the
