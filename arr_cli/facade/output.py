@@ -1626,12 +1626,17 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
     the upstream payload exposes ``requestedBy`` as a mapping on
     every record), ``mediaAddedAt`` (when the nested ``media``
     envelope carries it; ``None`` otherwise so the renderer prints
-    ``<null>`` rather than crashing), and ``seasonCount`` (same
-    nested-walk pattern). Missing fields default to ``None`` per the
-    documented :func:`_safe_get` contract so the renderer stays
-    well-formed even when upstream drops a field (defensive against
-    future Seer drift; ``<null>``-on-missing is the universal
-    convention for every other renderer in this module).
+    ``<null>`` rather than crashing), and ``seasonCount`` (the
+    number of requested seasons, read from the **request item**
+    level). The upstream request record carries ``seasonCount`` on
+    the item itself (``{"seasonCount": int, "media": {...}}``); the
+    nested ``media`` envelope does not populate it, so the nested
+    value is deliberately not consulted. Missing fields default to
+    ``None`` per the documented :func:`_safe_get` contract so the
+    renderer stays well-formed even when upstream drops a field
+    (defensive against future Seer drift; ``<null>``-on-missing is
+    the universal convention for every other renderer in this
+    module).
 
     The ``requestedBy.displayName`` projection was dropped from the
     curated column list because the 120-char width budget divided
@@ -1680,9 +1685,6 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
             media_added_at = _safe_get(
                 media, "mediaAddedAt", default=None
             )
-            season_count = _safe_get(
-                media, "seasonCount", default=None
-            )
         else:
             (
                 id_,
@@ -1691,8 +1693,7 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
                 tvdb_id,
                 slug,
                 media_added_at,
-                season_count,
-            ) = (None, None, None, None, None, None, None)
+            ) = (None, None, None, None, None, None)
         summaries.append(
             {
                 "id": id_,
@@ -1707,7 +1708,9 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
                     item, "requestedBy", "username", default=None
                 ),
                 "mediaAddedAt": media_added_at,
-                "seasonCount": season_count,
+                "seasonCount": _safe_get(
+                    item, "seasonCount", default=None
+                ),
             }
         )
     return summaries
