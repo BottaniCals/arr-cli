@@ -197,6 +197,16 @@ def cmd_calendar(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     ISO-8601 ``YYYY-MM-DDTHH:MM:SS[Z]`` datetime. Invalid inputs
     raise :class:`ConfigError(exit_code=1)` with a stderr usage hint
     that names the offending value.
+
+    ``includeSeries=true`` is always sent: Sonarr only populates the
+    nested ``series: {title}`` envelope when the caller opts in via
+    that flag, so without it the ``series.title`` column renders
+    ``<null>`` for every row. The upstream controllers gate *only*
+    the nested envelope behind the flag -- the flat row fields
+    (``title``, ``seasonNumber``, ``episodeNumber``, ``airDate``,
+    ``monitored``, ``hasFile``, ``runtime``, ``overview``) are
+    emitted either way -- so no column is dropped and no second
+    request against ``/api/v3/series`` is needed.
     """
     params: dict[str, Any] = {}
     start = getattr(args, "start", None)
@@ -205,12 +215,15 @@ def cmd_calendar(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params["start"] = _validate_iso_date(start)
     if end is not None:
         params["end"] = _validate_iso_date(end)
+    # Appended last so the wire order matches the documented path
+    # (``?start=<start>&end=<end>&includeSeries=true``).
+    params["includeSeries"] = "true"
 
     payload = _get(
         "/api/v3/calendar",
         args,
         cfg,
-        params=params or None,
+        params=params,
         op="calendar",
     )
     # Sonarr's calendar payload is an array of episodes with
@@ -236,11 +249,23 @@ def cmd_calendar(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 
 
 def cmd_wanted(args: argparse.Namespace, cfg: ServiceConfig) -> int:
-    """Sonarr ``wanted`` -- episodes that are missing and monitored (REQ-8 AC3)."""
+    """Sonarr ``wanted`` -- episodes that are missing and monitored (REQ-8 AC3).
+
+    ``includeSeries=true`` is always sent: Sonarr only populates the
+    nested ``series: {title}`` envelope when the caller opts in via
+    that flag, so without it the ``series.title`` column renders
+    ``<null>`` for every row. The upstream controllers gate *only*
+    the nested envelope behind the flag -- the flat row fields
+    (``title``, ``seasonNumber``, ``episodeNumber``, ``airDate``,
+    ``monitored``, ``hasFile``, ``runtime``, ``overview``) are
+    emitted either way -- so no column is dropped and no second
+    request against ``/api/v3/series`` is needed.
+    """
     payload = _get(
         "/api/v3/wanted/missing",
         args,
         cfg,
+        params={"includeSeries": "true"},
         op="wanted",
     )
     # Tabular columns match the summary-shape keys emitted by
@@ -267,11 +292,24 @@ def cmd_wanted(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 
 
 def cmd_queue(args: argparse.Namespace, cfg: ServiceConfig) -> int:
-    """Sonarr ``queue`` -- current download/import queue (REQ-8 AC4)."""
+    """Sonarr ``queue`` -- current download/import queue (REQ-8 AC4).
+
+    ``includeSeries=true`` and ``includeEpisode=true`` are always
+    sent: Sonarr only populates the nested ``series: {title}`` /
+    ``episode: {title}`` envelopes when the caller opts in via those
+    flags, so without them the ``series.title`` and ``episode``
+    columns render ``<null>`` for every row. The upstream
+    controllers gate *only* the nested envelopes behind the flags --
+    the flat row fields (``title``, ``status``,
+    ``trackedDownloadStatus``, ``size``, ``sizeleft``, ``quality``,
+    ``timeleft``) are emitted either way -- so no column is dropped
+    and no second request against ``/api/v3/series`` is needed.
+    """
     payload = _get(
         "/api/v3/queue",
         args,
         cfg,
+        params={"includeSeries": "true", "includeEpisode": "true"},
         op="queue",
     )
     # Tabular columns match the summary-shape keys emitted by
@@ -343,9 +381,11 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # ``_row_from_mapping``. ``sourceTitle`` is retained as a
     # download-path audit trail (dropping it would widen the fix's
     # blast radius beyond the sister Radarr fix). The audit-asked
-    # columns (``language`` and ``client`` lifted from
-    # ``downloadClient``) are appended after the pre-change
-    # columns so the audit request stays additive-only.
+    # columns (``language`` -- the comma-joined names of the
+    # upstream ``languages`` array -- and ``client`` -- resolved
+    # from the nested ``data.downloadClient`` entry) are appended
+    # after the pre-change columns so the audit request stays
+    # additive-only.
     columns = [
         "series.title",
         "episode.title",
