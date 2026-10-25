@@ -1233,11 +1233,14 @@ def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
     """Render a Radarr ``queue`` payload as the curated summary.
 
     The Radarr ``/api/v3/queue`` rows carry ``title``, ``year``,
-    ``quality`` (a nested ``{quality: {name}}`` envelope in modern
-    Radarr versions -- the renderer surfaces the flat ``quality``
-    key the upstream payload also exposes), ``status``, and
-    ``timeLeft``. The audit reshaped the column set to surface
-    ``year``, ``quality``, and ``timeLeft`` instead of the
+    ``quality`` (the release-quality envelope -- a nested
+    ``{quality: {name}}`` object in modern Radarr versions),
+    ``status``, and ``timeLeft``. The ``quality`` cell carries the
+    resolved release-quality display name (e.g. ``"WEBDL-1080p"``)
+    via :func:`_quality_name`, never the nested envelope, so the
+    human renderer shows the release profile instead of an opaque
+    ``<N keys>`` placeholder. The audit reshaped the column set to
+    surface ``year``, ``quality``, and ``timeLeft`` instead of the
     pre-change ``trackedDownloadStatus`` / ``size`` / ``sizeleft``
     fields; the renderer mirrors that change.
 
@@ -1254,7 +1257,7 @@ def _summary_radarr_queue(payload: Any) -> list[dict[str, Any]]:
         {
             "title": _safe_get(item, "title", default=None),
             "year": _safe_get(item, "year", default=0),
-            "quality": _safe_get(item, "quality", default=None),
+            "quality": _quality_name(item.get("quality")),
             "status": _safe_get(item, "status", default=None),
             "timeLeft": _safe_get(item, "timeleft", default=None),
         }
@@ -1282,7 +1285,11 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
     The per-row projection lifts ``movie.title`` and ``movie.year``
     to the top-level ``title`` / ``year`` keys (matching the audit's
     column-set ask) and adds ``sourceTitle``, ``quality``,
-    ``language``, and ``client``. The original ``movie`` envelope is
+    ``language``, and ``client``. The ``quality`` cell carries the
+    resolved release-quality display name (e.g. ``"WEBDL-1080p"``)
+    via :func:`_quality_name`, never the upstream envelope, so the
+    human renderer shows the release profile instead of an opaque
+    ``<N keys>`` placeholder. The original ``movie`` envelope is
     preserved in the row so ``--verbose`` consumers chaining on the
     original nested ``movie.title`` / ``movie.year`` shape keep
     working.
@@ -1326,7 +1333,7 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
                 "sourceTitle": _safe_get(
                     item, "sourceTitle", default=None
                 ),
-                "quality": _safe_get(item, "quality", default=None),
+                "quality": _quality_name(item.get("quality")),
                 "language": _join_names(item.get("languages")),
                 "client": _safe_get(
                     item, "data", "downloadClient", default=None
@@ -1387,8 +1394,10 @@ def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
     keys in their existing positions and appends the audit-asked
     ``series.title`` (lifted from the nested ``series`` envelope),
     ``episode`` (the flat ``episode.title`` projected to the top
-    level via :func:`_safe_get`), ``quality`` (the flat ``quality``
-    key the upstream payload exposes; matches the radarr ``queue``
+    level via :func:`_safe_get`), ``quality`` (the resolved
+    release-quality display name, e.g. ``"WEBDL-1080p"``, resolved
+    from the upstream release-quality envelope via
+    :func:`_quality_name`; matches the radarr ``queue``
     projection), and ``timeLeft`` (lifted from ``timeleft``).
     ``status`` is a pre-change key and MUST NOT be re-appended at
     the tail; there is no pre-change ``progress`` key on the
@@ -1414,7 +1423,7 @@ def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
             "episode": _safe_get(
                 item, "episode", "title", default=None
             ),
-            "quality": _safe_get(item, "quality", default=None),
+            "quality": _quality_name(item.get("quality")),
             "timeLeft": _safe_get(item, "timeleft", default=None),
         }
         for item in payload
@@ -1446,9 +1455,13 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
     ``downloadClient`` key on the row. ``language`` is therefore the
     comma-joined language names (via :func:`_join_names`, the same
     treatment ``genres`` already gets) and ``client`` is resolved
-    from ``data`` -> ``downloadClient``. An absent / empty
-    ``languages`` array or a missing ``data`` envelope degrades to
-    ``None`` so the human renderer prints ``<null>`` instead of a
+    from ``data`` -> ``downloadClient``. The ``quality`` cell carries
+    the resolved release-quality display name (e.g.
+    ``"WEBDL-1080p"``) via :func:`_quality_name`, never the upstream
+    envelope, so the human renderer shows the release profile
+    instead of an opaque ``<N keys>`` placeholder. An absent /
+    empty ``languages`` array or a missing ``data`` envelope degrades
+    to ``None`` so the human renderer prints ``<null>`` instead of a
     stray ``", "`` or raising.
     """
     payload = _unwrap_envelope(payload)
@@ -1482,7 +1495,7 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
                 "sourceTitle": _safe_get(item, "sourceTitle", default=None),
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
-                "quality": _safe_get(item, "quality", default=None),
+                "quality": _quality_name(item.get("quality")),
                 "language": _join_names(item.get("languages")),
                 "client": _safe_get(
                     item, "data", "downloadClient", default=None
