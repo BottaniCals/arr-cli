@@ -1394,11 +1394,11 @@ def _summary_sonarr_queue(payload: Any) -> list[dict[str, Any]]:
     keys in their existing positions and appends the audit-asked
     ``series.title`` (lifted from the nested ``series`` envelope),
     ``episode`` (the flat ``episode.title`` projected to the top
-    level via :func:`_safe_get`), ``quality`` (the resolved
-    release-quality display name, e.g. ``"WEBDL-1080p"``, resolved
-    from the upstream release-quality envelope via
-    :func:`_quality_name`; matches the radarr ``queue``
-    projection), and ``timeLeft`` (lifted from ``timeleft``).
+    level via :func:`_safe_get`), ``quality`` (the release-quality
+    display name, e.g. ``"WEBDL-1080p"``, resolved from the
+    upstream release-quality envelope via :func:`_quality_name`;
+    matches the radarr ``queue`` projection), and ``timeLeft``
+    (lifted from ``timeleft``).
     ``status`` is a pre-change key and MUST NOT be re-appended at
     the tail; there is no pre-change ``progress`` key on the
     queue summary and the audit does not add one. Missing fields
