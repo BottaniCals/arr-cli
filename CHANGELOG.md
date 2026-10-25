@@ -28,9 +28,9 @@ within the pre-1.0 contract documented in `README.md`.
   instead of dumping the raw Jellyfin JSON.
 - `radarr --human`: every size-to-summary table now carries the
   audit-requested fields. `radarr movie` adds `hasFile`, `genres`,
-  `added`, `collection.name`, and `studio`; `radarr calendar`
+  `added`, `collection.title`, and `studio`; `radarr calendar`
   (dated and open-ended) adds `monitored`, `hasFile`, `genres`,
-  `runtime`, and `collection.name`; `radarr wanted` adds `hasFile`,
+  `runtime`, and `collection.title`; `radarr wanted` adds `hasFile`,
   `genres`, `physicalRelease`, and `releaseDate`; `radarr queue`
   adds `title`, `year`, `quality`, `status`, and `timeLeft`;
   `radarr recent` adds `sourceTitle`, `quality`, `language`, and
@@ -50,7 +50,8 @@ within the pre-1.0 contract documented in `README.md`.
   `episode`, `quality`, and `timeLeft` (the pre-change `status`
   stays in its existing position and is not re-appended at the
   tail; no `progress` column is invented); `sonarr recent` adds
-  `language` and `client` (lifted from `downloadClient`);
+  `language` (the comma-joined names of the upstream `languages`
+  array) and `client` (resolved from `data.downloadClient`);
   `sonarr lookup` adds `statistics`, `genres`, `overview`, and
   `status`; `sonarr series` (library list) adds `statistics`,
   `genres`, `firstAired`, and `lastAired`. The new
@@ -112,6 +113,17 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Changed
 
+- **Breaking:** the default (non-`--verbose`) JSON summary key
+  `collection.name` is renamed to `collection.title` for `radarr
+  movie` (library list) and `radarr calendar`. The upstream Radarr
+  collection envelope is the live `CollectionResource` of the shape
+  `{"title": str, "tmdbId": int}` -- it carries a `title`, never a
+  `name` -- so the old key projected `<null>` for every row. A
+  consumer that reads `collection.name` out of the default output
+  must migrate to `collection.title`. The `--verbose` verbatim
+  pass-through is unchanged, and the `--human` column header of the
+  affected tables changes from `collection.name` to
+  `collection.title` alongside it.
 - `seerr --human` live-spec correction (the previous entry's
   hermetic-gate deferral is retired in favour of the verified
   direct projection): the audit-asked `title` column on
@@ -162,6 +174,35 @@ within the pre-1.0 contract documented in `README.md`.
   gate mechanics were wrong: the live Seer spec was verified
   directly by the operator on 2026-10-17, so there is no
   remaining decision to defer.
+
+### Fixed
+
+- Several `--human` summary tables rendered `<null>` in columns
+  whose values do exist upstream; the projector read a key the
+  service never sends.
+  - The Radarr collection column now projects the real collection
+    title (`collection` -> `title`) instead of a `name` key the
+    upstream `CollectionResource` does not carry -- see the
+    `Changed` entry above for the key rename.
+  - The Radarr and Sonarr `recent` tables now resolve `language`
+    from the upstream `languages` array (comma-joined names) and
+    `client` from the nested `data.downloadClient` entry; there is
+    no top-level `language` / `downloadClient` key on a history
+    row.
+  - The Seerr `requests` table now projects `seasonCount` from the
+    request item -- the number of requested seasons -- instead of
+    the nested `media` envelope, which does not populate it.
+  - The Sonarr `wanted`, `calendar`, and `queue` commands now send
+    the upstream include flags (`includeSeries=true`, plus
+    `includeEpisode=true` on `queue`) so the nested `series` /
+    `episode` envelopes are populated and the `series.title` /
+    `episode` columns carry the upstream titles. The flat row
+    fields are unaffected upstream and are projected either way.
+- Every corrected lookup tolerates an absent envelope and degrades
+  to `<null>` instead of raising, so a payload that predates the
+  include flags still renders a well-formed table. The exit-code
+  contract and the `--verbose` verbatim-payload behaviour are
+  unchanged.
 
 ## [0.1.0]
 
