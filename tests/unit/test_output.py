@@ -514,8 +514,8 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "movie": {"title": "Foo", "year": 2024},
             "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
             "quality": {"quality": {"name": "WEBDL-1080p"}},
-            "language": {"name": "English"},
-            "downloadClient": "qbit",
+            "languages": [{"id": 1, "name": "English"}],
+            "data": {"downloadClient": "qbit"},
             "eventType": "downloadFolderImported",
             "date": "2024-06-01",
             "sourcePath": "/movies/foo",
@@ -610,8 +610,8 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "eventType": "downloadFolderImported",
             "date": "2024-06-01T00:00:00Z",
             "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
-            "language": {"name": "English"},
-            "downloadClient": "qbit",
+            "languages": [{"id": 1, "name": "English"}],
+            "data": {"downloadClient": "qbit"},
         }
     ],
     ("sonarr", "calendar"): [
@@ -2790,8 +2790,8 @@ class TestSummaryRadarrRecent(unittest.TestCase):
                 "movie": {"title": "Foo", "year": 2024},
                 "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
             }
@@ -2805,7 +2805,7 @@ class TestSummaryRadarrRecent(unittest.TestCase):
                 "movie": {"title": "Foo", "year": 2024},
                 "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
+                "language": "English",
                 "client": "qbit",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
@@ -3042,8 +3042,8 @@ class TestSummarySonarrRecent(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
                 "series": {"title": "Star Trek: Strange New Worlds"},
                 "episode": {"title": "Orders of Magnitude"},
             }
@@ -3061,7 +3061,7 @@ class TestSummarySonarrRecent(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
+                "language": "English",
                 "client": "qbit",
             },
         )
@@ -5207,8 +5207,8 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "eventType": "downloadFolderImported",
                     "date": "2024-06-01",
                     "quality": {"quality": {"name": "WEBDL-1080p"}},
-                    "language": {"name": "English"},
-                    "downloadClient": "qbit",
+                    "languages": [{"id": 1, "name": "English"}],
+                    "data": {"downloadClient": "qbit"},
                 }
             ],
         }
@@ -5226,7 +5226,7 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "eventType": "downloadFolderImported",
                     "date": "2024-06-01",
                     "quality": {"quality": {"name": "WEBDL-1080p"}},
-                    "language": {"name": "English"},
+                    "language": "English",
                     "client": "qbit",
                 }
             ],
@@ -5345,8 +5345,8 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
             }
         ]
         rendered = _SUMMARY_RENDERERS[("sonarr", "recent")](payload)
@@ -5362,7 +5362,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
+                "language": "English",
                 "client": "qbit",
             },
         )
@@ -5399,8 +5399,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                     "eventType": "downloadFolderImported",
                     "series": {"title": "Star Trek: Strange New Worlds"},
                     "episode": {"title": "Orders of Magnitude"},
-                    "language": {"name": "English"},
-                    "downloadClient": "qbit",
+                    "data": {"downloadClient": "qbit"},
                 }
             ],
         }
@@ -5421,7 +5420,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2026-09-18T01:59:01Z",
                 "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
+                "language": "English",
                 "client": "qbit",
             },
         )
@@ -5896,8 +5895,8 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "movie": {"title": "Foo", "year": 2024},
                 "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01T00:00:00Z",
             }
@@ -5988,8 +5987,8 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01T00:00:00Z",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
                 "series": {"title": "Severance"},
                 "episode": {"title": "The Work Is Never Done"},
             }

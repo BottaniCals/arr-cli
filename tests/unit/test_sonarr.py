@@ -706,8 +706,8 @@ class TestCmdRecent(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": "WEBDL-1080p",
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
             }
         ]
         with _patched_get_payload(payload):
@@ -726,9 +726,10 @@ class TestCmdRecent(unittest.TestCase):
         self.assertEqual(row["eventType"], "downloadFolderImported")
         self.assertEqual(row["date"], "2024-06-01")
         self.assertEqual(row["quality"], "WEBDL-1080p")
-        # Audit-added ``language`` / ``client`` (lifted from
-        # ``downloadClient``) are also present.
-        self.assertEqual(row["language"], {"name": "English"})
+        # ``language`` is the comma-joined name list of the upstream
+        # ``languages`` array; ``client`` is resolved from
+        # ``data.downloadClient``.
+        self.assertEqual(row["language"], "English")
         self.assertEqual(row["client"], "qbit")
 
     def test_recent_emits_json_when_not_human(self) -> None:
@@ -736,8 +737,8 @@ class TestCmdRecent(unittest.TestCase):
         args = _namespace(human=False, command="recent")
         # Carry every column the renderer projects so the output
         # is a verbatim forward of the identity / nested fields;
-        # ``client`` is lifted from ``downloadClient`` so the input
-        # key surfaces as ``client`` in the summary shape.
+        # ``client`` is resolved from ``data.downloadClient`` so the
+        # nested key surfaces as ``client`` in the summary shape.
         payload = [
             {
                 "id": 1,
@@ -749,8 +750,8 @@ class TestCmdRecent(unittest.TestCase):
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
                 "quality": "WEBDL-1080p",
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
             }
         ]
         with _patched_get_payload(payload):
@@ -767,7 +768,7 @@ class TestCmdRecent(unittest.TestCase):
         self.assertEqual(row["eventType"], "downloadFolderImported")
         self.assertEqual(row["date"], "2024-06-01")
         self.assertEqual(row["quality"], "WEBDL-1080p")
-        self.assertEqual(row["language"], {"name": "English"})
+        self.assertEqual(row["language"], "English")
         self.assertEqual(row["client"], "qbit")
 
 
@@ -1826,7 +1827,7 @@ class TestAuditCellRender(unittest.TestCase):
         args = _namespace(command="recent", human=True)
         payload = [
             {
-                "language": {"name": "English"},
+                "languages": [{"id": 1, "name": "English"}],
                 "eventType": "downloadFolderImported",
                 "date": "2024-01-01",
             }
@@ -1835,13 +1836,35 @@ class TestAuditCellRender(unittest.TestCase):
             output = _capture_stdout(cmd_recent, args, cfg)
         cells = _parse_human_row(output, data_index=0)
         self.assertNotEqual(cells["language"], "<null>")
+        self.assertEqual(cells["language"], "English")
+
+    def test_recent_human_language_joins_multiple_names(self) -> None:
+        # The upstream ``languages`` array carries every language the
+        # release was imported in; the cell is the comma-joined
+        # name list.
+        cfg = _service_config()
+        args = _namespace(command="recent", human=True)
+        payload = [
+            {
+                "languages": [
+                    {"id": 1, "name": "Tamil"},
+                    {"id": 2, "name": "Telugu"},
+                ],
+                "eventType": "downloadFolderImported",
+                "date": "2024-01-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_recent, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["language"], "Tamil, Telugu")
 
     def test_recent_human_client_renders_value(self) -> None:
         cfg = _service_config()
         args = _namespace(command="recent", human=True)
         payload = [
             {
-                "downloadClient": "qbit",
+                "data": {"downloadClient": "qbit"},
                 "eventType": "downloadFolderImported",
                 "date": "2024-01-01",
             }
@@ -1850,6 +1873,42 @@ class TestAuditCellRender(unittest.TestCase):
             output = _capture_stdout(cmd_recent, args, cfg)
         cells = _parse_human_row(output, data_index=0)
         self.assertEqual(cells["client"], "qbit")
+
+    def test_recent_human_missing_languages_renders_null(self) -> None:
+        # Defensive: a history row without a ``languages`` array
+        # renders ``<null>`` in the ``language`` cell -- never an
+        # empty cell and never a stray ``", "`` separator.
+        cfg = _service_config()
+        args = _namespace(command="recent", human=True)
+        payload = [
+            {
+                "eventType": "downloadFolderImported",
+                "date": "2024-01-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_recent, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["language"], "<null>")
+
+    def test_recent_human_missing_data_renders_null_client(self) -> None:
+        # Defensive: a history row without a ``data`` envelope
+        # renders ``<null>`` in the ``client`` cell instead of
+        # raising.
+        cfg = _service_config()
+        args = _namespace(command="recent", human=True)
+        payload = [
+            {
+                "languages": [{"id": 1, "name": "English"}],
+                "eventType": "downloadFolderImported",
+                "date": "2024-01-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_recent, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["client"], "<null>")
+        self.assertEqual(cells["language"], "English")
 
     def test_series_id_human_statistics_renders_42_over_85(self) -> None:
         # ``cmd_series`` with an id is a single-record (dict) payload;
@@ -1997,7 +2056,7 @@ class TestSummarySonarrQueueExtends(unittest.TestCase):
 
 
 class TestSummarySonarrRecentExtends(unittest.TestCase):
-    """``_summary_sonarr_recent`` adds ``language`` and ``client``."""
+    """``_summary_sonarr_recent`` resolves ``language`` and ``client``."""
 
     def test_summary_sonarr_recent_adds_language_client(self) -> None:
         from arr_cli.facade.output import _summary_sonarr_recent
@@ -2007,14 +2066,14 @@ class TestSummarySonarrRecentExtends(unittest.TestCase):
                 "id": 1,
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
             }
         ]
         rendered = _summary_sonarr_recent(payload)
         self.assertEqual(len(rendered), 1)
         row = rendered[0]
-        self.assertEqual(row["language"], {"name": "English"})
+        self.assertEqual(row["language"], "English")
         self.assertEqual(row["client"], "qbit")
 
 
