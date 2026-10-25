@@ -124,6 +124,24 @@ within the pre-1.0 contract documented in `README.md`.
   pass-through is unchanged, and the `--human` column header of the
   affected tables changes from `collection.name` to
   `collection.title` alongside it.
+- **Breaking:** the default (non-`--verbose`) JSON summary shape
+  changes for the four Radarr / Sonarr queue / recent rows and the
+  two Seerr detail summaries. The `quality` value of `radarr queue`,
+  `radarr recent`, `sonarr queue` and `sonarr recent` is now the
+  release-quality display name string (e.g. `"WEBDL-1080p"`)
+  instead of the upstream release-quality object -- a consumer that
+  read the nested `quality` mapping must migrate to the scalar
+  `quality` string. The nested `ratings` key of `seerr movie <id>`
+  and `seerr tv <id>` is replaced by the three flat scalar keys
+  `criticsScore`, `audienceRating` and `audienceScore` -- a
+  consumer that read `summary["ratings"]["criticsScore"]` must
+  migrate to `summary["criticsScore"]` (likewise for
+  `audienceRating` and `audienceScore`). Both changes keep a nested
+  object out of the `--human` cells (a mapping used to render as
+  the `<N keys>` placeholder); a missing value renders as `<null>`.
+  The `--verbose` verbatim pass-through is unchanged, and so are
+  the `--human` column names, the column sets and the exit-code
+  contract.
 - `seerr --human` live-spec correction (the previous entry's
   hermetic-gate deferral is retired in favour of the verified
   direct projection): the audit-asked `title` column on
@@ -141,17 +159,16 @@ within the pre-1.0 contract documented in `README.md`.
   The `seerr movie <id>` / `seerr tv <id>` `--ratings` projection
   ships the live-spec key names the operator verified directly:
   `criticsScore` (plural-with-s integer, RT's Tomatometer
-  percentage 0-100) and `audienceRating` (categorical string
-  such as `"Spilled"` / `"Upright"`); RT does not expose a
-  numeric audience score on this Seer instance, so the
-  audit-asked `audienceScore` numeric key is dropped rather than
-  fabricated, and a missing `audienceRating` (e.g. when RT did
-  not publish a categorical rating) renders as `<null>` next to
-  the populated `criticsScore` -- clearly distinguishable from
-  "no ratings fetched". The previous key-name matrix (singular
-  `criticScore` / plural `criticsScore` etc.) is dropped: the
-  previous env-var gate deferral is retired in favour
-  of the verified direct projection. The `seerr user` `permissions` cell becomes an
+  percentage 0-100), `audienceRating` (categorical string
+  such as `"Spilled"` / `"Upright"`) and `audienceScore` (the
+  numeric RT audience score); the three keys are projected
+  verbatim when the upstream envelope populates them, and a
+  missing field (e.g. when RT did not publish a categorical
+  rating) renders as `<null>` next to its populated siblings --
+  clearly distinguishable from "no ratings fetched". The previous
+  key-name matrix (singular `criticScore` / plural `criticsScore`
+  etc.) is dropped: the previous env-var gate deferral is retired
+  in favour of the verified direct projection. The `seerr user` `permissions` cell becomes an
   integer-bitfield decoder -- the live `/api/v1/auth/me`
   envelope (verified directly on 2026-10-17) carries
   `"permissions": <int>`, a single integer bitfield with the
