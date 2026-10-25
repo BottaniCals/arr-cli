@@ -625,6 +625,79 @@ def _join_names(items: Any) -> str | None:
     return ", ".join(names) if names else None
 
 
+_QUALITY_NAME_MAX_HOPS = 3
+
+
+def _quality_name(value: Any) -> str | None:
+    """Resolve a release-quality display name from the upstream value.
+
+    The argument is the **raw upstream ``quality`` value** (e.g.
+    ``item.get("quality")``), never the whole row -- so a row-level
+    ``name`` key can never be mistaken for a quality name.
+
+    Tolerated upstream shapes:
+
+    * a non-empty plain string -> returned verbatim;
+    * a mapping with a non-empty ``name`` -> that ``name`` (probed
+      before the nested ``quality`` hop, so a mapping carrying both
+      resolves through its ``name``);
+    * a mapping without a ``name`` but with a nested ``quality`` ->
+      the nested value is walked in turn;
+    * ``None``, a missing key, a non-mapping value, an empty string,
+      or a mapping with no resolvable name -> ``None``.
+
+    The recursion descends at most three times into a nested
+    ``quality`` key: a name found at the third descent still resolves,
+    a name that would require a fourth descent does not. The bound
+    keeps a pathological payload from looping while still resolving
+    every shape the service produces (the live
+    ``{"quality": {...}, "revision": {...}}`` envelope and the
+    single-key ``{"quality": {"name": ...}}`` fixture both resolve
+    in one descent).
+    """
+
+    def _resolve(current: Any, hops: int) -> str | None:
+        if isinstance(current, str):
+            return current or None
+        if not isinstance(current, Mapping):
+            return None
+        name = current.get("name")
+        if isinstance(name, str) and name:
+            return name
+        if hops >= _QUALITY_NAME_MAX_HOPS:
+            return None
+        nested = current.get("quality")
+        if nested is None:
+            return None
+        return _resolve(nested, hops + 1)
+
+    return _resolve(value, 0)
+
+
+def _ratings_cells(ratings: Any) -> dict[str, Any]:
+    """Project the upstream ratings envelope onto three flat cells.
+
+    Always returns exactly ``criticsScore``, ``audienceRating`` and
+    ``audienceScore`` so the summary key set never changes shape. A
+    non-mapping input (e.g. a bare detail fetch without the ratings
+    sub-resource merged in) yields the same three keys with ``None``
+    values, and an absent / ``null`` field yields ``None`` for that
+    key only -- so "critic data present, audience badge absent" stays
+    distinguishable from "no ratings fetched".
+    """
+    if not isinstance(ratings, Mapping):
+        return {
+            "criticsScore": None,
+            "audienceRating": None,
+            "audienceScore": None,
+        }
+    return {
+        "criticsScore": _safe_get(ratings, "criticsScore", default=None),
+        "audienceRating": _safe_get(ratings, "audienceRating", default=None),
+        "audienceScore": _safe_get(ratings, "audienceScore", default=None),
+    }
+
+
 def _format_runtime_minutes(value: Any) -> str | None:
     """Format Jellyfin ``RunTimeTicks`` (100-ns ticks) as ``"<X>h <Y>m"``.
 
