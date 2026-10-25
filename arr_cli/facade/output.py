@@ -984,13 +984,21 @@ def _summary_radarr_calendar(payload: Any) -> list[dict[str, Any]]:
     :func:`_format_runtime_minutes_whole`; Radarr's whole-minute
     ``runtime`` must not be fed into the Jellyfin-ticks formatter
     -- see the cross-reference in that function's docstring), the
-    literal flat-with-dots ``collection.name`` key (so the
+    literal flat-with-dots ``collection.title`` key (so the
     ``_row_from_mapping`` dot-path walker resolves the nested
     collection envelope), and the three ISO-8601 release dates
     (``inCinemas``, ``physicalRelease``, ``digitalRelease``). Missing
     fields default to ``None`` so the human renderer prints ``<null>``
     rather than crashing on an upstream payload that omits any of
     them.
+
+    The upstream ``collection`` envelope is the live Radarr
+    ``CollectionResource`` of the shape ``{"title": str, "tmdbId":
+    int}`` -- the collection's *title* is the human-readable name,
+    so the projection resolves ``collection`` -> ``title``. A movie
+    without a collection (an absent / ``null`` envelope, or an
+    envelope carrying no ``title`` key) degrades to ``None`` and the
+    human renderer prints ``<null>``.
     """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
@@ -1005,8 +1013,8 @@ def _summary_radarr_calendar(payload: Any) -> list[dict[str, Any]]:
             "runtime": _format_runtime_minutes_whole(
                 item.get("runtime")
             ),
-            "collection.name": _safe_get(
-                item, "collection", "name", default=None
+            "collection.title": _safe_get(
+                item, "collection", "title", default=None
             ),
             "inCinemas": _safe_get(item, "inCinemas", default=None),
             "physicalRelease": _safe_get(
@@ -1201,11 +1209,22 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
     The per-row projection lifts ``movie.title`` and ``movie.year``
     to the top-level ``title`` / ``year`` keys (matching the audit's
     column-set ask) and adds ``sourceTitle``, ``quality``,
-    ``language``, and ``client`` (Radarr's ``downloadClient`` is
-    mapped to the ``client`` summary key for the audit's column
-    name). The original ``movie`` envelope is preserved in the row
-    so ``--verbose`` consumers chaining on the original nested
-    ``movie.title`` / ``movie.year`` shape keep working.
+    ``language``, and ``client``. The original ``movie`` envelope is
+    preserved in the row so ``--verbose`` consumers chaining on the
+    original nested ``movie.title`` / ``movie.year`` shape keep
+    working.
+
+    The upstream activity-log row carries the language as a
+    ``languages`` array of ``{"id": int, "name": str}`` objects and
+    the download client inside the nested ``data`` envelope as
+    ``data.downloadClient``; there is no top-level ``language`` or
+    ``downloadClient`` key on the row. ``language`` is therefore the
+    comma-joined language names (via :func:`_join_names`, the same
+    treatment ``genres`` already gets) and ``client`` is resolved
+    from ``data`` -> ``downloadClient``. An absent / empty
+    ``languages`` array or a missing ``data`` envelope degrades to
+    ``None`` so the human renderer prints ``<null>`` instead of a
+    stray ``", "`` or raising.
     """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
@@ -1235,9 +1254,9 @@ def _summary_radarr_recent(payload: Any) -> list[dict[str, Any]]:
                     item, "sourceTitle", default=None
                 ),
                 "quality": _safe_get(item, "quality", default=None),
-                "language": _safe_get(item, "language", default=None),
+                "language": _join_names(item.get("languages")),
                 "client": _safe_get(
-                    item, "downloadClient", default=None
+                    item, "data", "downloadClient", default=None
                 ),
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
@@ -1346,6 +1365,18 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
     a row from an older Sonarr version that ignores the include
     flag, or a defensive fallback for an unflagged payload) renders
     as ``{title: None}`` instead of crashing.
+
+    The upstream activity-log row carries the language as a
+    ``languages`` array of ``{"id": int, "name": str}`` objects and
+    the download client inside the nested ``data`` envelope as
+    ``data.downloadClient``; there is no top-level ``language`` or
+    ``downloadClient`` key on the row. ``language`` is therefore the
+    comma-joined language names (via :func:`_join_names`, the same
+    treatment ``genres`` already gets) and ``client`` is resolved
+    from ``data`` -> ``downloadClient``. An absent / empty
+    ``languages`` array or a missing ``data`` envelope degrades to
+    ``None`` so the human renderer prints ``<null>`` instead of a
+    stray ``", "`` or raising.
     """
     payload = _unwrap_envelope(payload)
     if not isinstance(payload, list):
@@ -1379,9 +1410,9 @@ def _summary_sonarr_recent(payload: Any) -> list[dict[str, Any]]:
                 "eventType": _safe_get(item, "eventType", default=None),
                 "date": _safe_get(item, "date", default=None),
                 "quality": _safe_get(item, "quality", default=None),
-                "language": _safe_get(item, "language", default=None),
+                "language": _join_names(item.get("languages")),
                 "client": _safe_get(
-                    item, "downloadClient", default=None
+                    item, "data", "downloadClient", default=None
                 ),
             }
         )
@@ -1595,12 +1626,17 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
     the upstream payload exposes ``requestedBy`` as a mapping on
     every record), ``mediaAddedAt`` (when the nested ``media``
     envelope carries it; ``None`` otherwise so the renderer prints
-    ``<null>`` rather than crashing), and ``seasonCount`` (same
-    nested-walk pattern). Missing fields default to ``None`` per the
-    documented :func:`_safe_get` contract so the renderer stays
-    well-formed even when upstream drops a field (defensive against
-    future Seer drift; ``<null>``-on-missing is the universal
-    convention for every other renderer in this module).
+    ``<null>`` rather than crashing), and ``seasonCount`` (the
+    number of requested seasons, read from the **request item**
+    level). The upstream request record carries ``seasonCount`` on
+    the item itself (``{"seasonCount": int, "media": {...}}``); the
+    nested ``media`` envelope does not populate it, so the nested
+    value is deliberately not consulted. Missing fields default to
+    ``None`` per the documented :func:`_safe_get` contract so the
+    renderer stays well-formed even when upstream drops a field
+    (defensive against future Seer drift; ``<null>``-on-missing is
+    the universal convention for every other renderer in this
+    module).
 
     The ``requestedBy.displayName`` projection was dropped from the
     curated column list because the 120-char width budget divided
@@ -1649,9 +1685,6 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
             media_added_at = _safe_get(
                 media, "mediaAddedAt", default=None
             )
-            season_count = _safe_get(
-                media, "seasonCount", default=None
-            )
         else:
             (
                 id_,
@@ -1660,8 +1693,7 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
                 tvdb_id,
                 slug,
                 media_added_at,
-                season_count,
-            ) = (None, None, None, None, None, None, None)
+            ) = (None, None, None, None, None, None)
         summaries.append(
             {
                 "id": id_,
@@ -1676,7 +1708,9 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
                     item, "requestedBy", "username", default=None
                 ),
                 "mediaAddedAt": media_added_at,
-                "seasonCount": season_count,
+                "seasonCount": _safe_get(
+                    item, "seasonCount", default=None
+                ),
             }
         )
     return summaries
@@ -2459,12 +2493,20 @@ def _summary_radarr_movie(payload: Any) -> list[dict[str, Any]]:
     projection surfaces ``hasFile`` (so the operator can see at a
     glance which library movies already have a file), ``genres``
     (via :func:`_join_names`), ``added`` (the ISO-8601 timestamp
-    the movie was added to the library), ``collection.name`` (a
+    the movie was added to the library), ``collection.title`` (a
     literal flat-with-dots key so :func:`_row_from_mapping`'s
     nested-walk fallback resolves the nested ``collection``
     envelope), and ``studio``. Missing fields default to ``None``
     so the human renderer prints ``<null>`` rather than crashing
     on an upstream payload that omits any of them.
+
+    The upstream ``collection`` envelope is the live Radarr
+    ``CollectionResource`` of the shape ``{"title": str, "tmdbId":
+    int}`` -- the collection's *title* is the human-readable name,
+    so the projection resolves ``collection`` -> ``title``. A movie
+    without a collection (an absent / ``null`` envelope, or an
+    envelope carrying no ``title`` key) degrades to ``None`` and the
+    human renderer prints ``<null>``.
     """
     if not isinstance(payload, list):
         return []
@@ -2475,8 +2517,8 @@ def _summary_radarr_movie(payload: Any) -> list[dict[str, Any]]:
             "hasFile": _safe_get(item, "hasFile", default=False),
             "genres": _join_names(item.get("genres")),
             "added": _safe_get(item, "added", default=None),
-            "collection.name": _safe_get(
-                item, "collection", "name", default=None
+            "collection.title": _safe_get(
+                item, "collection", "title", default=None
             ),
             "studio": _safe_get(item, "studio", default=None),
         }

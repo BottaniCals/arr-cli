@@ -6551,6 +6551,7 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
                     "type": "movie",
                     "status": 2,
                     "createdAt": "2026-01-01T00:00:00Z",
+                    "seasonCount": 0,
                     "requestedBy": {
                         "displayName": "alice",
                         "username": "alice",
@@ -6563,7 +6564,6 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
                         "externalServiceSlug": "tmdb",
                         "status": 5,
                         "mediaAddedAt": "2026-01-01T00:00:00Z",
-                        "seasonCount": 0,
                     },
                 },
             ],
@@ -6583,7 +6583,90 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
         self.assertEqual(
             rendered[0]["mediaAddedAt"], "2026-01-01T00:00:00Z"
         )
+        # The season count is read from the request item level.
         self.assertEqual(rendered[0]["seasonCount"], 0)
+
+    def test_requests_projects_item_level_season_count(self) -> None:
+        # The upstream request record carries ``seasonCount`` on the
+        # item itself (the number of requested seasons); the nested
+        # ``media`` envelope does not populate it.
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args("requests")
+        payload = {
+            "results": [
+                {
+                    "type": "tv",
+                    "status": 2,
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "seasonCount": 2,
+                    "media": {
+                        "id": 120,
+                        "mediaType": "tv",
+                        "tvdbId": 76107,
+                        "externalServiceSlug": "tvdb",
+                        "status": 5,
+                    },
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        rendered = json.loads(output)
+        self.assertEqual(rendered[0]["seasonCount"], 2)
+
+    def test_requests_ignores_nested_media_season_count(self) -> None:
+        # A nested ``media.seasonCount`` alone is not consulted.
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args("requests")
+        payload = {
+            "results": [
+                {
+                    "type": "tv",
+                    "status": 2,
+                    "createdAt": "2026-01-01T00:00:00Z",
+                    "media": {
+                        "id": 120,
+                        "mediaType": "tv",
+                        "tvdbId": 76107,
+                        "externalServiceSlug": "tvdb",
+                        "status": 5,
+                        "seasonCount": 7,
+                    },
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        rendered = json.loads(output)
+        self.assertIsNone(rendered[0]["seasonCount"])
+
+    def test_requests_missing_season_count_renders_null(self) -> None:
+        # A request without an item-level season count renders
+        # ``<null>`` in the human table instead of raising.
+        from arr_cli.seerr import cmd_requests
+
+        args = self._make_args("requests", human=True)
+        payload = {
+            "results": [
+                {
+                    "type": "movie",
+                    "status": 2,
+                    "createdAt": "2026-01-01T00:00:00Z",
+                },
+            ],
+        }
+        with patch(
+            "arr_cli.seerr.transport.get", return_value=payload
+        ):
+            output = _capture_stdout(cmd_requests, args, None)
+        self.assertIn("seasonCount", output.splitlines()[0])
+        self.assertIn("<null>", output)
 
     def test_requests_missing_fields_default_to_none(self) -> None:
         # US-1.5: missing audit-asked fields project as ``None``

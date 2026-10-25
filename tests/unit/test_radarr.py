@@ -703,8 +703,8 @@ class TestCmdRecent(unittest.TestCase):
                 "movie": {"title": "Foo", "year": 2024},
                 "sourceTitle": "Foo.2024.mkv",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
             }
@@ -716,6 +716,7 @@ class TestCmdRecent(unittest.TestCase):
         self.assertEqual(rendered[0]["year"], 2024)
         self.assertEqual(rendered[0]["movie"], {"title": "Foo", "year": 2024})
         self.assertEqual(rendered[0]["sourceTitle"], "Foo.2024.mkv")
+        self.assertEqual(rendered[0]["language"], "English")
         self.assertEqual(rendered[0]["client"], "qbit")
         self.assertEqual(rendered[0]["eventType"], "downloadFolderImported")
         self.assertEqual(rendered[0]["date"], "2024-06-01")
@@ -728,8 +729,8 @@ class TestCmdRecent(unittest.TestCase):
                 "movie": {"title": "The Matrix", "year": 1999},
                 "sourceTitle": "The.Matrix.1999.mkv",
                 "quality": {"quality": {"name": "WEBDL-1080p"}},
-                "language": {"name": "English"},
-                "downloadClient": "qbit",
+                "languages": [{"id": 1, "name": "English"}],
+                "data": {"downloadClient": "qbit"},
                 "eventType": "downloadFolderImported",
                 "date": "2026-09-18T01:59:01Z",
             }
@@ -743,12 +744,69 @@ class TestCmdRecent(unittest.TestCase):
         self.assertEqual(summary[0]["title"], "The Matrix")
         self.assertEqual(summary[0]["year"], 1999)
         self.assertEqual(summary[0]["sourceTitle"], "The.Matrix.1999.mkv")
+        self.assertEqual(summary[0]["language"], "English")
         self.assertEqual(summary[0]["client"], "qbit")
         # Nested ``movie`` envelope preserved so ``--verbose``
         # consumers that chain on the original shape keep working.
         self.assertEqual(
             summary[0]["movie"], {"title": "The Matrix", "year": 1999}
         )
+
+    def test_recent_without_languages_renders_null_language(self) -> None:
+        # Defensive: a history row that carries no ``languages``
+        # array renders ``<null>`` in the ``language`` cell -- never
+        # an empty cell and never a stray ``", "`` separator.
+        cfg = _service_config()
+        args = _namespace(page_size=10, human=True, command="recent")
+        payload = [
+            {
+                "movie": {"title": "Foo", "year": 2024},
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_recent, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["language"], "<null>")
+
+    def test_recent_with_empty_languages_renders_null_language(self) -> None:
+        # An empty ``languages`` array is treated the same as an
+        # absent one.
+        cfg = _service_config()
+        args = _namespace(page_size=10, human=True, command="recent")
+        payload = [
+            {
+                "movie": {"title": "Foo", "year": 2024},
+                "languages": [],
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_recent, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["language"], "<null>")
+
+    def test_recent_without_data_renders_null_client(self) -> None:
+        # Defensive: a history row that carries no ``data`` envelope
+        # renders ``<null>`` in the ``client`` cell instead of
+        # raising.
+        cfg = _service_config()
+        args = _namespace(page_size=10, human=True, command="recent")
+        payload = [
+            {
+                "movie": {"title": "Foo", "year": 2024},
+                "languages": [{"id": 1, "name": "English"}],
+                "eventType": "downloadFolderImported",
+                "date": "2024-06-01",
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_recent, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["client"], "<null>")
+        self.assertEqual(cells["language"], "English")
 
 
 # ---------------------------------------------------------------------------
@@ -1099,7 +1157,7 @@ class TestCmdMovie(unittest.TestCase):
         # is exactly these seven columns in this order. ``status`` /
         # ``tmdbId`` / ``imdbId`` (the pre-change columns) are
         # replaced by the audit-asked ``hasFile`` / ``genres`` /
-        # ``added`` / ``collection.name`` / ``studio`` set.
+        # ``added`` / ``collection.title`` / ``studio`` set.
         cfg = _service_config()
         args = _namespace(movie_id=None, human=True)
         payload = [{"title": "A", "year": 1999}]
@@ -1115,7 +1173,7 @@ class TestCmdMovie(unittest.TestCase):
                 "hasFile",
                 "genres",
                 "added",
-                "collection.name",
+                "collection.title",
                 "studio",
             ],
         )
@@ -1133,7 +1191,7 @@ class TestCmdMovie(unittest.TestCase):
                 "hasFile": (i % 2 == 0),
                 "genres": [{"name": "Action"}],
                 "added": f"2024-01-{i + 1:02d}T00:00:00Z",
-                "collection": {"name": f"Collection {i}"},
+                "collection": {"title": f"Collection {i}", "tmdbId": 1000 + i},
                 "studio": "Studio A",
             }
             for i in range(n)
@@ -1152,10 +1210,49 @@ class TestCmdMovie(unittest.TestCase):
             "hasFile",
             "genres",
             "added",
-            "collection.name",
+            "collection.title",
             "studio",
         ):
             self.assertIn(column, header)
+
+    def test_movie_no_id_missing_collection_renders_null(self) -> None:
+        # A movie with no collection envelope (an absent key, a
+        # ``null`` envelope, or an envelope carrying no ``title``
+        # key) must render ``<null>`` in the ``collection.title``
+        # cell instead of raising.
+        cfg = _service_config()
+        args = _namespace(movie_id=None, human=True)
+        payload = [
+            {"title": "No Collection", "year": 2024},
+            {"title": "Null Collection", "year": 2024, "collection": None},
+            {
+                "title": "Untitled Collection",
+                "year": 2024,
+                "collection": {"tmdbId": 42},
+            },
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_movie, args, cfg)
+        for data_index in range(len(payload)):
+            cells = _parse_human_row(output, data_index=data_index)
+            self.assertEqual(cells["collection.title"], "<null>")
+
+    def test_movie_no_id_collection_cell_renders_title(self) -> None:
+        # The happy path: the nested collection envelope's ``title``
+        # reaches the ``collection.title`` cell.
+        cfg = _service_config()
+        args = _namespace(movie_id=None, human=True)
+        payload = [
+            {
+                "title": "The Matrix",
+                "year": 1999,
+                "collection": {"title": "Matrix Collection", "tmdbId": 2345},
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_movie, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["collection.title"], "Matrix Collection")
 
     def test_calendar_human_renders_table(self) -> None:
         # US-1 AC1: the --human column list on calendar is the
@@ -1170,7 +1267,7 @@ class TestCmdMovie(unittest.TestCase):
                 "hasFile": True,
                 "genres": [{"name": "Action"}],
                 "runtime": 136,
-                "collection": {"name": "Matrix Collection"},
+                "collection": {"title": "Matrix Collection", "tmdbId": 2345},
                 "inCinemas": "1999-03-31",
                 "physicalRelease": "1999-09-21",
                 "digitalRelease": "1999-09-21",
@@ -1189,7 +1286,7 @@ class TestCmdMovie(unittest.TestCase):
                 "hasFile",
                 "genres",
                 "runtime",
-                "collection.name",
+                "collection.title",
                 "inCinemas",
                 "physicalRelease",
                 "digitalRelease",
@@ -1413,7 +1510,7 @@ class TestHumanMode(unittest.TestCase):
                 "hasFile",
                 "genres",
                 "runtime",
-                "collection.name",
+                "collection.title",
                 "inCinemas",
                 "physicalRelease",
                 "digitalRelease",

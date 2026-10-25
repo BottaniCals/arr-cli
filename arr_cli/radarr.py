@@ -245,6 +245,10 @@ def cmd_calendar(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         params=params or None,
         op="calendar",
     )
+    # Tabular columns match the summary-shape keys emitted by
+    # ``_summary_radarr_calendar``; ``collection.title`` is the
+    # flat-with-dots token the renderer emits for the nested
+    # ``collection`` envelope's ``title`` key.
     columns = [
         "title",
         "year",
@@ -252,7 +256,7 @@ def cmd_calendar(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "hasFile",
         "genres",
         "runtime",
-        "collection.name",
+        "collection.title",
         "inCinemas",
         "physicalRelease",
         "digitalRelease",
@@ -432,13 +436,16 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         # US-6 audit-asked shape). Listed first so the dispatch
         # lookup ``_columns_for("radarr", "movie")`` (which takes
         # the first literal) resolves to the no-id branch shape.
+        # ``collection.title`` is the flat-with-dots token the
+        # renderer emits; it resolves the nested ``collection``
+        # envelope's ``title`` key.
         columns = [
             "title",
             "year",
             "hasFile",
             "genres",
             "added",
-            "collection.name",
+            "collection.title",
             "studio",
         ]
     else:
