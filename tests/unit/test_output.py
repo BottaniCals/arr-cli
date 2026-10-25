@@ -673,6 +673,7 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "type": "movie",
             "status": 2,
             "createdAt": "2024-01-01",
+            "seasonCount": 0,
             "requestedBy": {"displayName": "alice"},
             "media": {
                 "id": 121,
@@ -3512,6 +3513,7 @@ class TestSummarySeerrRequests(unittest.TestCase):
                 "type": "movie",
                 "status": 2,
                 "createdAt": "2026-09-13T12:56:58.000Z",
+                "seasonCount": 0,
                 "requestedBy": {
                     "displayName": "alice",
                     "username": "alice",
@@ -3524,7 +3526,6 @@ class TestSummarySeerrRequests(unittest.TestCase):
                     "externalServiceSlug": "tmdb",
                     "status": 5,
                     "mediaAddedAt": "2026-09-10T00:00:00Z",
-                    "seasonCount": None,
                 },
             }
         ]
@@ -3542,9 +3543,74 @@ class TestSummarySeerrRequests(unittest.TestCase):
                 "createdAt": "2026-09-13T12:56:58.000Z",
                 "requestedByUsername": "alice",
                 "mediaAddedAt": "2026-09-10T00:00:00Z",
-                "seasonCount": None,
+                "seasonCount": 0,
             },
         )
+
+    def test_requests_tv_row_projects_item_level_season_count(self) -> None:
+        """The season count is read from the request item level.
+
+        The upstream request record carries ``seasonCount`` on the
+        item itself (the number of requested seasons); the nested
+        ``media`` envelope does not populate it.
+        """
+        payload = [
+            {
+                "type": "tv",
+                "status": 2,
+                "createdAt": "2026-09-13T12:55:03.000Z",
+                "seasonCount": 2,
+                "requestedBy": {"displayName": "bob"},
+                "media": {
+                    "id": 120,
+                    "mediaType": "tv",
+                    "tmdbId": None,
+                    "tvdbId": 76107,
+                    "externalServiceSlug": "tvdb",
+                    "status": 5,
+                },
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
+        self.assertEqual(rendered[0]["seasonCount"], 2)
+
+    def test_requests_ignores_nested_media_season_count(self) -> None:
+        """A nested ``media.seasonCount`` alone is not consulted.
+
+        The nested envelope does not carry the season count
+        upstream, so a payload that only populates it must project
+        ``None`` rather than the nested value.
+        """
+        payload = [
+            {
+                "type": "tv",
+                "status": 2,
+                "createdAt": "2026-09-13T12:55:03.000Z",
+                "media": {
+                    "id": 120,
+                    "mediaType": "tv",
+                    "tmdbId": None,
+                    "tvdbId": 76107,
+                    "externalServiceSlug": "tvdb",
+                    "status": 5,
+                    "seasonCount": 7,
+                },
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
+        self.assertIsNone(rendered[0]["seasonCount"])
+
+    def test_requests_missing_season_count_renders_null(self) -> None:
+        """A request without an item-level season count renders ``<null>``."""
+        payload = [
+            {
+                "type": "movie",
+                "status": 2,
+                "createdAt": "2026-09-13T12:55:03.000Z",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("seerr", "requests")](payload)
+        self.assertIsNone(rendered[0]["seasonCount"])
 
     def test_requests_tv_row_projects_media_identity(self) -> None:
         """TV rows source identity from the same ``media`` sub-dict as movie rows.
@@ -6351,6 +6417,7 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                 "type": "movie",
                 "status": 2,
                 "createdAt": "2024-01-01T00:00:00Z",
+                "seasonCount": 0,
                 "requestedBy": {"displayName": "alice", "username": "alice"},
                 "media": {
                     "id": 121,
@@ -6360,7 +6427,6 @@ def _synthetic_payload(svc: str, cmd: str) -> Any:
                     "externalServiceSlug": "tmdb",
                     "status": 5,
                     "mediaAddedAt": "2024-01-01T00:00:00Z",
-                    "seasonCount": 0,
                 },
             }
         ],
