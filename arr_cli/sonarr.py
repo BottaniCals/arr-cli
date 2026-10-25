@@ -316,12 +316,12 @@ def cmd_queue(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # ``_summary_sonarr_queue`` (flat top-level keys). The audit-
     # asked columns (``series.title`` lifted from the nested
     # ``series`` envelope, ``episode`` projected from the nested
-    # ``episode`` envelope, ``quality`` from the flat ``quality``
-    # key, and ``timeLeft`` lifted from ``timeleft``) are
-    # appended after the pre-change columns. ``status`` is a pre-
-    # change column and MUST NOT be re-appended at the tail; the
-    # audit does not add a ``progress`` column and none should be
-    # invented.
+    # ``episode`` envelope, ``quality`` resolved to the release-
+    # quality display name, and ``timeLeft`` lifted from
+    # ``timeleft``) are appended after the pre-change columns.
+    # ``status`` is a pre-change column and MUST NOT be re-appended
+    # at the tail; the audit does not add a ``progress`` column and
+    # none should be invented.
     columns = [
         "title",
         "status",

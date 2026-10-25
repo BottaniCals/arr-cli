@@ -2296,27 +2296,27 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
 
     When ``cmd_tv`` is invoked with ``--ratings``, the live Seer
     ``/api/v1/tv/{tvId}/ratings`` envelope is merged under
-    ``payload["ratings"]`` and surfaced under the ``ratings``
-    block on the curated row. The projection uses the live-spec
-    key names the operator verified on 2026-10-17:
+    ``payload["ratings"]`` and projected onto three flat top-level
+    cells via :func:`_ratings_cells`. The projection uses the
+    live-spec key names the operator verified on 2026-10-17:
 
     * ``criticsScore`` (plural-with-s, integer -- RT's
       "Tomatometer" percentage 0-100).
     * ``audienceRating`` (categorical string, e.g. ``"Spilled"``
       / ``"Upright"`` / ``"Want to See"``).
+    * ``audienceScore`` (integer -- RT's audience score 0-100).
 
-    RT does not expose a numeric audience score on this Seer
-    instance; ``audienceRating`` is the closest categorical field,
-    so it is a string on purpose (not a numeric filler). A
-    missing ``audienceRating`` (e.g. RT did not publish a
-    categorical rating for the title) renders as ``<null>`` next
-    to a populated ``criticsScore``, which is clearly
-    distinguishable from "no ratings fetched" because the
-    ``criticsScore`` is still populated.
+    A missing field (e.g. RT did not publish a categorical rating
+    for the title) renders as ``<null>`` next to its populated
+    siblings, which is clearly distinguishable from "no ratings
+    fetched" because the other cells keep their values.
 
-    A bare detail fetch (no ``--ratings``) leaves ``ratings`` as
-    ``None`` so the column is visible-but-empty in the default
-    output instead of being silently dropped.
+    A bare detail fetch (no ``--ratings``) leaves all three cells
+    ``None`` so they stay visible-but-empty in the default output
+    instead of being silently dropped. The nested ratings mapping
+    is not part of the summary -- the three scalar cells replace it
+    so the human renderer never shows an opaque ``<N keys>``
+    placeholder.
 
     Two input shapes are accepted (mirroring the
     size-to-summary-renderer convention):
@@ -2340,24 +2340,7 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
 
     raw_genres = payload.get("genres")
     raw_networks = payload.get("networks")
-    raw_ratings = payload.get("ratings")
-    if isinstance(raw_ratings, Mapping):
-        # RT numeric-vs-categorical gap: live Seer envelope
-        # carries ``criticsScore`` (plural, integer 0-100) and
-        # ``audienceRating`` (categorical string). The two share
-        # no common numeric shape, so the projection keeps them
-        # as distinct keys rather than fabricating a numeric
-        # ``audienceScore`` the upstream payload does not populate.
-        ratings_obj: dict[str, Any] = {
-            "criticsScore": _safe_get(
-                raw_ratings, "criticsScore", default=None
-            ),
-            "audienceRating": _safe_get(
-                raw_ratings, "audienceRating", default=None
-            ),
-        }
-    else:
-        ratings_obj = None
+    ratings_cells = _ratings_cells(payload.get("ratings"))
 
     media_info_status = _safe_get(
         payload, "mediaInfo", "status", default=None
@@ -2383,7 +2366,9 @@ def _summary_seerr_tv(payload: Any) -> dict[str, Any]:
         "overview": _truncate_overview(payload.get("overview")),
         "status": _safe_get(payload, "status", default=None),
         "mediaInfoStatus": media_info_status,
-        "ratings": ratings_obj,
+        "criticsScore": ratings_cells["criticsScore"],
+        "audienceRating": ratings_cells["audienceRating"],
+        "audienceScore": ratings_cells["audienceScore"],
     }
 
 
@@ -2414,27 +2399,27 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
 
     When ``cmd_movie`` is invoked with ``--ratings``, the live
     Seer ``/api/v1/movie/{movieId}/ratings`` envelope is merged
-    under ``payload["ratings"]`` and surfaced under the
-    ``ratings`` block on the curated row. The projection uses the
-    live-spec key names the operator verified on 2026-10-17:
+    under ``payload["ratings"]`` and projected onto three flat
+    top-level cells via :func:`_ratings_cells`. The projection uses
+    the live-spec key names the operator verified on 2026-10-17:
 
     * ``criticsScore`` (plural-with-s, integer -- RT's
       "Tomatometer" percentage 0-100).
     * ``audienceRating`` (categorical string, e.g.
       ``"Spilled"`` / ``"Upright"`` / ``"Want to See"``).
+    * ``audienceScore`` (integer -- RT's audience score 0-100).
 
-    RT does not expose a numeric audience score on this Seer
-    instance; ``audienceRating`` is the closest categorical
-    field, so it is a string on purpose (not a numeric filler).
-    A missing ``audienceRating`` (e.g. RT did not publish a
-    categorical rating for the title) renders as ``<null>`` next
-    to a populated ``criticsScore``, which is clearly
-    distinguishable from "no ratings fetched" because the
-    ``criticsScore`` is still populated.
+    A missing field (e.g. RT did not publish a categorical rating
+    for the title) renders as ``<null>`` next to its populated
+    siblings, which is clearly distinguishable from "no ratings
+    fetched" because the other cells keep their values.
 
-    A bare detail fetch (no ``--ratings``) leaves ``ratings`` as
-    ``None`` so the column is visible-but-empty in the default
-    output instead of being silently dropped.
+    A bare detail fetch (no ``--ratings``) leaves all three cells
+    ``None`` so they stay visible-but-empty in the default output
+    instead of being silently dropped. The nested ratings mapping
+    is not part of the summary -- the three scalar cells replace it
+    so the human renderer never shows an opaque ``<N keys>``
+    placeholder.
 
     Two input shapes are accepted (mirroring the
     size-to-summary-renderer convention):
@@ -2458,7 +2443,7 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         return {}
 
     raw_genres = payload.get("genres")
-    raw_ratings = payload.get("ratings")
+    ratings_cells = _ratings_cells(payload.get("ratings"))
 
     def _format_runtime(minutes: Any) -> str | None:
         """Format ``minutes`` as ``"<X>h <Y>m"``.
@@ -2481,23 +2466,6 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         hours = total // 60
         mins = total % 60
         return f"{hours}h {mins}m"
-    if isinstance(raw_ratings, Mapping):
-        # RT numeric-vs-categorical gap: live Seer envelope
-        # carries ``criticsScore`` (plural, integer 0-100) and
-        # ``audienceRating`` (categorical string). The two share
-        # no common numeric shape, so the projection keeps them
-        # as distinct keys rather than fabricating a numeric
-        # ``audienceScore`` the upstream payload does not populate.
-        ratings_obj: dict[str, Any] = {
-            "criticsScore": _safe_get(
-                raw_ratings, "criticsScore", default=None
-            ),
-            "audienceRating": _safe_get(
-                raw_ratings, "audienceRating", default=None
-            ),
-        }
-    else:
-        ratings_obj = None
 
     media_info_status = _safe_get(
         payload, "mediaInfo", "status", default=None
@@ -2519,7 +2487,9 @@ def _summary_seerr_movie(payload: Any) -> dict[str, Any]:
         "overview": _truncate_overview(payload.get("overview")),
         "status": _safe_get(payload, "status", default=None),
         "mediaInfoStatus": media_info_status,
-        "ratings": ratings_obj,
+        "criticsScore": ratings_cells["criticsScore"],
+        "audienceRating": ratings_cells["audienceRating"],
+        "audienceScore": ratings_cells["audienceScore"],
     }
 
 
