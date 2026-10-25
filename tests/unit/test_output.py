@@ -2731,11 +2731,52 @@ class TestSummaryRadarrQueue(unittest.TestCase):
             {
                 "title": "Foo",
                 "year": 2024,
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "status": "downloading",
                 "timeLeft": "00:30:00",
             },
         )
+
+    def test_quality_without_name_projects_none(self) -> None:
+        """A quality envelope with no resolvable name projects ``None``."""
+        payload = [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "quality": {"quality": {"id": 3}},
+                "status": "downloading",
+                "timeleft": "00:30:00",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
+        self.assertIsNone(rendered[0]["quality"])
+
+    def test_missing_quality_projects_none(self) -> None:
+        """A row without a ``quality`` key projects ``None``."""
+        payload = [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "status": "downloading",
+                "timeleft": "00:30:00",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
+        self.assertIsNone(rendered[0]["quality"])
+
+    def test_plain_string_quality_projects_verbatim(self) -> None:
+        """An upstream ``quality`` that is already a string is verbatim."""
+        payload = [
+            {
+                "title": "Foo",
+                "year": 2024,
+                "quality": "WEBDL-1080p",
+                "status": "downloading",
+                "timeleft": "00:30:00",
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("radarr", "queue")](payload)
+        self.assertEqual(rendered[0]["quality"], "WEBDL-1080p")
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
@@ -2805,7 +2846,7 @@ class TestSummaryRadarrRecent(unittest.TestCase):
                 "year": 2024,
                 "movie": {"title": "Foo", "year": 2024},
                 "sourceTitle": "Foo.2024.WEBDL-1080p.mkv",
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "language": "English",
                 "client": "qbit",
                 "eventType": "downloadFolderImported",
@@ -3068,7 +3109,7 @@ class TestSummarySonarrQueue(unittest.TestCase):
                 "sizeleft": 500,
                 "series.title": "Severance",
                 "episode": "The Work Is Never Done",
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "timeLeft": "00:30:00",
             },
         )
@@ -3152,7 +3193,7 @@ class TestSummarySonarrQueue(unittest.TestCase):
                     "sizeleft": 500,
                     "series.title": "Severance",
                     "episode": "Pilot",
-                    "quality": {"quality": {"name": "WEBDL-1080p"}},
+                    "quality": "WEBDL-1080p",
                     "timeLeft": "00:30:00",
                 }
             ],
@@ -3304,7 +3345,7 @@ class TestSummarySonarrFlatFieldsIndependentOfEnvelopes(unittest.TestCase):
                 "trackedDownloadStatus": "ok",
                 "size": 1000,
                 "sizeleft": 500,
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "timeLeft": "00:30:00",
             },
         )
@@ -3363,7 +3404,7 @@ class TestSummarySonarrRecent(unittest.TestCase):
                 "sourceTitle": "Pilot",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
-                "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "language": "English",
                 "client": "qbit",
             },
@@ -5593,7 +5634,7 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "sourceTitle": "Pilot",
                     "eventType": "downloadFolderImported",
                     "date": "2024-06-01",
-                    "quality": {"quality": {"name": "WEBDL-1080p"}},
+                    "quality": "WEBDL-1080p",
                     "language": "English",
                     "client": "qbit",
                 }
@@ -5729,7 +5770,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "sourceTitle": "Pilot",
                 "eventType": "downloadFolderImported",
                 "date": "2024-06-01",
-                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "language": "English",
                 "client": "qbit",
             },
@@ -5787,7 +5828,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "sourceTitle": "Show.S01E01.WEBDL-1080p.mkv",
                 "eventType": "downloadFolderImported",
                 "date": "2026-09-18T01:59:01Z",
-                "quality": {"quality": {"id": 7, "name": "WEBDL-1080p"}},
+                "quality": "WEBDL-1080p",
                 "language": "English",
                 "client": "qbit",
             },
