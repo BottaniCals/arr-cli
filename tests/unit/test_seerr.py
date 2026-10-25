@@ -1617,8 +1617,9 @@ class TestCmdTv(unittest.TestCase):
         # Live ``/api/v1/{tv,movie}/{id}/ratings`` envelope shape
         # verified directly on the operator's Seer instance on
         # 2026-10-17. The renderer projects ``criticsScore`` (the
-        # integer RT Tomatometer percentage, plural-with-s key) and
-        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # integer RT Tomatometer percentage, plural-with-s key),
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``)
+        # and ``audienceScore`` (the numeric RT audience score);
         # the upstream-only ``title`` / ``url`` / ``criticsRating``
         # / ``year`` keys are not part of the curated projection.
         "title": "Doctor Who",
@@ -1626,6 +1627,7 @@ class TestCmdTv(unittest.TestCase):
         "criticsRating": "Fresh",
         "criticsScore": 90,
         "audienceRating": "Upright",
+        "audienceScore": 90,
         "year": 2005,
     }
 
@@ -1672,10 +1674,14 @@ class TestCmdTv(unittest.TestCase):
         self.assertEqual(rendered["networks"], "BBC One")
         self.assertEqual(rendered["numberOfSeasons"], 13)
         self.assertEqual(rendered["status"], "Ended")
-        # Ratings absent on the no-flag path so the operator sees a
-        # visible-but-empty ``"ratings": null`` cell rather than a
-        # misleading ``"<null>"`` placeholder.
-        self.assertIsNone(rendered["ratings"])
+        # Ratings absent on the no-flag path so the operator sees
+        # visible-but-empty score cells rather than a misleading
+        # populated value.
+        self.assertIsNone(rendered["criticsScore"])
+        self.assertIsNone(rendered["audienceRating"])
+        self.assertIsNone(rendered["audienceScore"])
+        # The nested ``ratings`` mapping is not part of the summary.
+        self.assertNotIn("ratings", rendered)
 
     def test_cmd_tv_genres_networks_flattened_to_string(self) -> None:
         """Multi-entry ``genres`` / ``networks`` arrays flatten to a comma-joined string."""
@@ -1708,7 +1714,7 @@ class TestCmdTv(unittest.TestCase):
         )
 
     def test_cmd_tv_ratings_flag_merges_second_endpoint(self) -> None:
-        """``--ratings`` triggers a second GET and merges RT scores under ``ratings``."""
+        """``--ratings`` triggers a second GET and projects the RT scores flat."""
         from arr_cli.seerr import cmd_tv
 
         args = self._make_args(ratings=True)
@@ -1721,16 +1727,17 @@ class TestCmdTv(unittest.TestCase):
         self.assertEqual(len(mock_get.call_args_list), 2)
         rendered = json.loads(output)
         # Top-level fields still come from the detail payload ...
-        self.assertEqual(rendered["name"], "Doctor Who")
         # ... and the live-spec RT envelope (verified 2026-10-17)
-        # surfaces the integer ``criticsScore`` (plural-with-s key)
-        # and the categorical ``audienceRating`` string under the
-        # ``ratings`` block. The renderer drops the upstream-only
-        # ``title`` / ``url`` / ``criticsRating`` / ``year`` keys
-        # so the curated shape stays minimal.
-        self.assertIsNotNone(rendered["ratings"])
-        self.assertEqual(rendered["ratings"]["criticsScore"], 90)
-        self.assertEqual(rendered["ratings"]["audienceRating"], "Upright")
+        # surfaces the integer ``criticsScore`` (plural-with-s key),
+        # the categorical ``audienceRating`` string and the numeric
+        # ``audienceScore`` as three flat top-level cells. The
+        # renderer drops the upstream-only ``title`` / ``url`` /
+        # ``criticsRating`` / ``year`` keys so the curated shape
+        # stays minimal.
+        self.assertEqual(rendered["criticsScore"], 90)
+        self.assertEqual(rendered["audienceRating"], "Upright")
+        self.assertEqual(rendered["audienceScore"], 90)
+        self.assertNotIn("ratings", rendered)
 
     def test_cmd_tv_verbose_emits_verbatim_payload(self) -> None:
         """``--verbose`` bypasses the renderer and emits the verbatim payload."""
@@ -1917,8 +1924,9 @@ class TestCmdTvHttpPath(unittest.TestCase):
         # Live ``/api/v1/{tv,movie}/{id}/ratings`` envelope shape
         # verified directly on the operator's Seer instance on
         # 2026-10-17. The renderer projects ``criticsScore`` (the
-        # integer RT Tomatometer percentage, plural-with-s key) and
-        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # integer RT Tomatometer percentage, plural-with-s key),
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``)
+        # and ``audienceScore`` (the numeric RT audience score);
         # the upstream-only ``title`` / ``url`` / ``criticsRating``
         # / ``year`` keys are not part of the curated projection.
         "title": "Doctor Who",
@@ -1926,6 +1934,7 @@ class TestCmdTvHttpPath(unittest.TestCase):
         "criticsRating": "Fresh",
         "criticsScore": 90,
         "audienceRating": "Upright",
+        "audienceScore": 90,
         "year": 2005,
     }
 
@@ -2057,8 +2066,9 @@ class TestCmdMovie(unittest.TestCase):
         # Live ``/api/v1/{movie,tv}/{id}/ratings`` envelope shape
         # verified directly on the operator's Seer instance on
         # 2026-10-17. The renderer projects ``criticsScore`` (the
-        # integer RT Tomatometer percentage, plural-with-s key) and
-        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # integer RT Tomatometer percentage, plural-with-s key),
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``)
+        # and ``audienceScore`` (the numeric RT audience score);
         # the upstream-only ``title`` / ``url`` / ``criticsRating``
         # / ``year`` keys are not part of the curated projection.
         "title": "The Matrix",
@@ -2066,6 +2076,7 @@ class TestCmdMovie(unittest.TestCase):
         "criticsRating": "Fresh",
         "criticsScore": 83,
         "audienceRating": "Spilled",
+        "audienceScore": 90,
         "year": 1999,
     }
 
@@ -2114,10 +2125,14 @@ class TestCmdMovie(unittest.TestCase):
         self.assertEqual(rendered["runtime"], "2h 16m")
         self.assertEqual(rendered["genres"], "Action")
         self.assertEqual(rendered["tagline"], "Welcome to the Real World.")
-        # Ratings absent on the no-flag path so the operator sees a
-        # visible-but-empty ``"ratings": null`` cell rather than a
-        # misleading ``"<null>"`` placeholder.
-        self.assertIsNone(rendered["ratings"])
+        # Ratings absent on the no-flag path so the operator sees
+        # visible-but-empty score cells rather than a misleading
+        # populated value.
+        self.assertIsNone(rendered["criticsScore"])
+        self.assertIsNone(rendered["audienceRating"])
+        self.assertIsNone(rendered["audienceScore"])
+        # The nested ``ratings`` mapping is not part of the summary.
+        self.assertNotIn("ratings", rendered)
 
     def test_cmd_movie_genres_flattened_to_string(self) -> None:
         """Multi-entry ``genres`` array flattens to a comma-joined string."""
@@ -2143,7 +2158,7 @@ class TestCmdMovie(unittest.TestCase):
         )
 
     def test_cmd_movie_ratings_flag_merges_second_endpoint(self) -> None:
-        """``--ratings`` triggers a second GET and merges RT scores under ``ratings``."""
+        """``--ratings`` triggers a second GET and projects the RT scores flat."""
         from arr_cli.seerr import cmd_movie
 
         args = self._make_args(ratings=True)
@@ -2156,16 +2171,17 @@ class TestCmdMovie(unittest.TestCase):
         self.assertEqual(len(mock_get.call_args_list), 2)
         rendered = json.loads(output)
         # Top-level fields still come from the detail payload ...
-        self.assertEqual(rendered["title"], "The Matrix")
         # ... and the live-spec RT envelope (verified 2026-10-17)
-        # surfaces the integer ``criticsScore`` (plural-with-s key)
-        # and the categorical ``audienceRating`` string under the
-        # ``ratings`` block. RT does not expose a numeric audience
-        # score on this instance, so the auditor-asked
-        # ``audienceScore`` key does not exist on the live envelope.
-        self.assertIsNotNone(rendered["ratings"])
-        self.assertEqual(rendered["ratings"]["criticsScore"], 83)
-        self.assertEqual(rendered["ratings"]["audienceRating"], "Spilled")
+        # surfaces the integer ``criticsScore`` (plural-with-s key),
+        # the categorical ``audienceRating`` string and the numeric
+        # ``audienceScore`` as three flat top-level cells. The
+        # renderer drops the upstream-only ``title`` / ``url`` /
+        # ``criticsRating`` / ``year`` keys so the curated shape
+        # stays minimal.
+        self.assertEqual(rendered["criticsScore"], 83)
+        self.assertEqual(rendered["audienceRating"], "Spilled")
+        self.assertEqual(rendered["audienceScore"], 90)
+        self.assertNotIn("ratings", rendered)
 
     def test_cmd_movie_verbose_emits_verbatim_payload(self) -> None:
         """``--verbose`` bypasses the renderer and emits the verbatim payload."""
@@ -2356,8 +2372,9 @@ class TestCmdMovieHttpPath(unittest.TestCase):
         # Live ``/api/v1/{movie,tv}/{id}/ratings`` envelope shape
         # verified directly on the operator's Seer instance on
         # 2026-10-17. The renderer projects ``criticsScore`` (the
-        # integer RT Tomatometer percentage, plural-with-s key) and
-        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``);
+        # integer RT Tomatometer percentage, plural-with-s key),
+        # ``audienceRating`` (the categorical string, e.g. ``"Spilled"``)
+        # and ``audienceScore`` (the numeric RT audience score);
         # the upstream-only ``title`` / ``url`` / ``criticsRating``
         # / ``year`` keys are not part of the curated projection.
         "title": "The Matrix",
@@ -2365,6 +2382,7 @@ class TestCmdMovieHttpPath(unittest.TestCase):
         "criticsRating": "Fresh",
         "criticsScore": 83,
         "audienceRating": "Spilled",
+        "audienceScore": 90,
         "year": 1999,
     }
 
@@ -6162,7 +6180,12 @@ class TestCmdMovieRealShape(unittest.TestCase):
         self.assertEqual(rendered["runtime"], "2h 16m")
         self.assertEqual(rendered["genres"], "Action")
         self.assertEqual(rendered["tagline"], "Welcome to the Real World.")
-        self.assertIsNone(rendered["ratings"])
+        # No ``--ratings`` fetch: all three score cells are ``None``
+        # and the nested ``ratings`` key is absent.
+        self.assertIsNone(rendered["criticsScore"])
+        self.assertIsNone(rendered["audienceRating"])
+        self.assertIsNone(rendered["audienceScore"])
+        self.assertNotIn("ratings", rendered)
 
     def test_default_summary_does_not_emit_name_key(self) -> None:
         """Default summary emits the curated ``title`` key (NOT the upstream ``name=None`` field)."""
@@ -6967,11 +6990,9 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
         # Live-spec positive case (verified against
         # ``/api/v1/tv/{tvId}/ratings`` directly on the operator's
         # Seer instance on 2026-10-17): the renderer projects the
-        # live integer ``criticsScore`` (plural-with-s key) and
-        # the live categorical ``audienceRating`` string under
-        # the ``ratings`` block. The pre-change
-        # ``audienceScore`` numeric key is dropped (RT does not
-        # expose a numeric audience score on this instance).
+        # live integer ``criticsScore`` (plural-with-s key), the
+        # live categorical ``audienceRating`` string and the
+        # numeric ``audienceScore`` as three flat top-level cells.
         from arr_cli.seerr import cmd_tv
 
         args = self._make_args("tv", ratings=True)
@@ -6986,6 +7007,7 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
             "criticsRating": "Fresh",
             "criticsScore": 90,
             "audienceRating": "Upright",
+            "audienceScore": 90,
             "year": 2005,
         }
         with patch(
@@ -6994,10 +7016,10 @@ class TestHumanModeSeerrAuditFields(unittest.TestCase):
         ):
             output = _capture_stdout(cmd_tv, args, None)
         rendered = json.loads(output)
-        self.assertEqual(
-            rendered["ratings"],
-            {"criticsScore": 90, "audienceRating": "Upright"},
-        )
+        self.assertEqual(rendered["criticsScore"], 90)
+        self.assertEqual(rendered["audienceRating"], "Upright")
+        self.assertEqual(rendered["audienceScore"], 90)
+        self.assertNotIn("ratings", rendered)
 
     def test_tv_verbose_emits_verbatim(self) -> None:
         # US-3.5: ``--verbose`` keeps the verbatim upstream
