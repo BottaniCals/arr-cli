@@ -3158,6 +3158,167 @@ class TestSummarySonarrQueue(unittest.TestCase):
         )
 
 
+class TestSummarySonarrFlatFieldsIndependentOfEnvelopes(unittest.TestCase):
+    """The flat row fields do not depend on the nested envelopes.
+
+    Sonarr's ``wanted/missing`` / ``calendar`` / ``queue`` endpoints
+    gate *only* the nested ``series`` / ``episode`` envelopes behind
+    the ``includeSeries`` / ``includeEpisode`` query flags -- the flat
+    row fields are emitted either way. The curated projection must
+    therefore not couple the flat fields to the presence of a nested
+    envelope: a row that carries both projects the same flat values
+    as a row that carries none.
+    """
+
+    #: The flat identity fields the ``wanted`` / ``calendar``
+    #: renderers project alongside the nested ``series`` envelope.
+    _EPISODE_FLAT_KEYS = (
+        "title",
+        "seasonNumber",
+        "episodeNumber",
+        "airDate",
+        "monitored",
+        "hasFile",
+        "runtime",
+        "overview",
+    )
+
+    #: The flat identity fields the ``queue`` renderer projects
+    #: alongside the nested ``series`` / ``episode`` envelopes.
+    _QUEUE_FLAT_KEYS = (
+        "title",
+        "status",
+        "trackedDownloadStatus",
+        "size",
+        "sizeleft",
+        "quality",
+        "timeLeft",
+    )
+
+    @staticmethod
+    def _flat(row: Mapping[str, Any], keys: Sequence[str]) -> dict[str, Any]:
+        return {key: row[key] for key in keys}
+
+    def test_wanted_flat_fields_survive_alongside_the_envelope(self) -> None:
+        flat_row = {
+            "title": "Pilot",
+            "seasonNumber": 2,
+            "episodeNumber": 3,
+            "airDate": "2024-01-01",
+            "monitored": True,
+            "hasFile": False,
+            "runtime": 45,
+            "overview": "An overview.",
+        }
+        with_envelope = _SUMMARY_RENDERERS[("sonarr", "wanted")](
+            [{**flat_row, "series": {"title": "Severance"}}]
+        )[0]
+        without_envelope = _SUMMARY_RENDERERS[("sonarr", "wanted")](
+            [dict(flat_row)]
+        )[0]
+        self.assertEqual(
+            self._flat(with_envelope, self._EPISODE_FLAT_KEYS),
+            {
+                "title": "Pilot",
+                "seasonNumber": 2,
+                "episodeNumber": 3,
+                "airDate": "2024-01-01",
+                "monitored": True,
+                "hasFile": False,
+                "runtime": "0h 45m",
+                "overview": "An overview.",
+            },
+        )
+        self.assertEqual(
+            self._flat(with_envelope, self._EPISODE_FLAT_KEYS),
+            self._flat(without_envelope, self._EPISODE_FLAT_KEYS),
+        )
+        self.assertEqual(with_envelope["series.title"], "Severance")
+        self.assertIsNone(without_envelope["series.title"])
+
+    def test_calendar_flat_fields_survive_alongside_the_envelope(self) -> None:
+        flat_row = {
+            "title": "Pilot",
+            "seasonNumber": 2,
+            "episodeNumber": 3,
+            "airDate": "2024-01-01",
+            "monitored": True,
+            "hasFile": False,
+            "runtime": 45,
+            "overview": "An overview.",
+        }
+        with_envelope = _SUMMARY_RENDERERS[("sonarr", "calendar")](
+            [{**flat_row, "series": {"title": "Severance"}}]
+        )[0]
+        without_envelope = _SUMMARY_RENDERERS[("sonarr", "calendar")](
+            [dict(flat_row)]
+        )[0]
+        self.assertEqual(
+            self._flat(with_envelope, self._EPISODE_FLAT_KEYS),
+            self._flat(without_envelope, self._EPISODE_FLAT_KEYS),
+        )
+        self.assertEqual(
+            self._flat(with_envelope, self._EPISODE_FLAT_KEYS),
+            {
+                "title": "Pilot",
+                "seasonNumber": 2,
+                "episodeNumber": 3,
+                "airDate": "2024-01-01",
+                "monitored": True,
+                "hasFile": False,
+                "runtime": "0h 45m",
+                "overview": "An overview.",
+            },
+        )
+        self.assertEqual(with_envelope["series.title"], "Severance")
+        self.assertIsNone(without_envelope["series.title"])
+
+    def test_queue_flat_fields_survive_alongside_the_envelopes(self) -> None:
+        flat_row = {
+            "title": "Foo",
+            "status": "downloading",
+            "trackedDownloadStatus": "ok",
+            "size": 1000,
+            "sizeleft": 500,
+            "quality": {"quality": {"name": "WEBDL-1080p"}},
+            "timeleft": "00:30:00",
+        }
+        with_envelopes = _SUMMARY_RENDERERS[("sonarr", "queue")](
+            [
+                {
+                    **flat_row,
+                    "series": {"title": "Severance"},
+                    "episode": {"title": "The Work Is Never Done"},
+                }
+            ]
+        )[0]
+        without_envelopes = _SUMMARY_RENDERERS[("sonarr", "queue")](
+            [dict(flat_row)]
+        )[0]
+        self.assertEqual(
+            self._flat(with_envelopes, self._QUEUE_FLAT_KEYS),
+            {
+                "title": "Foo",
+                "status": "downloading",
+                "trackedDownloadStatus": "ok",
+                "size": 1000,
+                "sizeleft": 500,
+                "quality": {"quality": {"name": "WEBDL-1080p"}},
+                "timeLeft": "00:30:00",
+            },
+        )
+        self.assertEqual(
+            self._flat(with_envelopes, self._QUEUE_FLAT_KEYS),
+            self._flat(without_envelopes, self._QUEUE_FLAT_KEYS),
+        )
+        self.assertEqual(with_envelopes["series.title"], "Severance")
+        self.assertEqual(
+            with_envelopes["episode"], "The Work Is Never Done"
+        )
+        self.assertIsNone(without_envelopes["series.title"])
+        self.assertIsNone(without_envelopes["episode"])
+
+
 class TestSummarySonarrRecent(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("sonarr", "recent")]`` matches the spec.
 
