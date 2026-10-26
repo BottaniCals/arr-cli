@@ -208,6 +208,49 @@ def _patched_get_payload(payload: Any) -> Any:
     )
 
 
+def _storage_dict_payload() -> dict[str, Any]:
+    """Return a live-shaped ``/api/storage-metrics`` payload.
+
+    The upstream endpoint answers with a dict envelope: the per-volume
+    rows live under ``mounts[]`` (``path`` / ``freeSpace`` /
+    ``totalSpace``) and the aggregate under ``totals``; the sibling
+    ``instances[]`` array carries instance health, not space figures.
+    """
+    return {
+        "generatedAt": "2026-10-24T00:00:00.000Z",
+        "totals": {
+            "freeSpace": 186937963008,
+            "totalSpace": 2113929214976,
+            "usedSpace": 1926991251968,
+            "mountCount": 1,
+            "accurateMountCount": 1,
+            "accurateTotalSpace": True,
+        },
+        "mounts": [
+            {
+                "instanceId": 1,
+                "instanceType": "radarr",
+                "instanceName": "radarr",
+                "path": "/",
+                "label": "",
+                "freeSpace": 186937963008,
+                "totalSpace": 2113929214976,
+                "hasAccurateTotalSpace": True,
+            }
+        ],
+        "instances": [
+            {
+                "id": 1,
+                "name": "radarr",
+                "type": "radarr",
+                "ok": True,
+                "error": None,
+                "mountCount": 1,
+            }
+        ],
+    }
+
+
 def _patched_get_raising(exc: BaseException) -> Any:
     """Return a context manager that mocks ``transport.get`` to raise ``exc``."""
     return patch(
@@ -628,6 +671,50 @@ class TestHumanMode(unittest.TestCase):
         self.assertEqual(rendered[0]["mount"], "/data")
         self.assertEqual(rendered[0]["used"], 700)
         self.assertEqual(rendered[0]["usedPercent"], 70.0)
+
+    def test_storage_human_renders_mount_rows_for_dict_envelope(
+        self,
+    ) -> None:
+        # The live ``/api/storage-metrics`` envelope is a dict
+        # (``{totals, mounts[]}``); the ``--human`` table must show
+        # one row per volume plus the upstream totals row -- never
+        # ``(empty list)``.
+        cfg = _service_config()
+        args = _namespace(human=True, command="storage")
+        payload = _storage_dict_payload()
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_storage, args, cfg)
+        self.assertNotIn("(empty list)", output)
+        self.assertIn("(totals)", output)
+        self.assertIn("/", output)
+        lines = output.strip().splitlines()
+        self.assertGreaterEqual(len(lines), 4)
+        self.assertEqual(
+            lines[0].split(),
+            ["mount", "used", "free", "total", "usedPercent"],
+        )
+
+    def test_storage_default_emits_mount_rows_for_dict_envelope(
+        self,
+    ) -> None:
+        # The default-mode JSON summary of the dict envelope is the
+        # curated per-volume rows (plus the totals row), not the empty
+        # list the legacy list-only renderer produced.
+        cfg = _service_config()
+        args = _namespace(command="storage")
+        payload = _storage_dict_payload()
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_storage, args, cfg)
+        rendered = json.loads(output)
+        self.assertEqual(len(rendered), 2)
+        self.assertEqual(rendered[0]["mount"], "(totals)")
+        self.assertEqual(rendered[0]["used"], 1926991251968)
+        self.assertEqual(rendered[0]["free"], 186937963008)
+        self.assertEqual(rendered[0]["total"], 2113929214976)
+        self.assertEqual(rendered[0]["usedPercent"], 91.2)
+        self.assertEqual(rendered[1]["mount"], "/")
+        self.assertEqual(rendered[1]["used"], 1926991251968)
+        self.assertEqual(rendered[1]["usedPercent"], 91.2)
 
     def test_storage_columns_match_summary_keys(self) -> None:
         # US-2.5: the per-handler ``columns`` list mirrors the summary
