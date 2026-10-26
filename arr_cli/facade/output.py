@@ -765,17 +765,33 @@ def _format_runtime_minutes_whole(value: Any) -> str | None:
 
 
 def _format_episode_progress(item: Any) -> str | None:
-    """Format ``statistics.episodeFileCount / statistics.episodeCount`` as ``"<file>/<total>"``.
+    """Format ``statistics.episodeFileCount / statistics.totalEpisodeCount`` as ``"<file>/<total>"``.
 
-    Used by the Sonarr ``series`` and ``series/lookup`` ``statistics``
-    projections so the operator can scan a library row and see, at a
-    glance, how many episodes have been imported out of the total
-    (the audit-asked cell). Sonarr's upstream ``statistics``
-    envelope is a nested ``Mapping``; the helper walks it
-    defensively so a future Sonarr release that omits either count
-    (e.g. a ``/series/lookup`` candidate row that did not finish
-    linking) renders ``<null>`` instead of a misleading ``"0/0"`` or
-    ``"0/undefined"``.
+    Used by the Sonarr ``series``, ``series/lookup`` and ``series/<id>``
+    ``statistics`` projections so the operator can scan a library row
+    and see, at a glance, how many episodes have been imported out of
+    the series total (the audit-asked cell).
+
+    The denominator is ``totalEpisodeCount`` -- the number of episodes
+    the series knows about. It is deliberately *not* ``episodeCount``:
+    upstream counts ``episodeCount`` as the monitored-and-aired (or
+    already-downloaded) subset, so it collapses to ``0`` on an
+    unmonitored library series while ``totalEpisodeCount`` still holds
+    the real total.
+
+    A zero denominator means no episode total is known. That is the
+    shape upstream ``/api/v3/series/lookup`` returns for a candidate
+    that is not in the library yet (the whole statistics envelope is
+    zeroed), so the helper returns ``None`` and the human renderer
+    prints ``<null>`` instead of a misleading ``"0/0"``. The helper
+    returns the Python value ``None`` -- never the literal ``"<null>"``
+    string -- so the default-mode JSON summary keeps ``"statistics":
+    null``.
+
+    Sonarr's upstream ``statistics`` envelope is a nested
+    ``Mapping``; the helper walks it defensively so a future Sonarr
+    release that omits either count renders ``<null>`` instead of a
+    misleading ``"0/0"`` or ``"0/undefined"``.
 
     The defensive contract mirrors :func:`_format_runtime_minutes_whole`:
     ``bool`` is checked first because ``bool`` is a subclass of
@@ -788,16 +804,18 @@ def _format_episode_progress(item: Any) -> str | None:
     """
     if not isinstance(item, Mapping):
         return None
-    file_count = item.get("statistics")
-    if not isinstance(file_count, Mapping):
+    statistics = item.get("statistics")
+    if not isinstance(statistics, Mapping):
         return None
-    file_count = file_count.get("episodeFileCount")
-    total_count = item["statistics"].get("episodeCount")
+    file_count = statistics.get("episodeFileCount")
+    total_count = statistics.get("totalEpisodeCount")
     for count in (file_count, total_count):
         if isinstance(count, bool) or not isinstance(count, (int, float)):
             return None
         if count < 0:
             return None
+    if int(total_count) == 0:
+        return None
     return f"{int(file_count)}/{int(total_count)}"
 
 

@@ -56,7 +56,7 @@ within the pre-1.0 contract documented in `README.md`.
   `status`; `sonarr series` (library list) adds `statistics`,
   `genres`, `firstAired`, and `lastAired`. The new
   `_format_episode_progress` helper formats
-  `statistics.episodeFileCount / statistics.episodeCount` as
+  `statistics.episodeFileCount / statistics.totalEpisodeCount` as
   `"<file>/<total>"`; existing helpers `_format_runtime_minutes_whole`,
   `_truncate_overview`, and `_join_names` are reused.
 - `sonarr series <id>`: registered a new `_summary_sonarr_series_id`
@@ -194,6 +194,20 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- The Sonarr `statistics` cell (`sonarr lookup`, `sonarr series`,
+  `sonarr series <id>`) rendered a misleading `0/0` for every library
+  series: the denominator read `statistics.episodeCount`, which
+  upstream counts as the monitored-and-aired (or already-downloaded)
+  subset -- `0` for an unmonitored series -- instead of the series
+  episode total carried in `statistics.totalEpisodeCount`. The cell now
+  reads `statistics.episodeFileCount / statistics.totalEpisodeCount`
+  (e.g. `0/85` for a library series with 85 known episodes and no
+  files yet). A zero or absent denominator now renders `<null>`
+  instead of `0/0`; that is the shape upstream
+  `/api/v3/series/lookup` returns for a candidate that is not in the
+  library yet. The default-mode JSON summary keeps `"statistics": null`
+  for such a row, and the `--verbose` verbatim pass-through and the
+  exit-code contract are unchanged.
 - Several `--human` summary tables rendered `<null>` in columns
   whose values do exist upstream; the projector read a key the
   service never sends.
