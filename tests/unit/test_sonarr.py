@@ -1450,7 +1450,7 @@ class TestMainEntryPoint(unittest.TestCase):
                 "year": 2015,
                 "tvdbId": 38058,
                 "status": "continuing",
-                "statistics": {"episodeFileCount": 0, "episodeCount": 6},
+                "statistics": {"episodeFileCount": 0, "totalEpisodeCount": 6},
                 "overview": "An overview.",
             }
         ]
@@ -1959,11 +1959,33 @@ class TestAuditCellRender(unittest.TestCase):
         payload = {
             "title": "X",
             "year": 2020,
-            "statistics": {"episodeFileCount": 42, "episodeCount": 85},
+            "statistics": {"episodeFileCount": 42, "totalEpisodeCount": 85},
         }
         with _patched_get_payload(payload):
             output = _capture_stdout(cmd_series, args, cfg)
         self.assertIn("statistics: 42/85", output)
+
+    def test_series_list_human_statistics_renders_0_over_85(self) -> None:
+        # Library-list row: upstream ``episodeCount`` counts only the
+        # monitored-and-aired subset (0 on an unmonitored series) while
+        # ``totalEpisodeCount`` holds the real total, so the cell reads
+        # ``0/85`` -- never the misleading ``0/0``.
+        cfg = _service_config()
+        args = _namespace(command="series", series_id=None, human=True)
+        payload = [
+            {
+                "title": "All Mankind",
+                "statistics": {
+                    "episodeFileCount": 0,
+                    "episodeCount": 0,
+                    "totalEpisodeCount": 85,
+                },
+            }
+        ]
+        with _patched_get_payload(payload):
+            output = _capture_stdout(cmd_series, args, cfg)
+        cells = _parse_human_row(output, data_index=0)
+        self.assertEqual(cells["statistics"], "0/85")
 
     def test_series_id_human_statistics_renders_null_on_missing_counts(
         self,
@@ -2134,7 +2156,7 @@ class TestSummarySonarrLookup(unittest.TestCase):
                 "tvMazeId": 210,
                 "id": None,
                 "monitored": True,
-                "statistics": {"episodeFileCount": 42, "episodeCount": 85},
+                "statistics": {"episodeFileCount": 42, "totalEpisodeCount": 85},
                 "genres": [{"name": "Sci-Fi"}],
                 "overview": "An overview.",
                 "status": "continuing",
@@ -2154,6 +2176,28 @@ class TestSummarySonarrLookup(unittest.TestCase):
         self.assertEqual(row["overview"], "An overview.")
         self.assertEqual(row["status"], "continuing")
 
+    def test_summary_sonarr_lookup_emits_none_on_zeroed_statistics(
+        self,
+    ) -> None:
+        # Upstream zeroes the whole statistics envelope for a lookup
+        # candidate that is not in the library yet; the cell degrades to
+        # ``None`` (rendered as ``<null>``) instead of ``"0/0"``.
+        from arr_cli.facade.output import _summary_sonarr_lookup
+
+        payload = [
+            {
+                "title": "Doctor Who",
+                "statistics": {
+                    "episodeFileCount": 0,
+                    "episodeCount": 0,
+                    "totalEpisodeCount": 0,
+                },
+            }
+        ]
+        rendered = _summary_sonarr_lookup(payload)
+        self.assertEqual(len(rendered), 1)
+        self.assertIsNone(rendered[0]["statistics"])
+
 
 class TestSummarySonarrSeries(unittest.TestCase):
     """``_summary_sonarr_series`` projects the library-list audit fields."""
@@ -2169,7 +2213,7 @@ class TestSummarySonarrSeries(unittest.TestCase):
                 "status": "continuing",
                 "tvdbId": 371918,
                 "seasons": [],
-                "statistics": {"episodeFileCount": 0, "episodeCount": 9},
+                "statistics": {"episodeFileCount": 0, "totalEpisodeCount": 9},
                 "genres": [{"name": "Drama"}],
                 "firstAired": "2022-02-17T00:00:00Z",
                 "lastAired": "2022-04-17T00:00:00Z",
@@ -2189,6 +2233,26 @@ class TestSummarySonarrSeries(unittest.TestCase):
         self.assertEqual(row["firstAired"], "2022-02-17T00:00:00Z")
         self.assertEqual(row["lastAired"], "2022-04-17T00:00:00Z")
 
+    def test_summary_sonarr_series_emits_none_on_zeroed_statistics(self) -> None:
+        # A zero denominator means no episode total is known; the cell
+        # degrades to ``None`` (rendered as ``<null>``) instead of
+        # ``"0/0"``.
+        from arr_cli.facade.output import _summary_sonarr_series
+
+        payload = [
+            {
+                "title": "Severance",
+                "statistics": {
+                    "episodeFileCount": 0,
+                    "episodeCount": 0,
+                    "totalEpisodeCount": 0,
+                },
+            }
+        ]
+        rendered = _summary_sonarr_series(payload)
+        self.assertEqual(len(rendered), 1)
+        self.assertIsNone(rendered[0]["statistics"])
+
 
 class TestSummarySonarrSeriesId(unittest.TestCase):
     """``_summary_sonarr_series_id`` projects the single-record audit fields."""
@@ -2202,7 +2266,7 @@ class TestSummarySonarrSeriesId(unittest.TestCase):
             "runtime": 45,
             "status": "continuing",
             "monitored": True,
-            "statistics": {"episodeFileCount": 42, "episodeCount": 85},
+            "statistics": {"episodeFileCount": 42, "totalEpisodeCount": 85},
             "genres": [{"name": "Drama"}],
             "firstAired": "2022-02-17T00:00:00Z",
             "lastAired": "2022-04-17T00:00:00Z",
@@ -2228,13 +2292,32 @@ class TestSummarySonarrSeriesId(unittest.TestCase):
             {
                 "title": "Severance",
                 "year": 2022,
-                "statistics": {"episodeFileCount": 1, "episodeCount": 2},
+                "statistics": {"episodeFileCount": 1, "totalEpisodeCount": 2},
             }
         ]
         rendered = _summary_sonarr_series_id(payload)
         self.assertEqual(rendered["title"], "Severance")
         self.assertEqual(rendered["year"], 2022)
         self.assertEqual(rendered["statistics"], "1/2")
+
+    def test_summary_sonarr_series_id_emits_none_on_zeroed_statistics(
+        self,
+    ) -> None:
+        # A zero denominator means no episode total is known; the cell
+        # degrades to ``None`` (rendered as ``<null>``) instead of
+        # ``"0/0"``.
+        from arr_cli.facade.output import _summary_sonarr_series_id
+
+        payload = {
+            "title": "Severance",
+            "statistics": {
+                "episodeFileCount": 0,
+                "episodeCount": 0,
+                "totalEpisodeCount": 0,
+            },
+        }
+        rendered = _summary_sonarr_series_id(payload)
+        self.assertIsNone(rendered["statistics"])
 
     def test_summary_sonarr_series_id_empty_list_returns_empty_dict(
         self,
@@ -2271,11 +2354,51 @@ class TestFormatEpisodeProgress(unittest.TestCase):
                 {
                     "statistics": {
                         "episodeFileCount": 42,
-                        "episodeCount": 85,
+                        "totalEpisodeCount": 85,
                     }
                 }
             ),
             "42/85",
+        )
+
+    def test_format_episode_progress_returns_0_over_85_on_unmonitored_series(
+        self,
+    ) -> None:
+        # Live library shape: upstream ``episodeCount`` counts only the
+        # monitored-and-aired subset, so it is ``0`` for an unmonitored
+        # series while ``totalEpisodeCount`` holds the real total. The
+        # denominator is the latter, so the cell reads ``0/85`` -- not
+        # the misleading ``0/0`` the old contract produced.
+        self.assertEqual(
+            self._format(
+                {
+                    "statistics": {
+                        "seasonCount": 3,
+                        "episodeFileCount": 0,
+                        "episodeCount": 0,
+                        "totalEpisodeCount": 85,
+                    }
+                }
+            ),
+            "0/85",
+        )
+
+    def test_format_episode_progress_returns_none_on_zero_total_count(
+        self,
+    ) -> None:
+        # The upstream ``/api/v3/series/lookup`` envelope is zeroed for a
+        # candidate that is not in the library yet; a zero denominator
+        # means "no episode total known" and degrades to ``<null>``.
+        self.assertIsNone(
+            self._format(
+                {
+                    "statistics": {
+                        "episodeFileCount": 0,
+                        "episodeCount": 0,
+                        "totalEpisodeCount": 0,
+                    }
+                }
+            ),
         )
 
     def test_format_episode_progress_returns_none_on_missing_file_count(
@@ -2283,7 +2406,7 @@ class TestFormatEpisodeProgress(unittest.TestCase):
     ) -> None:
         self.assertIsNone(
             self._format(
-                {"statistics": {"episodeCount": 85}}
+                {"statistics": {"totalEpisodeCount": 85}}
             ),
         )
 
@@ -2308,7 +2431,7 @@ class TestFormatEpisodeProgress(unittest.TestCase):
         # against ``True`` / ``False`` masquerading as numeric counts.
         self.assertIsNone(
             self._format(
-                {"statistics": {"episodeFileCount": True, "episodeCount": 5}}
+                {"statistics": {"episodeFileCount": True, "totalEpisodeCount": 5}}
             ),
         )
 
@@ -2320,7 +2443,7 @@ class TestFormatEpisodeProgress(unittest.TestCase):
                 {
                     "statistics": {
                         "episodeFileCount": -1,
-                        "episodeCount": 5,
+                        "totalEpisodeCount": 5,
                     }
                 }
             ),
@@ -2334,7 +2457,7 @@ class TestFormatEpisodeProgress(unittest.TestCase):
                 {
                     "statistics": {
                         "episodeFileCount": "42",
-                        "episodeCount": 5,
+                        "totalEpisodeCount": 5,
                     }
                 }
             ),
