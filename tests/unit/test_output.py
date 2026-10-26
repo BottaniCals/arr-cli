@@ -5935,10 +5935,10 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "Type": "Episode",
                     "ProductionYear": 2020,
                     "SeriesName": "Show",
-"UserData.PlaybackPositionTicks": 100,
-                "UserData.PlayCount": 2,
-                "PercentPlayed": "0.0%",
-                "RunTimeTicks": None,
+                    "UserData.PlaybackPositionTicks": 100,
+                    "UserData.PlayCount": 2,
+                    "PercentPlayed": "0.0%",
+                    "RunTimeTicks": None,
                 }
             ],
         )
