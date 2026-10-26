@@ -2848,30 +2848,178 @@ def _summary_maintainerr_pending(payload: Any) -> list[dict[str, Any]]:
     ]
 
 
+#: Sentinel ``mount`` cell of the upstream ``totals`` aggregate row
+#: emitted by :func:`_summary_maintainerr_storage`. The label makes
+#: the aggregate unambiguous in both the ``--human`` table and the
+#: default-mode JSON summary (one shape, two renderings).
+_STORAGE_TOTALS_LABEL = "(totals)"
+
+#: Legacy per-volume keys the renderer recognises on a dict envelope's
+#: ``instances[]`` entries. The live upstream ``instances[]`` array
+#: carries instance *health* (``id`` / ``name`` / ``type`` / ``ok`` /
+#: ``error`` / ``mountCount``) and none of these keys, so instance
+#: health can never be mistaken for a volume row.
+_STORAGE_LEGACY_KEYS = ("mount", "used", "free", "total", "usedPercent")
+
+
+def _storage_used(total: Any, free: Any) -> int | float | None:
+    """Return the used bytes implied by ``total`` and ``free``.
+
+    Returns ``None`` when the capacity is unknown -- a non-numeric
+    field, or a ``total`` of ``0`` (upstream reports ``totalSpace: 0``
+    for mounts whose capacity it could not determine) -- so an
+    unknown capacity never renders as a misleading ``0`` used.
+    """
+    if isinstance(total, bool) or isinstance(free, bool):
+        return None
+    if not isinstance(total, (int, float)) or not isinstance(
+        free, (int, float)
+    ):
+        return None
+    if total <= 0:
+        return None
+    return max(total - free, 0)
+
+
+def _storage_percent(used: Any, total: Any) -> float | None:
+    """Return the used percentage, or ``None`` when it is unknowable."""
+    if isinstance(used, bool) or isinstance(total, bool):
+        return None
+    if not isinstance(used, (int, float)) or not isinstance(
+        total, (int, float)
+    ):
+        return None
+    if total <= 0:
+        return None
+    return round(used / total * 100, 1)
+
+
+def _storage_legacy_row(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Project a legacy per-volume mapping onto the summary row shape."""
+    return {
+        "mount": _safe_get(item, "mount", default=None),
+        "used": _safe_get(item, "used", default=0),
+        "free": _safe_get(item, "free", default=0),
+        "total": _safe_get(item, "total", default=0),
+        "usedPercent": _safe_get(item, "usedPercent", default=0.0),
+    }
+
+
+def _storage_volume_row(mount: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one upstream ``mounts[]`` entry onto a summary row.
+
+    The upstream mount object carries ``path`` / ``freeSpace`` /
+    ``totalSpace`` but no used figure, so ``used`` is derived as
+    ``totalSpace - freeSpace``. A mount flagged
+    ``hasAccurateTotalSpace: false`` has an unknown capacity, so its
+    ``used`` cell stays ``None`` rather than rendering a misleading
+    ``0``.
+    """
+    path = _safe_get(mount, "path", default=None)
+    label = _safe_get(mount, "label", default=None)
+    free = _safe_get(mount, "freeSpace", default=None)
+    total = _safe_get(mount, "totalSpace", default=None)
+    accurate = _safe_get(mount, "hasAccurateTotalSpace", default=None)
+    used: Any = None
+    if accurate is not False:
+        used = _storage_used(total, free)
+    return {
+        "mount": path or label or None,
+        "used": used,
+        "free": free,
+        "total": total,
+        "usedPercent": _storage_percent(used, total),
+    }
+
+
+def _storage_totals_row(totals: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the upstream ``totals`` aggregate onto a summary row.
+
+    The aggregate is surfaced verbatim: upstream deduplicates shared
+    mounts across instances and only sums the capacity of mounts whose
+    capacity is accurate, so the total is **not** the arithmetic sum
+    of the per-volume rows and must not be recomputed from them.
+    """
+    free = _safe_get(totals, "freeSpace", default=None)
+    total = _safe_get(totals, "totalSpace", default=None)
+    used = _safe_get(totals, "usedSpace", default=None)
+    if used is None:
+        used = _storage_used(total, free)
+    return {
+        "mount": _STORAGE_TOTALS_LABEL,
+        "used": used,
+        "free": free,
+        "total": total,
+        "usedPercent": _storage_percent(used, total),
+    }
+
+
+def _storage_envelope_rows(
+    payload: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    """Project the live dict envelope onto the summary row shape.
+
+    One row per ``mounts[]`` entry, plus the ``"(totals)"`` row when
+    the payload carries a ``totals`` mapping. The totals row is
+    prepended because :func:`human` truncates from the tail
+    (``items[:limit]``) -- a trailing totals row could be dropped by
+    ``--limit``, a leading one cannot.
+    """
+    rows: list[dict[str, Any]] = []
+    mounts = payload.get("mounts")
+    if isinstance(mounts, list):
+        for mount in mounts:
+            if not isinstance(mount, Mapping):
+                continue
+            rows.append(_storage_volume_row(mount))
+    if not rows:
+        instances = payload.get("instances")
+        if isinstance(instances, list):
+            for instance in instances:
+                if not isinstance(instance, Mapping):
+                    continue
+                if not any(
+                    key in instance for key in _STORAGE_LEGACY_KEYS
+                ):
+                    continue
+                rows.append(_storage_legacy_row(instance))
+    totals = payload.get("totals")
+    if isinstance(totals, Mapping):
+        rows.insert(0, _storage_totals_row(totals))
+    return rows
+
+
 def _summary_maintainerr_storage(payload: Any) -> list[dict[str, Any]]:
     """Render a Maintainerr ``storage`` payload as the curated summary.
 
-    ``GET /api/storage-metrics`` returns the per-volume / per-library
-    storage metrics Maintainerr reports. On newer Maintainerr
-    releases the envelope nests the actual numbers under an
-    ``instances[]`` array (one entry per volume / partition); on
-    older releases the parent item carries the ``mount`` / ``used``
-    / ``free`` / ``total`` / ``usedPercent`` keys verbatim. The
-    renderer flattens both shapes onto one row per volume so the
-    ``--human`` table shows the audit-asked per-instance numbers
-    (rather than the literal ``<N items>`` / ``<N keys>`` token
-    rendering that the pre-change summary emitted).
+    ``GET /api/storage-metrics`` returns a **dict** envelope of the
+    shape ``{generatedAt, totals: {...}, mounts: [...], instances:
+    [...], ...}``. The per-volume rows live under ``mounts[]`` and
+    carry ``path`` / ``freeSpace`` / ``totalSpace`` (no used figure
+    -- it is derived per mount as ``totalSpace - freeSpace``); the
+    sibling ``totals`` block carries the upstream aggregate
+    (``freeSpace`` / ``totalSpace`` / ``usedSpace``). The renderer
+    emits one row per volume plus a ``"(totals)"`` summary row
+    carrying the upstream aggregate verbatim -- the aggregate is
+    deduplicated upstream and only counts mounts whose capacity is
+    accurate, so it is not the arithmetic sum of the rows.
 
-    The defensive walk mirrors the other list-shape renderers: a
-    non-list payload (e.g. an envelope mapping without the nested
-    array) returns ``[]`` so the human renderer prints
-    ``(empty list)`` instead of crashing. Items whose ``instances``
-    is a non-empty list emit one row per instance; items with no
-    ``instances`` array (the legacy shape) emit a single row from
-    the parent keys so well-formed payloads still render. Cells
-    default to ``None`` / ``0`` / ``""`` per the per-type contract
-    so missing fields render as ``<null>`` rather than crashing.
+    The upstream ``instances[]`` array is instance *health*
+    (``id`` / ``name`` / ``type`` / ``ok`` / ``error`` /
+    ``mountCount``) and carries no space figures; it is therefore
+    never a row source. A dict envelope without ``mounts[]`` falls
+    back to the legacy ``instances[]`` rows only when the instance
+    mapping actually carries one of the legacy space keys
+    (``mount`` / ``used`` / ``free`` / ``total`` / ``usedPercent``).
+
+    The legacy **list** envelope is still tolerated unchanged: items
+    whose ``instances`` is a non-empty list emit one row per
+    instance, items with no ``instances`` array emit a single row
+    from the parent keys. Missing fields default to ``None`` so the
+    renderer prints ``<null>`` rather than crashing.
     """
+    if isinstance(payload, Mapping):
+        return _storage_envelope_rows(payload)
     if not isinstance(payload, list):
         return []
     rows: list[dict[str, Any]] = []
@@ -2883,29 +3031,9 @@ def _summary_maintainerr_storage(payload: Any) -> list[dict[str, Any]]:
             for instance in instances:
                 if not isinstance(instance, Mapping):
                     continue
-                rows.append(
-                    {
-                        "mount": _safe_get(instance, "mount", default=None),
-                        "used": _safe_get(instance, "used", default=0),
-                        "free": _safe_get(instance, "free", default=0),
-                        "total": _safe_get(instance, "total", default=0),
-                        "usedPercent": _safe_get(
-                            instance, "usedPercent", default=0.0
-                        ),
-                    }
-                )
+                rows.append(_storage_legacy_row(instance))
         else:
-            rows.append(
-                {
-                    "mount": _safe_get(item, "mount", default=None),
-                    "used": _safe_get(item, "used", default=0),
-                    "free": _safe_get(item, "free", default=0),
-                    "total": _safe_get(item, "total", default=0),
-                    "usedPercent": _safe_get(
-                        item, "usedPercent", default=0.0
-                    ),
-                }
-            )
+            rows.append(_storage_legacy_row(item))
     return rows
 
 

@@ -220,6 +220,25 @@ within the pre-1.0 contract documented in `README.md`.
   include flags still renders a well-formed table. The exit-code
   contract and the `--verbose` verbatim-payload behaviour are
   unchanged.
+- `maintainerr --human storage` rendered `(empty list)` instead of the
+  storage table. The summary renderer only accepted the legacy list
+  envelope, while the live `GET /api/storage-metrics` endpoint
+  answers with a dict envelope (`{totals, mounts[], instances[], ...}`)
+  — so the renderer's type guard turned a payload full of volumes
+  into an empty list. The renderer now understands the dict envelope:
+  one row per `mounts[]` entry (`mount` = the mount `path`, `free` =
+  `freeSpace`, `total` = `totalSpace`, `used` = `totalSpace -
+  freeSpace`, `usedPercent` derived from those two) plus a
+  `(totals)` row carrying the upstream `totals` aggregate verbatim
+  (upstream deduplicates shared mounts, so the aggregate is not the
+  sum of the rows). The legacy list envelope stays tolerated, missing
+  fields still render as `<null>`, and a mount whose capacity upstream
+  reports as inaccurate no longer renders a misleading `0` used.
+  **Behaviour change for consumers:** the default (non-`--verbose`)
+  JSON summary of `maintainerr storage` changes from `[]` to the
+  curated rows; the row keys (`mount`, `used`, `free`, `total`,
+  `usedPercent`) are unchanged. The `--verbose` verbatim pass-through
+  and the exit-code contract are unchanged.
 
 ## [0.1.0]
 

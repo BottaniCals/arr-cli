@@ -220,10 +220,14 @@ def cmd_pending(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 def cmd_storage(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Maintainerr ``storage`` -- storage metrics (REQ-9 AC3).
 
-    Returns the per-volume / per-library storage metrics Maintainerr
-    reports. Like ``pending`` the response shape is service-defined;
-    we surface the most common keys and let ``--human`` truncate the
-    rest.
+    ``GET /api/storage-metrics`` answers with a dict envelope of the
+    shape ``{totals: {...}, mounts: [...]}``: the per-volume rows live
+    under ``mounts[]`` and the upstream aggregate under ``totals``. The
+    facade's summary renderer projects one row per volume plus the
+    upstream totals row, so the ``--human`` table shows the mount
+    path, used, free, total and used-percent of every volume; the
+    ``columns`` literal below mirrors the renderer's row keys
+    left-to-right.
     """
     payload = _get(
         "/api/storage-metrics",

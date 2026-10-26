@@ -5267,7 +5267,15 @@ class TestSummaryMaintainerrPending(unittest.TestCase):
 
 
 class TestSummaryMaintainerrStorage(unittest.TestCase):
-    """``_SUMMARY_RENDERERS[("maintainerr", "storage")]`` matches the spec."""
+    """``_SUMMARY_RENDERERS[("maintainerr", "storage")]`` matches the spec.
+
+    ``GET /api/storage-metrics`` answers with a dict envelope
+    (``{totals, mounts[], instances[], ...}``), not with the legacy
+    list envelope the renderer originally assumed -- the mismatch made
+    ``maintainerr --human storage`` print ``(empty list)``. Both
+    envelopes are therefore covered here: the live dict envelope
+    (``totals`` + ``mounts[]``) and the tolerated legacy list shapes.
+    """
 
     def _renderer(self) -> Any:
         return _SUMMARY_RENDERERS[("maintainerr", "storage")]
@@ -5397,6 +5405,232 @@ class TestSummaryMaintainerrStorage(unittest.TestCase):
         self.assertEqual(row["free"], 0)
         self.assertEqual(row["total"], 0)
         self.assertEqual(row["usedPercent"], 0.0)
+
+    @staticmethod
+    def _live_payload() -> dict[str, Any]:
+        """Return a live-shaped ``/api/storage-metrics`` payload."""
+        return {
+            "generatedAt": "2026-10-24T00:00:00.000Z",
+            "totals": {
+                "freeSpace": 186937963008,
+                "totalSpace": 2113929214976,
+                "usedSpace": 1926991251968,
+                "mountCount": 1,
+                "accurateMountCount": 1,
+                "accurateTotalSpace": True,
+            },
+            "mounts": [
+                {
+                    "instanceId": 1,
+                    "instanceType": "radarr",
+                    "instanceName": "radarr",
+                    "path": "/",
+                    "label": "",
+                    "freeSpace": 186937963008,
+                    "totalSpace": 2113929214976,
+                    "hasAccurateTotalSpace": True,
+                }
+            ],
+            "instances": [
+                {
+                    "id": 1,
+                    "name": "radarr",
+                    "type": "radarr",
+                    "ok": True,
+                    "error": None,
+                    "mountCount": 1,
+                }
+            ],
+        }
+
+    def test_dict_envelope_emits_one_row_per_mount_plus_totals(
+        self,
+    ) -> None:
+        # The acceptance case: the live dict envelope yields one row
+        # per volume (``path`` / derived ``used`` / ``freeSpace`` /
+        # ``totalSpace`` / derived ``usedPercent``) plus the
+        # ``"(totals)"`` row carrying the upstream aggregate.
+        rendered = self._renderer()(self._live_payload())
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "mount": "(totals)",
+                    "used": 1926991251968,
+                    "free": 186937963008,
+                    "total": 2113929214976,
+                    "usedPercent": 91.2,
+                },
+                {
+                    "mount": "/",
+                    "used": 1926991251968,
+                    "free": 186937963008,
+                    "total": 2113929214976,
+                    "usedPercent": 91.2,
+                },
+            ],
+        )
+
+    def test_totals_without_mounts_emits_totals_row_only(self) -> None:
+        # A dict envelope with a ``totals`` block but no ``mounts[]``
+        # array still surfaces the aggregate -- exactly one row, no
+        # crash.
+        payload = {"totals": self._live_payload()["totals"]}
+        rendered = self._renderer()(payload)
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["mount"], "(totals)")
+        self.assertEqual(rendered[0]["used"], 1926991251968)
+        self.assertEqual(rendered[0]["free"], 186937963008)
+        self.assertEqual(rendered[0]["total"], 2113929214976)
+        self.assertEqual(rendered[0]["usedPercent"], 91.2)
+
+    def test_empty_mounts_still_emits_totals_row(self) -> None:
+        # An empty ``mounts[]`` array is a legitimate "no volumes"
+        # answer; the upstream aggregate is still surfaced.
+        payload = self._live_payload()
+        payload["mounts"] = []
+        rendered = self._renderer()(payload)
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0]["mount"], "(totals)")
+
+    def test_dict_without_totals_or_mounts_returns_empty_list(self) -> None:
+        # Neither ``totals`` nor ``mounts[]``: the honest "no data"
+        # answer, not a crash.
+        self.assertEqual(self._renderer()({}), [])
+        self.assertEqual(self._renderer()({"generatedAt": "x"}), [])
+
+    def test_instance_health_array_is_not_a_row_source(self) -> None:
+        # The live ``instances[]`` array carries instance health
+        # (``id`` / ``name`` / ``type`` / ``ok`` / ``error`` /
+        # ``mountCount``) and no space figures -- it must never be
+        # mistaken for a list of volumes.
+        rendered = self._renderer()(self._live_payload())
+        self.assertEqual(
+            [row["mount"] for row in rendered],
+            ["(totals)", "/"],
+        )
+        health_only = self._renderer()(
+            {
+                "instances": [
+                    {
+                        "id": 1,
+                        "name": "radarr",
+                        "type": "radarr",
+                        "ok": True,
+                        "error": None,
+                        "mountCount": 1,
+                    }
+                ]
+            }
+        )
+        self.assertEqual(health_only, [])
+
+    def test_legacy_instances_rows_accepted_on_dict_envelope(
+        self,
+    ) -> None:
+        # Legacy tolerance: a dict envelope without ``mounts[]`` but
+        # with an ``instances[]`` array that does carry the legacy
+        # space keys still renders one row per instance.
+        rendered = self._renderer()(
+            {
+                "instances": [
+                    {
+                        "mount": "/data",
+                        "used": 700,
+                        "free": 300,
+                        "total": 1000,
+                        "usedPercent": 70.0,
+                    }
+                ]
+            }
+        )
+        self.assertEqual(
+            rendered,
+            [
+                {
+                    "mount": "/data",
+                    "used": 700,
+                    "free": 300,
+                    "total": 1000,
+                    "usedPercent": 70.0,
+                }
+            ],
+        )
+
+    def test_missing_mount_fields_render_as_null(self) -> None:
+        # A mount without ``freeSpace`` / ``totalSpace`` yields
+        # ``None`` cells (the ``<null>`` contract) rather than a
+        # misleading ``0``.
+        rendered = self._renderer()(
+            {"mounts": [{"path": "/data"}]}
+        )
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        self.assertEqual(row["mount"], "/data")
+        self.assertIsNone(row["used"])
+        self.assertIsNone(row["free"])
+        self.assertIsNone(row["total"])
+        self.assertIsNone(row["usedPercent"])
+
+    def test_inaccurate_total_space_yields_null_used(self) -> None:
+        # A mount flagged ``hasAccurateTotalSpace: false`` has an
+        # unknown capacity: ``used`` stays ``None`` instead of
+        # rendering a misleading ``0``.
+        rendered = self._renderer()(
+            {
+                "mounts": [
+                    {
+                        "path": "/network",
+                        "freeSpace": 300,
+                        "totalSpace": 1000,
+                        "hasAccurateTotalSpace": False,
+                    }
+                ]
+            }
+        )
+        self.assertEqual(len(rendered), 1)
+        row = rendered[0]
+        self.assertEqual(row["mount"], "/network")
+        self.assertIsNone(row["used"])
+        self.assertIsNone(row["usedPercent"])
+        self.assertEqual(row["free"], 300)
+        self.assertEqual(row["total"], 1000)
+
+    def test_mount_label_used_when_path_missing(self) -> None:
+        # ``path`` is the mount identifier; ``label`` is the
+        # fallback when the upstream mount carries no path.
+        rendered = self._renderer()(
+            {"mounts": [{"label": "media", "freeSpace": 300,
+                         "totalSpace": 1000}]}
+        )
+        self.assertEqual(rendered[0]["mount"], "media")
+        self.assertEqual(rendered[0]["used"], 700)
+
+    def test_human_rendering_shows_rows_not_empty_list(self) -> None:
+        # The end-to-end symptom: the ``--human`` table renders one
+        # row per volume plus the totals row -- never ``(empty list)``.
+        rendered = human(
+            self._renderer()(self._live_payload()),
+            columns=["mount", "used", "free", "total", "usedPercent"],
+        )
+        self.assertNotIn("(empty list)", rendered)
+        lines = rendered.splitlines()
+        self.assertGreaterEqual(len(lines), 4)
+        self.assertEqual(
+            lines[0].split(),
+            ["mount", "used", "free", "total", "usedPercent"],
+        )
+        self.assertIn("(totals)", rendered)
+        self.assertIn("/", rendered)
+
+    def test_human_rendering_shows_null_for_missing_fields(self) -> None:
+        # A missing field renders as ``<null>`` in the table.
+        rendered = human(
+            self._renderer()({"mounts": [{"path": "/data"}]}),
+            columns=["mount", "used", "free", "total", "usedPercent"],
+        )
+        self.assertIn("<null>", rendered)
+        self.assertNotIn("(empty list)", rendered)
 
 
 class TestSummaryMaintainerrHealth(unittest.TestCase):
