@@ -1759,9 +1759,10 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
     the historical projection nested the identity behind ``media.*``
     keys while :func:`_summary_seerr_available` returned flat identity
     fields at the top level, so the two seerr read commands disagreed
-    on what shape that projection took. The fix removes the
-    asymmetry so the operator has one mental model across both
-    commands (same identity field set, same flat column names).
+    on what shape that projection took. Both now project the same
+    flat identity field set under the same key names -- ``id``,
+    ``mediaType``, ``tmdbId``, ``tvdbIdRef``, ``externalServiceSlug``
+    -- so the operator has one mental model across both commands.
 
     The upstream TVDB id is projected under the ``tvdbIdRef`` key
     (was ``tvdbId``). ``seerr tv`` is keyed by the **TMDB** id only,
@@ -1771,7 +1772,8 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
     series.``. The ``Ref`` suffix marks the cell as a reference-only
     identifier. The token is 9 chars, so it still renders in full
     under the ten-column ``--human`` width budget (~12 chars per
-    column).
+    column). :func:`_summary_seerr_available` publishes the same
+    ``tvdbIdRef`` key for the same upstream field.
 
     The request-level fields (``type``, ``status``, ``createdAt``)
     stay top-level alongside the lifted identity. ``status`` is the
@@ -1833,9 +1835,9 @@ def _summary_seerr_requests(payload: Any) -> list[dict[str, Any]]:
         # Same field set as :func:`_summary_seerr_available` -- the
         # only difference is that ``status`` here is the request
         # status (from the outer record) rather than the media
-        # status (which only ``seerr available`` surfaces), and that
-        # the upstream TVDB id is published under the ``tvdbIdRef``
-        # key (see the docstring for the rationale).
+        # status (which only ``seerr available`` surfaces). Both
+        # publish the upstream TVDB id under the ``tvdbIdRef`` key
+        # (see the docstring for the rationale).
         media = item.get("media")
         if isinstance(media, Mapping):
             id_ = _safe_get(media, "id", default=None)
@@ -1964,8 +1966,20 @@ def _summary_seerr_available(payload: Any) -> list[dict[str, Any]]:
     ``title`` field, which made the old client-side substring filter
     a guaranteed no-op (every row was dropped). Operators who need a
     friendly title can resolve it via ``seerr search <query>`` or
-    look up ``tmdbId`` / ``tvdbId`` externally; the curated summary
+    look up ``tmdbId`` / ``tvdbIdRef`` externally; the curated summary
     here stays as the canonical "what is in my library" answer.
+
+    The upstream TVDB id is projected under the ``tvdbIdRef`` key
+    (was ``tvdbId``), the same key :func:`_summary_seerr_requests`
+    publishes -- so the two seerr read commands expose one identity
+    field set under one set of names. ``seerr tv`` is keyed by the
+    **TMDB** id only, so a bare ``tvdbId`` column sitting next to
+    ``tmdbId`` invited the operator to feed a TVDB id into
+    ``seerr tv`` -- which the upstream rejects with an opaque HTTP 500
+    ``Unable to retrieve series.``. The ``Ref`` suffix marks the cell
+    as a reference-only identifier. The token is 9 chars, so it still
+    renders in full under the seven-column ``--human`` width budget
+    (~17 chars per column).
 
     **AGENTS.md §1 contract (identity-only envelope):** the live
     ``/api/v1/media`` payload carries identity fields only and does
@@ -1990,7 +2004,7 @@ def _summary_seerr_available(payload: Any) -> list[dict[str, Any]]:
                 "id": _safe_get(item, "id", default=None),
                 "mediaType": _safe_get(item, "mediaType", default=None),
                 "tmdbId": _safe_get(item, "tmdbId", default=None),
-                "tvdbId": _safe_get(item, "tvdbId", default=None),
+                "tvdbIdRef": _safe_get(item, "tvdbId", default=None),
                 "externalServiceSlug": _safe_get(
                     item, "externalServiceSlug", default=None
                 ),

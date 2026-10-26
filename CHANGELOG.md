@@ -115,8 +115,8 @@ within the pre-1.0 contract documented in `README.md`.
 ### Changed
 
 - **Breaking:** the default (non-`--verbose`) JSON summary shape
-  changes for `jellyfin resume` / `jellyfin recent` and `seerr
-  requests`.
+  changes for `jellyfin resume` / `jellyfin recent`, `seerr
+  requests`, and `seerr available`.
   - The playback-progress key of `jellyfin resume` / `jellyfin
     recent` is renamed from `UserData.PlayedPercentage` to
     `PercentPlayed`, and the value is now the rounded percentage
@@ -126,13 +126,14 @@ within the pre-1.0 contract documented in `README.md`.
     to `summary["PercentPlayed"]` (a string carrying the `%` sign).
     The `--human` column header changes from `UserData.PlayedPercentage`
     to `PercentPlayed` alongside it.
-  - The TVDB id of `seerr requests` is renamed from `tvdbId` to
-    `tvdbIdRef` to mark it as a reference-only cell: `seerr tv` /
-    `seerr movie` are keyed by the TMDB id, so the TVDB id is not a
-    valid argument for them. A consumer that read
+  - The TVDB id of `seerr requests` and `seerr available` is renamed
+    from `tvdbId` to `tvdbIdRef` to mark it as a reference-only cell:
+    `seerr tv` / `seerr movie` are keyed by the TMDB id, so the TVDB
+    id is not a valid argument for them. A consumer that read
     `summary["tvdbId"]` must migrate to `summary["tvdbIdRef"]`. The
     `--human` column header changes from `tvdbId` to `tvdbIdRef`
-    alongside it.
+    alongside it, in both tables -- so the two seerr read commands
+    publish the same identity field set under the same key names.
   - The `--verbose` verbatim pass-through is unchanged, and so are the
     exit-code contract and the remaining summary keys of both
     commands.
@@ -228,15 +229,16 @@ within the pre-1.0 contract documented in `README.md`.
   for the summary-key rename.
 - `seerr tv <id>` / `seerr movie <id>` are keyed by the **TMDB** id,
   but the `seerr tv` help text advertised "TMDB/TVDB TV show id" and
-  the `seerr requests` table surfaced the upstream TVDB id under a
-  bare `tvdbId` column -- the very value the operator would then feed
-  back into `seerr tv`, where the upstream rejects it with an opaque
-  HTTP 500 `Unable to retrieve series.`. Both commands' `--help`
-  now names the TMDB id explicitly (and states that TVDB ids are not
-  accepted), the `seerr requests` column is labelled `tvdbIdRef` to
-  mark it as reference-only, and a wrong-id lookup re-raises the same
-  `HttpError` (exit code `4`, pipe-clean stdout) with a hint naming
-  the TMDB-id requirement instead of the bare upstream message.
+  the `seerr requests` and `seerr available` tables surfaced the
+  upstream TVDB id under a bare `tvdbId` column -- the very value the
+  operator would then feed back into `seerr tv`, where the upstream
+  rejects it with an opaque HTTP 500 `Unable to retrieve series.`.
+  Both commands' `--help` now names the TMDB id explicitly (and
+  states that TVDB ids are not accepted), both table columns are
+  labelled `tvdbIdRef` to mark them as reference-only, and a wrong-id
+  lookup re-raises the same `HttpError` (exit code `4`, pipe-clean
+  stdout) with a hint naming the TMDB-id requirement instead of the
+  bare upstream message.
 - The Sonarr `statistics` cell (`sonarr lookup`, `sonarr series`,
   `sonarr series <id>`) rendered a misleading `0/0` for every library
   series: the denominator read `statistics.episodeCount`, which

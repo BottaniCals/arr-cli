@@ -1466,14 +1466,14 @@ class TestCmdAvailable(unittest.TestCase):
         # rendering the envelope as a single summary row.
         self.assertEqual(len(rendered), 3)
         # The curated summary now surfaces the upstream-provided
-        # identifiers (id, tmdbId, tvdbId, externalServiceSlug,
+        # identifiers (id, tmdbId, tvdbIdRef, externalServiceSlug,
         # status, mediaAddedAt) -- no ``title`` / ``releaseDate`` /
         # ``mediaInfo`` envelope, because the upstream records do
         # not carry them on the operator's Seer instance.
         self.assertEqual(rendered[0]["id"], 1)
         self.assertEqual(rendered[0]["mediaType"], "tv")
         self.assertEqual(rendered[0]["tmdbId"], 121)
-        self.assertEqual(rendered[0]["tvdbId"], 76107)
+        self.assertEqual(rendered[0]["tvdbIdRef"], 76107)
         self.assertEqual(rendered[0]["externalServiceSlug"], "tvdb")
         self.assertEqual(rendered[0]["status"], 5)
         self.assertEqual(
@@ -1482,7 +1482,7 @@ class TestCmdAvailable(unittest.TestCase):
         # TV rows with no tvdbId surface as ``None`` rather than
         # crashing (mirrors the defensive contract of every other
         # renderer).
-        self.assertIsNone(rendered[1]["tvdbId"])
+        self.assertIsNone(rendered[1]["tvdbIdRef"])
 
     def test_cmd_available_envelope_dict_with_no_results_returns_empty(
         self,
@@ -2480,14 +2480,17 @@ class TestSeerrTmdbIdContract(unittest.TestCase):
     ``GET /api/v1/tv/{tvId}`` and ``GET /api/v1/movie/{movieId}`` are
     keyed by the **TMDB** id only. The upstream rejects a TVDB id
     with an opaque HTTP 500 ``Unable to retrieve series.`` -- and
-    the ``seerr requests`` table used to surface that very TVDB id
-    under a bare ``tvdbId`` column, right next to the chainable
-    ``tmdbId`` column. These tests pin the three defences:
+    the ``seerr requests`` / ``seerr available`` tables used to
+    surface that very TVDB id under a bare ``tvdbId`` column, right
+    next to the chainable ``tmdbId`` column. These tests pin the
+    defences:
 
     * the ``--help`` text of both commands names the TMDB id,
-    * the ``seerr requests`` table labels the TVDB cell as a
-      reference (``tvdbIdRef``) so it is not mistaken for a
-      ``seerr tv`` argument,
+    * the ``seerr requests`` and ``seerr available`` tables label
+      the TVDB cell as a reference (``tvdbIdRef``) so it is not
+      mistaken for a ``seerr tv`` argument,
+    * both seerr read commands publish the same identity field set
+      under the same key names (so the asymmetry cannot come back),
     * a wrong-id lookup surfaces a self-explanatory error (same
       :class:`HttpError` class, same exit code 4, pipe-clean stdout).
     """
@@ -2603,6 +2606,129 @@ class TestSeerrTmdbIdContract(unittest.TestCase):
         self.assertNotIn("tvdbId", header_cells)
         # The TMDB id stays the chainable column.
         self.assertIn("tmdbId", header_cells)
+
+    def test_available_human_labels_the_tvdb_column_as_reference(self) -> None:
+        """The ``seerr available`` table labels the TVDB cell ``tvdbIdRef``.
+
+        The sibling ``seerr requests`` table already did; the bare
+        ``tvdbId`` column in ``available`` was the same footgun (the
+        operator copies the value into ``seerr tv <id>`` and gets an
+        opaque HTTP 500 ``Unable to retrieve series.``). The 9-char
+        token still fits the seven-column ``--human`` width budget
+        (~17 chars per column).
+        """
+        from arr_cli.seerr import cmd_available
+
+        envelope = {
+            "pageInfo": {"pages": 1, "pageSize": 10, "results": 1, "page": 1},
+            "results": [
+                {
+                    "id": 120,
+                    "mediaType": "tv",
+                    "tmdbId": 57243,
+                    "tvdbId": 76107,
+                    "externalServiceSlug": "tvdb",
+                    "status": 5,
+                    "mediaAddedAt": "2026-09-13T00:00:00.000Z",
+                },
+            ],
+            "serviceErrors": {"radarr": [], "sonarr": []},
+        }
+        args = argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=True,
+            verbose=False,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="available",
+            query="",
+        )
+        with patch.dict(os.environ, {"COLUMNS": "120"}):
+            with patch(
+                "arr_cli.seerr.transport.get", return_value=envelope
+            ):
+                output = _capture_stdout(cmd_available, args, None)
+        header = output.splitlines()[0]
+        header_cells = header.split()
+        self.assertIn(
+            "tvdbIdRef",
+            header_cells,
+            msg=f"available header {header!r} lost the reference label",
+        )
+        # The bare token must not survive as its own column -- it is
+        # the cell the operator would feed into ``seerr tv``.
+        self.assertNotIn("tvdbId", header_cells)
+        # The TMDB id stays the chainable column.
+        self.assertIn("tmdbId", header_cells)
+
+    def test_both_seerr_read_commands_publish_the_same_identity_fields(
+        self,
+    ) -> None:
+        """``seerr requests`` and ``seerr available`` publish one identity field set.
+
+        The two renderers drifted apart once already (``requests``
+        nested the identity behind ``media.*`` keys) and again when
+        the TVDB id was renamed in one table only. Pin the shared
+        identity key names -- and the absence of the bare upstream
+        ``tvdbId`` key -- so the asymmetry cannot come back.
+        """
+        from arr_cli.facade.output import _SUMMARY_RENDERERS
+
+        identity_keys = {
+            "id",
+            "mediaType",
+            "tmdbId",
+            "tvdbIdRef",
+            "externalServiceSlug",
+        }
+        requests_row = _SUMMARY_RENDERERS[("seerr", "requests")](
+            [
+                {
+                    "type": "tv",
+                    "status": 2,
+                    "createdAt": "2026-09-13T12:55:03.000Z",
+                    "media": {
+                        "id": 120,
+                        "mediaType": "tv",
+                        "tmdbId": 57243,
+                        "tvdbId": 76107,
+                        "externalServiceSlug": "tmdb",
+                        "status": 5,
+                    },
+                },
+            ]
+        )[0]
+        available_row = _SUMMARY_RENDERERS[("seerr", "available")](
+            [
+                {
+                    "id": 120,
+                    "mediaType": "tv",
+                    "tmdbId": 57243,
+                    "tvdbId": 76107,
+                    "externalServiceSlug": "tmdb",
+                    "status": 5,
+                    "mediaAddedAt": "2026-09-13T00:00:00.000Z",
+                }
+            ]
+        )[0]
+        for row in (requests_row, available_row):
+            self.assertTrue(
+                identity_keys.issubset(row),
+                msg=f"missing identity keys: {identity_keys - set(row)}",
+            )
+            # The bare upstream key must not be published: it is the
+            # cell the operator would feed into ``seerr tv``.
+            self.assertNotIn("tvdbId", row)
+        # The rename changes the key, not the value -- the TVDB id is
+        # still published (reference only, for cross-referencing
+        # with Sonarr).
+        self.assertEqual(requests_row["tvdbIdRef"], 76107)
+        self.assertEqual(available_row["tvdbIdRef"], 76107)
 
     def test_tv_wrong_id_error_names_the_tmdb_requirement(self) -> None:
         """A wrong-id lookup surfaces a self-explanatory exit-4 error.

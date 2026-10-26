@@ -3648,15 +3648,17 @@ class TestSummarySeerrRequests(unittest.TestCase):
 
     The curated summary projects the upstream-provided identity
     fields at the **top level** (``id``, ``mediaType``, ``tmdbId``,
-    ``tvdbId``, ``externalServiceSlug``) -- lifted from the
+    ``tvdbIdRef``, ``externalServiceSlug``) -- lifted from the
     ``media`` sub-dict -- rather than nesting them behind
     ``media.*`` keys. AGENTS.md §1 says both ``seerr requests`` and
     ``seerr available`` should "project the identity fields
     instead" of ``media.title``; the historical projection nested
     the identity behind ``media.*`` while :func:`_summary_seerr_available`
     returned flat identity fields at the top level, so the two seerr
-    read commands disagreed on what shape that projection took. The
-    fix removes the asymmetry so the operator has one mental model
+    read commands disagreed on what shape that projection took. Both
+    now project the same flat identity field set under the same key
+    names -- ``id``, ``mediaType``, ``tmdbId``, ``tvdbIdRef``,
+    ``externalServiceSlug`` -- so the operator has one mental model
     across both commands.
 
     The request-level fields (``type``, ``status``, ``createdAt``)
@@ -3996,7 +3998,7 @@ class TestSummarySeerrAvailable(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("seerr", "available")]`` matches the spec.
 
     The curated summary projects the upstream-provided identifiers
-    onto the row (``id``, ``mediaType``, ``tmdbId``, ``tvdbId``,
+    onto the row (``id``, ``mediaType``, ``tmdbId``, ``tvdbIdRef``,
     ``externalServiceSlug``, ``status``, ``mediaAddedAt``); there is
     no nested ``mediaInfo`` envelope on the operator's Seer
     instance because records lack a top-level ``title`` field. See
@@ -4023,7 +4025,7 @@ class TestSummarySeerrAvailable(unittest.TestCase):
                 "id": 1,
                 "mediaType": "movie",
                 "tmdbId": 999,
-                "tvdbId": 76107,
+                "tvdbIdRef": 76107,
                 "externalServiceSlug": "tmdb",
                 "status": 5,
                 "mediaAddedAt": "2024-01-01T00:00:00Z",
@@ -4053,7 +4055,7 @@ class TestSummarySeerrAvailable(unittest.TestCase):
         # Fields missing from the upstream record default to ``None``
         # rather than crashing -- mirrors every other renderer's
         # defensive contract.
-        self.assertIsNone(rendered[0]["tvdbId"])
+        self.assertIsNone(rendered[0]["tvdbIdRef"])
         self.assertIsNone(rendered[0]["externalServiceSlug"])
         self.assertIsNone(rendered[0]["status"])
         self.assertIsNone(rendered[0]["mediaAddedAt"])
@@ -4109,7 +4111,7 @@ class TestSummarySeerrAvailable(unittest.TestCase):
         self.assertEqual(rendered[0]["id"], 1)
         self.assertEqual(rendered[0]["mediaType"], "movie")
         self.assertEqual(rendered[0]["tmdbId"], 999)
-        self.assertEqual(rendered[0]["tvdbId"], 76107)
+        self.assertEqual(rendered[0]["tvdbIdRef"], 76107)
         self.assertEqual(rendered[0]["externalServiceSlug"], "tmdb")
         self.assertEqual(rendered[0]["status"], 5)
         self.assertEqual(

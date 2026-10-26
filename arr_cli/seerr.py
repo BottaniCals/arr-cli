@@ -555,7 +555,9 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     ``seerr movie <tmdbId>`` / ``seerr tv <tmdbId>``. Both detail
     endpoints are keyed by the **TMDB** id, so the TVDB id is
     published as ``tvdbIdRef`` -- a reference-only cell, not a
-    ``seerr tv`` argument.
+    ``seerr tv`` argument. The key name matches the sibling
+    ``seerr available`` table, so both seerr read commands publish
+    the same identity field set under the same names.
 
     The ``take`` query parameter caps the response at the documented
     Seer limit (``1000``) so a single round trip covers the household
@@ -563,15 +565,16 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
 
     The identity fields are projected at the top level (matching
     :func:`_summary_seerr_available`'s flat shape) so the two seerr
-    read commands share one mental model. The historical
-    ``requestedBy.displayName`` projection was dropped: the 120-char
-    width budget divided across eight columns truncates the 23-char
-    token to ``requestedBy.di...`` and makes the header unreadable,
-    and the requester is still available in the verbatim envelope via
-    ``--verbose``. The historical ``title`` column was retired
-    because the live ``/api/v1/request`` payload does not populate
-    ``media.title`` or ``media.name`` -- see the renderer docstring
-    for the full rationale.
+    read commands share one mental model -- same identity field set,
+    same key names, including the ``tvdbIdRef`` reference-only TVDB
+    cell. The historical ``requestedBy.displayName`` projection was
+    dropped: the 120-char width budget divided across eight columns
+    truncates the 23-char token to ``requestedBy.di...`` and makes
+    the header unreadable, and the requester is still available in
+    the verbatim envelope via ``--verbose``. The historical ``title``
+    column was retired because the live ``/api/v1/request`` payload
+    does not populate ``media.title`` or ``media.name`` -- see the
+    renderer docstring for the full rationale.
     """
     payload = _get(
         "/api/v1/request",
@@ -743,7 +746,15 @@ def cmd_available(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     a stderr note so the empty result of the no-op is not
     surprising. Operators who need a friendly title can resolve
     it via ``seerr search <query>`` or look up ``tmdbId`` /
-    ``tvdbId`` externally.
+    ``tvdbIdRef`` externally.
+
+    The identity columns are chainable into the detail commands:
+    ``seerr movie <tmdbId>`` / ``seerr tv <tmdbId>``. Both detail
+    endpoints are keyed by the **TMDB** id, so the TVDB id is
+    published as ``tvdbIdRef`` -- a reference-only cell, not a
+    ``seerr tv`` argument. The key name matches the sibling
+    ``seerr requests`` table, so both seerr read commands publish
+    the same identity field set under the same names.
     """
     query = getattr(args, "query", "") or ""
     payload = _get(
@@ -775,12 +786,18 @@ def cmd_available(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # Tabular columns match the summary-shape keys emitted by
     # ``_summary_seerr_available``: every field is top-level on
     # each row, so no dot-path traversal is needed (mirrors the
-    # ``cmd_genres`` column-list pattern).
+    # ``cmd_genres`` column-list pattern). ``tvdbIdRef`` is the
+    # 9-char token the renderer publishes for the upstream TVDB id;
+    # the ``Ref`` suffix marks it as a reference-only identifier so
+    # it is not mistaken for a ``seerr tv`` argument (that endpoint
+    # is keyed by the TMDB id). The token matches the sibling
+    # ``cmd_requests`` column list, so both seerr read commands
+    # publish the same identity field set under the same names.
     columns = [
         "id",
         "mediaType",
         "tmdbId",
-        "tvdbId",
+        "tvdbIdRef",
         "externalServiceSlug",
         "status",
         "mediaAddedAt",
