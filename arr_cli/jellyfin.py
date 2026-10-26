@@ -203,6 +203,10 @@ def cmd_resume(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # ``UserData.PlaybackPositionTicks`` and ``UserData.PlayCount``
     # as top-level keys with ``.`` so the human renderer resolves
     # them via dot-path traversal in ``_row_from_mapping``.
+    # ``PercentPlayed`` is the short key the renderer publishes
+    # for the rounded playback percentage (``"63.8%"``) -- the
+    # 8-column width budget truncates the longer historical
+    # ``UserData.PlayedPercentage`` token.
     columns = [
         "Name",
         "Type",
@@ -210,7 +214,7 @@ def cmd_resume(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         "SeriesName",
         "UserData.PlaybackPositionTicks",
         "UserData.PlayCount",
-        "UserData.PlayedPercentage",
+        "PercentPlayed",
         "RunTimeTicks",
     ]
     return _emit(payload, args, columns=columns)
@@ -246,14 +250,18 @@ def cmd_recent(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # ``_summary_jellyfin_recent``: the renderer flattens
     # ``UserData.LastPlayedDate`` as a top-level key with ``.`` so
     # the human renderer resolves it via dot-path traversal in
-    # ``_row_from_mapping``.
+    # ``_row_from_mapping``. ``PercentPlayed`` is the short key
+    # the renderer publishes for the rounded playback percentage
+    # (``"63.8%"``) -- the longer historical
+    # ``UserData.PlayedPercentage`` token truncates under the
+    # 6-column width budget.
     columns = [
         "Name",
         "Type",
         "ProductionYear",
         "SeriesName",
         "UserData.LastPlayedDate",
-        "UserData.PlayedPercentage",
+        "PercentPlayed",
     ]
     return _emit(payload, args, columns=columns)
 

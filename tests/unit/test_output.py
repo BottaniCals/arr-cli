@@ -429,8 +429,10 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "Type": "Movie",
             "ProductionYear": 2024,
             "SeriesName": None,
-            "UserData.LastPlayedDate": "2024-01-01",
-            "UserData.PlayedPercentage": 60,
+            "UserData": {
+                "LastPlayedDate": "2024-01-01",
+                "PlayedPercentage": 60,
+            },
             "Overview": "Lorem ipsum",
         }
     ],
@@ -452,10 +454,12 @@ _HUMAN_SUMMARY_PAYLOADS: dict[tuple[str, str], list[dict[str, Any]]] = {
             "Type": "Episode",
             "ProductionYear": 2020,
             "SeriesName": "Show",
-            "UserData.PlaybackPositionTicks": 100,
-            "UserData.PlayCount": 2,
-            "UserData.PlayedPercentage": 25,
-            "RunTimeTicks": "1h 45m",
+            "UserData": {
+                "PlaybackPositionTicks": 100,
+                "PlayCount": 2,
+                "PlayedPercentage": 25,
+            },
+            "RunTimeTicks": 6300000000,
             "Overview": "Lorem ipsum",
         }
     ],
@@ -1757,9 +1761,33 @@ class TestSummaryJellyfinRecent(unittest.TestCase):
                 "ProductionYear": 2024,
                 "SeriesName": None,
                 "UserData.LastPlayedDate": "2024-01-01",
-                "UserData.PlayedPercentage": 0,
+                "PercentPlayed": "0.0%",
             },
         )
+
+    def test_recent_played_percentage_is_rounded(self) -> None:
+        # The raw upstream float (63.78841043647125) used to be
+        # projected verbatim under the ``UserData.PlayedPercentage``
+        # key; the ``--human`` cell truncated it mid-number
+        # ("63.78841043647…") under a header that truncated to
+        # "UserData.PlayedPerc…". The projection now publishes a
+        # rounded percentage string under the short
+        # ``PercentPlayed`` key.
+        payload = [
+            {
+                "Name": "Fireheart: The Legend of Tadas Blinda",
+                "Type": "Movie",
+                "ProductionYear": 2024,
+                "SeriesName": None,
+                "UserData": {
+                    "LastPlayedDate": "2026-09-01",
+                    "PlayedPercentage": 63.78841043647125,
+                },
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "recent")](payload)
+        self.assertEqual(rendered[0]["PercentPlayed"], "63.8%")
+        self.assertNotIn("UserData.PlayedPercentage", rendered[0])
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
@@ -2317,10 +2345,33 @@ class TestSummaryJellyfinResume(unittest.TestCase):
                 "SeriesName": "Show",
                 "UserData.PlaybackPositionTicks": 100,
                 "UserData.PlayCount": 2,
-                "UserData.PlayedPercentage": 0,
+                "PercentPlayed": "0.0%",
                 "RunTimeTicks": None,
             },
         )
+
+    def test_resume_played_percentage_is_rounded(self) -> None:
+        # Same contract as the ``recent`` projection: the raw upstream
+        # float is rounded to one decimal place and published under
+        # the short ``PercentPlayed`` key (the 8-column ``--human``
+        # budget truncated the 25-char ``UserData.PlayedPercentage``
+        # header to "UserData.Playe…").
+        payload = [
+            {
+                "Name": "The Woman Who Fell to Earth",
+                "Type": "Episode",
+                "ProductionYear": 2018,
+                "SeriesName": "Doctor Who (2005)",
+                "UserData": {
+                    "PlaybackPositionTicks": 1234,
+                    "PlayCount": 1,
+                    "PlayedPercentage": 63.78841043647125,
+                },
+            }
+        ]
+        rendered = _SUMMARY_RENDERERS[("jellyfin", "resume")](payload)
+        self.assertEqual(rendered[0]["PercentPlayed"], "63.8%")
+        self.assertNotIn("UserData.PlayedPercentage", rendered[0])
 
     def test_non_list_returns_empty_list(self) -> None:
         self.assertEqual(
@@ -2480,6 +2531,79 @@ class TestSummaryJellyfinResume(unittest.TestCase):
         names = [row["Name"] for row in rendered]
         self.assertEqual(names, ["Real Episode"])
         self.assertNotIn("Typeless mystery row", names)
+
+
+class TestHumanPlayedPercentageRendering(unittest.TestCase):
+    """The ``--human`` tables render the playback progress readably.
+
+    Regression: the ``resume`` / ``recent`` tables projected the raw
+    upstream float (``63.78841043647125``) under the 25-char
+    ``UserData.PlayedPercentage`` key. The width budget truncated the
+    cell mid-number (``63.78841043647…``) and the header too
+    (``UserData.Playe…`` on the 8-column ``resume`` table,
+    ``UserData.PlayedPerc…`` on the 6-column ``recent`` table). The
+    projection now publishes ``PercentPlayed`` -- a rounded percentage
+    string (``"63.8%"``) under a 13-char header that fits the same
+    budget.
+
+    The column list is read out of the per-service CLI via
+    :func:`_columns_for` so the assertion covers the real
+    ``--human`` header, not a hand-written copy of it.
+    """
+
+    PAYLOAD: list[dict[str, Any]] = [
+        {
+            "Name": "Fireheart: The Legend of Tadas Blinda",
+            "Type": "Movie",
+            "ProductionYear": 2024,
+            "SeriesName": None,
+            "UserData": {
+                "LastPlayedDate": "2026-09-01",
+                "PlayedPercentage": 63.78841043647125,
+            },
+            "RunTimeTicks": 7200000000,
+        }
+    ]
+
+    def _render(self, command: str) -> str:
+        summary = _SUMMARY_RENDERERS[("jellyfin", command)](self.PAYLOAD)
+        columns = _columns_for("jellyfin", command)
+        # Pin the width so the assertion does not depend on the host
+        # tty (``COLUMNS`` wins over the tty probe).
+        with patch.dict(os.environ, {"COLUMNS": "120"}):
+            return human(summary, columns)
+
+    def test_resume_header_renders_the_percentage_key_in_full(self) -> None:
+        rendered = self._render("resume")
+        header = rendered.splitlines()[0]
+        self.assertIn(
+            "PercentPlayed",
+            header,
+            msg=f"resume header {header!r} lost the percentage token",
+        )
+        # The historical token truncated to "UserData.Playe…" under
+        # the 8-column budget -- it must not be back.
+        self.assertNotIn("UserData.Playe", header)
+
+    def test_resume_cell_renders_the_rounded_percentage(self) -> None:
+        rendered = self._render("resume")
+        self.assertIn("63.8%", rendered)
+        self.assertNotIn("63.78841043647", rendered)
+
+    def test_recent_header_renders_the_percentage_key_in_full(self) -> None:
+        rendered = self._render("recent")
+        header = rendered.splitlines()[0]
+        self.assertIn(
+            "PercentPlayed",
+            header,
+            msg=f"recent header {header!r} lost the percentage token",
+        )
+        self.assertNotIn("UserData.PlayedPerc", header)
+
+    def test_recent_cell_renders_the_rounded_percentage(self) -> None:
+        rendered = self._render("recent")
+        self.assertIn("63.8%", rendered)
+        self.assertNotIn("63.78841043647", rendered)
 
 
 class TestSummaryJellyfinLatest(unittest.TestCase):
@@ -3524,15 +3648,17 @@ class TestSummarySeerrRequests(unittest.TestCase):
 
     The curated summary projects the upstream-provided identity
     fields at the **top level** (``id``, ``mediaType``, ``tmdbId``,
-    ``tvdbId``, ``externalServiceSlug``) -- lifted from the
+    ``tvdbIdRef``, ``externalServiceSlug``) -- lifted from the
     ``media`` sub-dict -- rather than nesting them behind
     ``media.*`` keys. AGENTS.md §1 says both ``seerr requests`` and
     ``seerr available`` should "project the identity fields
     instead" of ``media.title``; the historical projection nested
     the identity behind ``media.*`` while :func:`_summary_seerr_available`
     returned flat identity fields at the top level, so the two seerr
-    read commands disagreed on what shape that projection took. The
-    fix removes the asymmetry so the operator has one mental model
+    read commands disagreed on what shape that projection took. Both
+    now project the same flat identity field set under the same key
+    names -- ``id``, ``mediaType``, ``tmdbId``, ``tvdbIdRef``,
+    ``externalServiceSlug`` -- so the operator has one mental model
     across both commands.
 
     The request-level fields (``type``, ``status``, ``createdAt``)
@@ -3577,7 +3703,7 @@ class TestSummarySeerrRequests(unittest.TestCase):
                 "id": 121,
                 "mediaType": "movie",
                 "tmdbId": 603,
-                "tvdbId": None,
+                "tvdbIdRef": None,
                 "externalServiceSlug": "tmdb",
                 "type": "movie",
                 "status": 2,
@@ -3686,7 +3812,7 @@ class TestSummarySeerrRequests(unittest.TestCase):
         # Identity fields are top-level, not nested behind ``media.*``.
         self.assertEqual(rendered[0]["id"], 120)
         self.assertEqual(rendered[0]["mediaType"], "tv")
-        self.assertEqual(rendered[0]["tvdbId"], 76107)
+        self.assertEqual(rendered[0]["tvdbIdRef"], 76107)
         self.assertEqual(rendered[0]["externalServiceSlug"], "tvdb")
         # No fabricated top-level ``title`` key -- the historical
         # projection is gone, so a TV row does not pretend to carry
@@ -3735,7 +3861,7 @@ class TestSummarySeerrRequests(unittest.TestCase):
         self.assertIsNone(rendered[0]["id"])
         self.assertIsNone(rendered[0]["mediaType"])
         self.assertIsNone(rendered[0]["tmdbId"])
-        self.assertIsNone(rendered[0]["tvdbId"])
+        self.assertIsNone(rendered[0]["tvdbIdRef"])
         self.assertIsNone(rendered[0]["externalServiceSlug"])
         # Request-level fields survive intact even when the media
         # envelope is absent.
@@ -3872,7 +3998,7 @@ class TestSummarySeerrAvailable(unittest.TestCase):
     """``_SUMMARY_RENDERERS[("seerr", "available")]`` matches the spec.
 
     The curated summary projects the upstream-provided identifiers
-    onto the row (``id``, ``mediaType``, ``tmdbId``, ``tvdbId``,
+    onto the row (``id``, ``mediaType``, ``tmdbId``, ``tvdbIdRef``,
     ``externalServiceSlug``, ``status``, ``mediaAddedAt``); there is
     no nested ``mediaInfo`` envelope on the operator's Seer
     instance because records lack a top-level ``title`` field. See
@@ -3899,7 +4025,7 @@ class TestSummarySeerrAvailable(unittest.TestCase):
                 "id": 1,
                 "mediaType": "movie",
                 "tmdbId": 999,
-                "tvdbId": 76107,
+                "tvdbIdRef": 76107,
                 "externalServiceSlug": "tmdb",
                 "status": 5,
                 "mediaAddedAt": "2024-01-01T00:00:00Z",
@@ -3929,7 +4055,7 @@ class TestSummarySeerrAvailable(unittest.TestCase):
         # Fields missing from the upstream record default to ``None``
         # rather than crashing -- mirrors every other renderer's
         # defensive contract.
-        self.assertIsNone(rendered[0]["tvdbId"])
+        self.assertIsNone(rendered[0]["tvdbIdRef"])
         self.assertIsNone(rendered[0]["externalServiceSlug"])
         self.assertIsNone(rendered[0]["status"])
         self.assertIsNone(rendered[0]["mediaAddedAt"])
@@ -3985,7 +4111,7 @@ class TestSummarySeerrAvailable(unittest.TestCase):
         self.assertEqual(rendered[0]["id"], 1)
         self.assertEqual(rendered[0]["mediaType"], "movie")
         self.assertEqual(rendered[0]["tmdbId"], 999)
-        self.assertEqual(rendered[0]["tvdbId"], 76107)
+        self.assertEqual(rendered[0]["tvdbIdRef"], 76107)
         self.assertEqual(rendered[0]["externalServiceSlug"], "tmdb")
         self.assertEqual(rendered[0]["status"], 5)
         self.assertEqual(
@@ -5780,7 +5906,7 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "ProductionYear": 2024,
                     "SeriesName": None,
                     "UserData.LastPlayedDate": "2024-01-01",
-                    "UserData.PlayedPercentage": 0,
+                    "PercentPlayed": "0.0%",
                 }
             ],
         )
@@ -5813,7 +5939,7 @@ class TestSummaryEnvelopeUnwrapping(unittest.TestCase):
                     "SeriesName": "Show",
                     "UserData.PlaybackPositionTicks": 100,
                     "UserData.PlayCount": 2,
-                    "UserData.PlayedPercentage": 0,
+                    "PercentPlayed": "0.0%",
                     "RunTimeTicks": None,
                 }
             ],
@@ -5943,7 +6069,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "ProductionYear": 2024,
                 "SeriesName": None,
                 "UserData.LastPlayedDate": "2024-01-01",
-                "UserData.PlayedPercentage": 0,
+                "PercentPlayed": "0.0%",
             },
         )
 
@@ -5967,7 +6093,7 @@ class TestSummaryEnvelopeRegression(unittest.TestCase):
                 "SeriesName": "Show",
                 "UserData.PlaybackPositionTicks": 100,
                 "UserData.PlayCount": 2,
-                "UserData.PlayedPercentage": 0,
+                "PercentPlayed": "0.0%",
                 "RunTimeTicks": None,
             },
         )

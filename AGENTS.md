@@ -60,7 +60,8 @@ Seer instance. The fixed renderers
 (`_summary_seerr_requests`, `_summary_seerr_available`) project the
 identity fields instead, giving the operator a meaningful row
 that can be chained into `seerr movie <id>` / `seerr tv <id>` or
-cross-referenced via `tmdbId` / `tvdbId`. Do **not** add a
+cross-referenced via `tmdbId` / `tvdbIdRef` (the published cell
+names; the upstream TVDB field is still `tvdbId`). Do **not** add a
 `title` projection back to these renderers without first
 confirming against the live OpenAPI spec that the upstream payload
 populates the field -- a regression that projects `null` for every
