@@ -469,7 +469,7 @@ class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
 
         The curated summary projects the identity fields from the
         ``media`` sub-dict (``id``, ``mediaType``, ``tmdbId`` /
-        ``tvdbId``, ``externalServiceSlug``) **at the top level**
+        ``tvdbIdRef``, ``externalServiceSlug``) **at the top level**
         rather than behind ``media.*`` keys. The historical
         ``title`` projection is retired because the live
         ``/api/v1/request`` payload on the operator's Seer instance
@@ -501,7 +501,7 @@ class TestCmdRequestsPaginatedEnvelope(unittest.TestCase):
         # ``title`` / ``media.title`` / ``media.name`` pair in the
         # upstream payload).
         self.assertEqual(rendered[1]["type"], "tv")
-        self.assertEqual(rendered[1]["tvdbId"], 76107)
+        self.assertEqual(rendered[1]["tvdbIdRef"], 76107)
         self.assertEqual(rendered[1]["mediaType"], "tv")
         self.assertEqual(rendered[1]["externalServiceSlug"], "tvdb")
         # No nested ``media`` envelope and no ``requestedBy`` mapping
@@ -2467,6 +2467,200 @@ class TestCmdMovieHttpPath(unittest.TestCase):
             )
             self.assertEqual(exit_code, 0)
             self.assertEqual(len(rsps.calls), 1)
+
+
+# ---------------------------------------------------------------------------
+# Test: the TMDB-id contract of the ``tv`` / ``movie`` detail commands
+# ---------------------------------------------------------------------------
+
+
+class TestSeerrTmdbIdContract(unittest.TestCase):
+    """The ``tv`` / ``movie`` detail commands are keyed by the TMDB id.
+
+    ``GET /api/v1/tv/{tvId}`` and ``GET /api/v1/movie/{movieId}`` are
+    keyed by the **TMDB** id only. The upstream rejects a TVDB id
+    with an opaque HTTP 500 ``Unable to retrieve series.`` -- and
+    the ``seerr requests`` table used to surface that very TVDB id
+    under a bare ``tvdbId`` column, right next to the chainable
+    ``tmdbId`` column. These tests pin the three defences:
+
+    * the ``--help`` text of both commands names the TMDB id,
+    * the ``seerr requests`` table labels the TVDB cell as a
+      reference (``tvdbIdRef``) so it is not mistaken for a
+      ``seerr tv`` argument,
+    * a wrong-id lookup surfaces a self-explanatory error (same
+      :class:`HttpError` class, same exit code 4, pipe-clean stdout).
+    """
+
+    def setUp(self) -> None:
+        self.tmp_dir = Path(tempfile.mkdtemp(prefix="seerr-test-"))
+        self.cfg_path = _write_toml_config(self.tmp_dir)
+
+    def tearDown(self) -> None:
+        import shutil
+        try:
+            shutil.rmtree(self.tmp_dir)
+        except OSError:
+            pass
+
+    def _id_help(self, command: str) -> str:
+        """Return the ``--help`` text of the ``id`` positional."""
+        from arr_cli.seerr import build_seerr_parser
+
+        parser = build_seerr_parser()
+        subparsers_action = next(
+            action for action in parser._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        sub_parser = subparsers_action.choices[command]
+        for action in sub_parser._actions:
+            if action.dest == "id":
+                return action.help or ""
+        raise AssertionError(
+            f"the {command!r} subparser registers no 'id' positional"
+        )
+
+    def test_tv_id_help_names_the_tmdb_id(self) -> None:
+        """``seerr tv --help`` says TMDB, not "TMDB/TVDB"."""
+        help_text = self._id_help("tv")
+        self.assertIn("TMDB TV show id", help_text)
+        self.assertNotIn(
+            "TMDB/TVDB",
+            help_text,
+            msg=(
+                "the seerr tv id help still invites a TVDB id: "
+                f"{help_text!r}"
+            ),
+        )
+        self.assertIn("TVDB ids are not accepted", help_text)
+
+    def test_movie_id_help_names_the_tmdb_id(self) -> None:
+        """``seerr movie --help`` says TMDB (structural twin of ``tv``)."""
+        help_text = self._id_help("movie")
+        self.assertIn("TMDB movie id", help_text)
+        self.assertNotIn("TMDB/TVDB", help_text)
+        self.assertIn("TVDB ids are not accepted", help_text)
+
+    def test_requests_human_labels_the_tvdb_column_as_reference(self) -> None:
+        """The ``seerr requests`` table labels the TVDB cell ``tvdbIdRef``.
+
+        The bare ``tvdbId`` column sat next to the chainable
+        ``tmdbId`` column and invited the operator to feed it into
+        ``seerr tv``. The ``Ref`` suffix marks it as reference-only;
+        the 9-char token still fits the ten-column ``--human`` width
+        budget (~12 chars per column).
+        """
+        from arr_cli.seerr import cmd_requests
+
+        envelope = {
+            "pageInfo": {"pages": 1, "pageSize": 10, "results": 1, "page": 1},
+            "results": [
+                {
+                    "id": 120,
+                    "type": "tv",
+                    "status": 2,
+                    "createdAt": "2026-09-13T12:55:03.000Z",
+                    "requestedBy": {"username": "bob"},
+                    "media": {
+                        "id": 120,
+                        "mediaType": "tv",
+                        "tmdbId": 57243,
+                        "tvdbId": 76107,
+                        "externalServiceSlug": "tmdb",
+                        "status": 5,
+                    },
+                },
+            ],
+            "serviceErrors": {"radarr": [], "sonarr": []},
+        }
+        args = argparse.Namespace(
+            config=None,
+            debug=False,
+            quiet=False,
+            human=True,
+            verbose=False,
+            connect_timeout=5.0,
+            read_timeout=30.0,
+            retry=0,
+            deadline=None,
+            limit=20,
+            command="requests",
+        )
+        with patch.dict(os.environ, {"COLUMNS": "120"}):
+            with patch(
+                "arr_cli.seerr.transport.get", return_value=envelope
+            ):
+                output = _capture_stdout(cmd_requests, args, None)
+        header = output.splitlines()[0]
+        header_cells = header.split()
+        self.assertIn(
+            "tvdbIdRef",
+            header_cells,
+            msg=f"requests header {header!r} lost the reference label",
+        )
+        # The bare token must not survive as its own column -- it is
+        # the cell the operator would feed into ``seerr tv``.
+        self.assertNotIn("tvdbId", header_cells)
+        # The TMDB id stays the chainable column.
+        self.assertIn("tmdbId", header_cells)
+
+    def test_tv_wrong_id_error_names_the_tmdb_requirement(self) -> None:
+        """A wrong-id lookup surfaces a self-explanatory exit-4 error.
+
+        The upstream answer for a TVDB id is an opaque HTTP 500
+        ``Unable to retrieve series.``; the CLI re-raises the same
+        :class:`HttpError` (exit code 4) with a hint naming the
+        TMDB-id requirement. stdout stays pipe-clean.
+        """
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/tv/76107",
+                status=500,
+                body="Unable to retrieve series.",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "tv", "76107"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+        self.assertEqual(exit_code, 4)
+        # No payload on stdout -- the structured error line goes to
+        # stderr so the pipe-clean stdout contract is preserved.
+        self.assertEqual(stdout, "")
+        self.assertIn("status=500", stderr)
+        self.assertIn("TMDB id", stderr)
+
+    def test_movie_wrong_id_error_names_the_tmdb_requirement(self) -> None:
+        """Structural twin of the ``tv`` wrong-id error path."""
+        import arr_cli.seerr as seerr
+
+        with responses.RequestsMock() as rsps:
+            rsps.add(
+                responses.GET,
+                "https://seerr.example/api/v1/movie/76107",
+                status=500,
+                body="Unable to retrieve movie.",
+            )
+            stdout_buf = io.StringIO()
+            stderr_buf = io.StringIO()
+            with contextlib.redirect_stdout(stdout_buf), \
+                    contextlib.redirect_stderr(stderr_buf):
+                exit_code = seerr.main(
+                    ["--config", str(self.cfg_path), "movie", "76107"]
+                )
+            stdout = stdout_buf.getvalue()
+            stderr = stderr_buf.getvalue()
+        self.assertEqual(exit_code, 4)
+        self.assertEqual(stdout, "")
+        self.assertIn("status=500", stderr)
+        self.assertIn("TMDB id", stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -5486,7 +5680,7 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
 
     Seer's ``/api/v1/request`` endpoint wraps each row's media
     metadata inside a ``media`` envelope keyed by ``id``,
-    ``mediaType``, ``tmdbId`` / ``tvdbId``, ``externalServiceSlug``
+    ``mediaType``, ``tmdbId`` / ``tvdbIdRef``, ``externalServiceSlug``
     and ``status``. The renderer's job is to project those identity
     fields under a nested ``media`` sub-dict so the default summary
     gives the operator something to chain into ``seerr movie <id>``
@@ -5589,21 +5783,21 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
         self.assertEqual(len(rendered), 2)
         # Movie row: identity fields (id, mediaType, tmdbId,
         # externalServiceSlug) lifted from ``media`` live at the top
-        # level. ``tvdbId`` is ``None`` because the upstream payload
+        # level. ``tvdbIdRef`` is ``None`` because the upstream payload
         # does not populate TVDB ids for movie rows.
         self.assertEqual(rendered[0]["type"], "movie")
         self.assertEqual(rendered[0]["id"], 121)
         self.assertEqual(rendered[0]["mediaType"], "movie")
         self.assertEqual(rendered[0]["tmdbId"], 603)
-        self.assertIsNone(rendered[0]["tvdbId"])
+        self.assertIsNone(rendered[0]["tvdbIdRef"])
         self.assertEqual(rendered[0]["externalServiceSlug"], "tmdb")
-        # TV row surfaces ``tvdbId`` instead of ``tmdbId`` (same flat
+        # TV row surfaces ``tvdbIdRef`` instead of ``tmdbId`` (same flat
         # shape, just different media-type identity).
         self.assertEqual(rendered[1]["type"], "tv")
         self.assertEqual(rendered[1]["id"], 120)
         self.assertEqual(rendered[1]["mediaType"], "tv")
         self.assertIsNone(rendered[1]["tmdbId"])
-        self.assertEqual(rendered[1]["tvdbId"], 76107)
+        self.assertEqual(rendered[1]["tvdbIdRef"], 76107)
         self.assertEqual(rendered[1]["externalServiceSlug"], "tvdb")
         # No nested ``media`` envelope / ``requestedBy`` mapping and
         # no fabricated top-level ``title`` key -- the historical
@@ -5685,7 +5879,7 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
             "id",
             "mediaType",
             "tmdbId",
-            "tvdbId",
+            "tvdbIdRef",
             "type",
             "status",
             "createdAt",
@@ -5746,7 +5940,7 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
         # projecting ``title: null``; the identity columns replace
         # the fabricated ``title`` so each row has a meaningful
         # identity cell populated (movie row: TMDB id; TV row:
-        # TVDB id). Cross-type identity fields (``tvdbId`` for movie
+        # TVDB id). Cross-type identity fields (``tvdbIdRef`` for movie
         # rows, ``tmdbId`` for TV rows) are intentionally ``None``
         # because the upstream payload does not populate them,
         # which is the correct behaviour -- the AC does not require
@@ -5778,7 +5972,7 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
         # identity projection, no nested ``media`` envelope).
         self.assertEqual(rendered[0]["tmdbId"], 603)
         # TV row surfaces the TVDB id instead.
-        self.assertEqual(rendered[1]["tvdbId"], 76107)
+        self.assertEqual(rendered[1]["tvdbIdRef"], 76107)
 
     def test_renderer_missing_media_envelope_yields_none(self) -> None:
         """A row whose ``media`` envelope is missing yields ``None`` for every identity field.
@@ -5813,7 +6007,7 @@ class TestCmdRequestsMediaEnvelope(unittest.TestCase):
         self.assertIsNone(rendered[0]["id"])
         self.assertIsNone(rendered[0]["mediaType"])
         self.assertIsNone(rendered[0]["tmdbId"])
-        self.assertIsNone(rendered[0]["tvdbId"])
+        self.assertIsNone(rendered[0]["tvdbIdRef"])
         self.assertIsNone(rendered[0]["externalServiceSlug"])
         # Request-level fields survive intact even when the media
         # envelope is absent.

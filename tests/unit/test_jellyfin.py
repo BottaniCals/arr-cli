@@ -992,7 +992,7 @@ class TestHumanModeColumnsPerCommand(unittest.TestCase):
             "Type",
             "UserData.PlaybackPositionTicks",
             "UserData.PlayCount",
-            "UserData.PlayedPercentage",
+            "PercentPlayed",
             "RunTimeTicks",
         ):
             self.assertIn(token, columns, msg=(
@@ -1008,7 +1008,7 @@ class TestHumanModeColumnsPerCommand(unittest.TestCase):
             "Name",
             "Type",
             "UserData.LastPlayedDate",
-            "UserData.PlayedPercentage",
+            "PercentPlayed",
         ):
             self.assertIn(token, columns, msg=(
                 f"jellyfin recent columns missing {token!r}; "

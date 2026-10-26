@@ -167,7 +167,7 @@ from urllib.parse import quote
 from arr_cli.facade import output, transport
 from arr_cli.facade.cli_common import build_parser, main_wrapper, universal_parents
 from arr_cli.facade.config import ServiceConfig
-from arr_cli.facade.errors import ConfigError
+from arr_cli.facade.errors import ConfigError, HttpError
 
 __all__ = [
     "main",
@@ -548,8 +548,14 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     """Seerr ``requests`` -- the household request queue (REQ-10 AC1).
 
     Returns the full list of media requests; ``--human`` renders the
-    most common columns (``id``, ``mediaType``, ``tmdbId``, ``tvdbId``,
-    ``externalServiceSlug``, ``type``, ``status``, ``createdAt``).
+    most common columns (``id``, ``mediaType``, ``tmdbId``,
+    ``tvdbIdRef``, ``type``, ``status``, ``createdAt``).
+
+    The identity columns are chainable into the detail commands:
+    ``seerr movie <tmdbId>`` / ``seerr tv <tmdbId>``. Both detail
+    endpoints are keyed by the **TMDB** id, so the TVDB id is
+    published as ``tvdbIdRef`` -- a reference-only cell, not a
+    ``seerr tv`` argument.
 
     The ``take`` query parameter caps the response at the documented
     Seer limit (``1000``) so a single round trip covers the household
@@ -589,12 +595,16 @@ def cmd_requests(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     # the 18-char header truncates to ``externalServiceSlu...`` at
     # that width. Dropping it keeps the headers readable while
     # leaving the slug available in the JSON summary shape and the
-    # verbatim envelope via ``--verbose``.
+    # verbatim envelope via ``--verbose``. ``tvdbIdRef`` is the
+    # 9-char token the renderer publishes for the upstream TVDB id;
+    # the ``Ref`` suffix marks it as a reference-only identifier so
+    # it is not mistaken for a ``seerr tv`` argument (that endpoint
+    # is keyed by the TMDB id).
     columns = [
         "id",
         "mediaType",
         "tmdbId",
-        "tvdbId",
+        "tvdbIdRef",
         "type",
         "status",
         "createdAt",
@@ -790,6 +800,15 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     :func:`arr_cli.facade.output._summary_seerr_tv` so the default
     stdout stays chat-agent-sized instead of dumping 228KB of JSON.
 
+    The positional ``id`` is the **TMDB** show id. The upstream
+    ``/api/v1/tv/{tvId}`` endpoint is keyed by TMDB only: feeding it
+    a TVDB id (e.g. the ``tvdbIdRef`` cell of ``seerr requests``) is
+    rejected upstream with an opaque HTTP 500 ``Unable to retrieve
+    series.``. The detail fetch therefore re-raises the
+    :class:`HttpError` with a hint naming the TMDB-id requirement,
+    so the operator does not have to guess which id flavour the
+    endpoint wants.
+
     ``--ratings`` additionally calls
     ``GET /api/v1/tv/{tvId}/ratings`` and merges the small
     Rotten Tomatoes critic + audience JSON under
@@ -828,13 +847,30 @@ def cmd_tv(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         {"language": language} if language else {}
     )
     ratings_params: dict[str, Any] = {}
-    payload = _get(
-        f"/api/v1/tv/{tv_id}",
-        args,
-        cfg,
-        params=detail_params or None,
-        op=f"tv/{tv_id}",
-    )
+    try:
+        payload = _get(
+            f"/api/v1/tv/{tv_id}",
+            args,
+            cfg,
+            params=detail_params or None,
+            op=f"tv/{tv_id}",
+        )
+    except HttpError as exc:
+        # Re-raise the same typed error (AGENTS.md §6: the CLI may
+        # re-raise the same class, never catch-and-print) with a hint
+        # that names the TMDB-id requirement -- the upstream message
+        # ("Unable to retrieve series.") does not say which id
+        # flavour the endpoint expects.
+        raise HttpError(
+            exc.service,
+            exc.op,
+            (
+                f"{exc.message}; seerr tv is keyed by the TMDB id -- "
+                "a TVDB id (e.g. the tvdbIdRef cell of `seerr requests`) "
+                "is not a valid argument"
+            ),
+            status=exc.status,
+        ) from exc
     if getattr(args, "ratings", False):
         ratings = _get(
             f"/api/v1/tv/{tv_id}/ratings",
@@ -905,6 +941,13 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
     display format which matters because raw minutes is not
     human-readable.
 
+    The positional ``id`` is the **TMDB** movie id. The upstream
+    ``/api/v1/movie/{movieId}`` endpoint is keyed by TMDB only, so a
+    TVDB id is rejected upstream with an opaque HTTP 500. The detail
+    fetch therefore re-raises the :class:`HttpError` with a hint
+    naming the TMDB-id requirement (structural twin of
+    :func:`cmd_tv`).
+
     ``--ratings`` additionally calls
     ``GET /api/v1/movie/{movieId}/ratings`` and merges the small
     Rotten Tomatoes critic + audience JSON under
@@ -948,13 +991,28 @@ def cmd_movie(args: argparse.Namespace, cfg: ServiceConfig) -> int:
         {"language": language} if language else {}
     )
     ratings_params: dict[str, Any] = {}
-    payload = _get(
-        f"/api/v1/movie/{movie_id}",
-        args,
-        cfg,
-        params=detail_params or None,
-        op=f"movie/{movie_id}",
-    )
+    try:
+        payload = _get(
+            f"/api/v1/movie/{movie_id}",
+            args,
+            cfg,
+            params=detail_params or None,
+            op=f"movie/{movie_id}",
+        )
+    except HttpError as exc:
+        # Re-raise the same typed error (AGENTS.md §6) with a hint
+        # naming the TMDB-id requirement -- structural twin of the
+        # ``cmd_tv`` re-raise.
+        raise HttpError(
+            exc.service,
+            exc.op,
+            (
+                f"{exc.message}; seerr movie is keyed by the TMDB id "
+                "-- a TVDB id (e.g. the tvdbIdRef cell of `seerr "
+                "requests`) is not a valid argument"
+            ),
+            status=exc.status,
+        ) from exc
     if getattr(args, "ratings", False):
         ratings = _get(
             f"/api/v1/movie/{movie_id}/ratings",
@@ -1651,7 +1709,7 @@ def build_seerr_parser() -> argparse.ArgumentParser:
     tv = subparsers.add_parser(
         "tv",
         help=(
-            "fetch TV show details by id, optionally with Rotten "
+            "fetch TV show details by TMDB id, optionally with Rotten "
             "Tomatoes ratings (GET /api/v1/tv/<id>?language=...; "
             "--ratings adds /api/v1/tv/<id>/ratings)"
         ),
@@ -1662,7 +1720,8 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         "id",
         metavar="ID",
         help=(
-            "TMDB/TVDB TV show id (e.g. 57243 for Doctor Who)"
+            "TMDB TV show id (e.g. 57243 for Doctor Who); TVDB ids "
+            "are not accepted by this endpoint"
         ),
     )
     # ``--ratings`` and ``--language`` are also registered at the
@@ -1715,7 +1774,8 @@ def build_seerr_parser() -> argparse.ArgumentParser:
         "id",
         metavar="ID",
         help=(
-            "TMDB movie id (e.g. 603 for The Matrix)"
+            "TMDB movie id (e.g. 603 for The Matrix); TVDB ids "
+            "are not accepted by this endpoint"
         ),
     )
     movie.add_argument(

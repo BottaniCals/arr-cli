@@ -13,7 +13,8 @@ within the pre-1.0 contract documented in `README.md`.
   audit-requested fields. `jellyfin now` adds `LastActivityDate`,
   `PlayState.IsPaused`, `NowPlayingQueue` length, and a transcoding
   indicator; `jellyfin resume` / `jellyfin recent` add
-  `UserData.PlayedPercentage`; `jellyfin nextup` adds `RunTimeTicks`
+  `PercentPlayed` (the playback progress rounded to one decimal
+  place, e.g. `"63.8%"`); `jellyfin nextup` adds `RunTimeTicks`
   and a truncated `Overview`; `jellyfin latest` adds `RunTimeTicks`
   → minutes, `PremiereDate`, and `Genres`; `jellyfin favorites`
   adds `RunTimeTicks` → minutes and `UserData.LastPlayedDate`;
@@ -113,6 +114,28 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Changed
 
+- **Breaking:** the default (non-`--verbose`) JSON summary shape
+  changes for `jellyfin resume` / `jellyfin recent` and `seerr
+  requests`.
+  - The playback-progress key of `jellyfin resume` / `jellyfin
+    recent` is renamed from `UserData.PlayedPercentage` to
+    `PercentPlayed`, and the value is now the rounded percentage
+    string (e.g. `"63.8%"`) instead of the raw upstream float
+    (e.g. `63.78841043647125`). A consumer that read
+    `summary["UserData.PlayedPercentage"]` as a number must migrate
+    to `summary["PercentPlayed"]` (a string carrying the `%` sign).
+    The `--human` column header changes from `UserData.PlayedPercentage`
+    to `PercentPlayed` alongside it.
+  - The TVDB id of `seerr requests` is renamed from `tvdbId` to
+    `tvdbIdRef` to mark it as a reference-only cell: `seerr tv` /
+    `seerr movie` are keyed by the TMDB id, so the TVDB id is not a
+    valid argument for them. A consumer that read
+    `summary["tvdbId"]` must migrate to `summary["tvdbIdRef"]`. The
+    `--human` column header changes from `tvdbId` to `tvdbIdRef`
+    alongside it.
+  - The `--verbose` verbatim pass-through is unchanged, and so are the
+    exit-code contract and the remaining summary keys of both
+    commands.
 - **Breaking:** the default (non-`--verbose`) JSON summary key
   `collection.name` is renamed to `collection.title` for `radarr
   movie` (library list) and `radarr calendar`. The upstream Radarr
@@ -194,6 +217,26 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- The `jellyfin --human resume` / `jellyfin --human recent` tables
+  rendered the playback progress as the raw upstream float, truncated
+  mid-number by the table width budget (`63.78841043647…` for the
+  upstream value `63.78841043647125`), under a header that truncated
+  as well (`UserData.Playe…` on the 8-column `resume` table,
+  `UserData.PlayedPerc…` on the 6-column `recent` table). The cell
+  now carries the rounded percentage (`63.8%`) under a `PercentPlayed`
+  header that fits the same budget -- see the `Changed` entry above
+  for the summary-key rename.
+- `seerr tv <id>` / `seerr movie <id>` are keyed by the **TMDB** id,
+  but the `seerr tv` help text advertised "TMDB/TVDB TV show id" and
+  the `seerr requests` table surfaced the upstream TVDB id under a
+  bare `tvdbId` column -- the very value the operator would then feed
+  back into `seerr tv`, where the upstream rejects it with an opaque
+  HTTP 500 `Unable to retrieve series.`. Both commands' `--help`
+  now names the TMDB id explicitly (and states that TVDB ids are not
+  accepted), the `seerr requests` column is labelled `tvdbIdRef` to
+  mark it as reference-only, and a wrong-id lookup re-raises the same
+  `HttpError` (exit code `4`, pipe-clean stdout) with a hint naming
+  the TMDB-id requirement instead of the bare upstream message.
 - The Sonarr `statistics` cell (`sonarr lookup`, `sonarr series`,
   `sonarr series <id>`) rendered a misleading `0/0` for every library
   series: the denominator read `statistics.episodeCount`, which
