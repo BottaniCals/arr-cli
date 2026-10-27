@@ -87,6 +87,7 @@ arr_cli/              # Python package
 tests/
   unit/               # default pytest target; always runs
   integration/        # opt-in via `pytest --run-integration`; skipped by default
+conftest.py           # project-level pytest config (registers `--run-integration`)
 scripts/
   smoke.sh            # CLI grammar + (gated) live-instance exercise
   secret-scan         # greps for committed secrets; enforces placeholder-only example
@@ -117,7 +118,7 @@ Individual targets (fast local feedback):
 
 ```bash
 make test                     # pytest tests/unit
-make lint                     # py_compile sweep over arr_cli/ and tests/
+make lint                     # py_compile sweep over arr_cli/, tests/, and conftest.py
 make secret-scan              # greps for committed secrets + example placeholder check
 make smoke                    # scripts/smoke.sh (default = --dry-run; CI safe)
 make smoke-dry                # explicit --dry-run alias
