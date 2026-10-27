@@ -141,7 +141,7 @@ GNU-only recipes.
 - **Target Python ≥ 3.11.** Use modern syntax freely (PEP 604 unions,
   `match`, structural pattern matching, `tomllib`, etc.) — `tomllib` is in
   the stdlib, no extra dep needed for TOML parsing.
-- **Two-space indent**, no tabs. Match the existing files.
+- **Four-space indent**, no tabs. Match the existing files.
 - **Type hints everywhere** on public functions. The package ships
   `arr_cli/py.typed` (PEP 561); do not weaken this.
 - **No comments unless they explain non-obvious "why".** Do not add
