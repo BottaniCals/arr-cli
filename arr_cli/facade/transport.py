@@ -43,6 +43,7 @@ import sys
 from typing import Any, Iterable, Mapping
 from urllib.parse import quote, urljoin
 
+from arr_cli import __version__
 from arr_cli.facade.config import (
     AK_LITERAL,
     AuthConfig,
@@ -95,10 +96,12 @@ _HEADER_NAMES: dict[str, str] = {
 #: Identity embedded in the Jellyfin ``MediaBrowser`` authorization
 #: envelope. Jellyfin uses these values to label the device in its
 #: dashboard, so they must be stable across calls and informative for
-#: operators triaging a session.
+#: operators triaging a session. The version is derived from
+#: :data:`arr_cli.__version__` so the envelope and the ``--version``
+#: flag can never drift apart.
 _MEDIABROWSER_CLIENT = "arr-cli"
 _MEDIABROWSER_DEVICE = "arr-cli"
-_MEDIABROWSER_VERSION = "0.1.0"
+_MEDIABROWSER_VERSION = __version__
 
 
 def _mediabrowser_authorization(token: str) -> str:
@@ -464,7 +467,7 @@ def get(
     url = _build_url(auth.url, path)
     headers: dict[str, str] = {
         "Accept": "application/json",
-        "User-Agent": "arr-cli/0.1.0",
+        "User-Agent": f"arr-cli/{__version__}",
     }
     _inject_auth(headers, service, auth)
 
