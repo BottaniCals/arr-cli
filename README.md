@@ -218,7 +218,7 @@ threading of credentials.
 
 | Service       | Header                                  | Value source                                                                                                                                                    |
 | ------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `jellyfin`    | `Authorization` (MediaBrowser envelope) | `jellyfin.api_key` in `arr.conf`, sent as `Token="…"` inside the `MediaBrowser Client="arr-cli", Device="arr-cli", DeviceId="<host>", Version="0.1.0"` envelope |
+| `jellyfin`    | `Authorization` (MediaBrowser envelope) | `jellyfin.api_key` in `arr.conf`, sent as `Token="…"` inside the `MediaBrowser Client="arr-cli", Device="arr-cli", DeviceId="<host>", Version="<version>"` envelope — the `Version` value is the version reported by `<cli> --version` |
 | `radarr`      | `X-Api-Key`                             | `radarr.api_key` in `arr.conf`                                                                                                                                  |
 | `sonarr`      | `X-Api-Key`                             | `sonarr.api_key` in `arr.conf`                                                                                                                                  |
 | `seerr`       | `X-Api-Key`                             | `seerr.api_key` in `arr.conf`                                                                                                                                   |
@@ -281,6 +281,7 @@ Universal flags (every CLI):
 | `--quiet` / `--no-quiet` | Suppress informational stderr lines (e.g. the Maintainerr auth-disabled warning). Errors still surface.       |
 | `--human` / `-h`         | Render tabular readable text instead of raw JSON on stdout.                                                   |
 | `--verbose`              | Emit the verbatim service JSON payload instead of the curated summary (default for size-to-summary commands). |
+| `--version`              | Print the release version as `<service> <version>` on stdout and exit `0`. Needs no config file and issues no network request. The abbreviated forms `--v` / `--ver` are now ambiguous (argparse rejects them) — use the full long forms `--verbose` and `--version`. |
 | `--limit <int>`          | Page size for `--human` lists (default `20`).                                                                 |
 | `--connect-timeout <s>`  | Override the config's `connect_timeout` (default `5.0`).                                                      |
 | `--read-timeout <s>`     | Override the config's `read_timeout` (default `30.0`).                                                        |
