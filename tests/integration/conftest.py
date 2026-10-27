@@ -167,10 +167,15 @@ def integration_requested() -> bool:
     The function inspects three signals, in order:
 
     1. ``--run-integration`` present anywhere in :data:`sys.argv`.
-       pytest passes the flag through after the test paths, so this
-       is the canonical pytest channel.
+       A direct, incidental signal that pytest passes through for CLI
+       invocations.
     2. ``ARR_RUN_INTEGRATION`` env var set to a truthy value.
-       This is the unittest-friendly channel because ``unittest``
+       The reliable pytest channel: the project-level root
+       ``conftest.py`` bridges the parsed ``--run-integration`` option
+       into this variable via ``pytest_configure``, so the opt-in is
+       observed here even when the flag never reaches
+       :data:`sys.argv` (an in-process ``pytest.main([...])`` run).
+       It is also the unittest-friendly channel because ``unittest``
        does not natively parse ``--key=value`` style arguments.
     3. ``PYTEST_RUN_INTEGRATION`` env var set to a truthy value.
        A safety net in case a conftest hook stripped the flag from

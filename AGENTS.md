@@ -87,7 +87,7 @@ arr_cli/              # Python package
 tests/
   unit/               # default pytest target; always runs
   integration/        # opt-in via `pytest --run-integration`; skipped by default
-conftest.py          # project-level pytest config (registers `--run-integration`)
+conftest.py           # project-level pytest config (registers `--run-integration`)
 scripts/
   smoke.sh            # CLI grammar + (gated) live-instance exercise
   secret-scan         # greps for committed secrets; enforces placeholder-only example
