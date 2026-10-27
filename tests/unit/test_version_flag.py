@@ -12,8 +12,8 @@ identity, so the contract locked here spans four surfaces:
    opens a socket.
 3. **One definition site** -- the version literal must occur exactly
    once across ``arr_cli/`` and ``pyproject.toml``, and the module
-   holding it must stay import-free so setuptools can resolve it
-   statically at build time.
+   holding it must stay free of runtime imports so setuptools can
+   resolve it statically at build time.
 4. **Abbreviation ambiguity** -- registering ``--version`` next to
    ``--verbose`` narrows argparse's prefix-abbreviation surface:
    ``--v`` / ``--ver`` are rejected as ambiguous, the full long forms
@@ -407,24 +407,28 @@ class TestSingleDefinitionSite(unittest.TestCase):
             ),
         )
 
-    def test_definition_site_is_import_free(self) -> None:
+    def test_definition_site_is_free_of_runtime_imports(self) -> None:
         # setuptools resolves the ``attr:`` directive statically via AST;
-        # an import in this module would force a build-time import of
-        # the runtime dependencies, which the build environment does not
-        # carry.
+        # a runtime import in this module would force a build-time import
+        # of the runtime dependencies, which the build environment does
+        # not carry. ``from __future__ import ...`` is not a runtime
+        # import -- setuptools' static reader inspects assignments only
+        # and ignores import nodes -- so it stays allowed.
         source = (_PROJ_ROOT / VERSION_DEFINITION_SITE).read_text(encoding="utf-8")
         tree = ast.parse(source)
-        imports = [
+        runtime_imports = [
             node
             for node in ast.walk(tree)
-            if isinstance(node, (ast.Import, ast.ImportFrom))
+            if isinstance(node, ast.Import)
+            or (isinstance(node, ast.ImportFrom) and node.module != "__future__")
         ]
         self.assertEqual(
-            imports,
+            runtime_imports,
             [],
             (
-                "arr_cli/__init__.py must stay free of imports so setuptools "
-                f"resolves __version__ statically; found {imports!r}"
+                "arr_cli/__init__.py must stay free of runtime imports so "
+                "setuptools resolves __version__ statically; found "
+                f"{runtime_imports!r}"
             ),
         )
 
