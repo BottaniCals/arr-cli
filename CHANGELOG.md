@@ -7,7 +7,29 @@ within the pre-1.0 contract documented in `README.md`.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-27
+
 ### Added
+
+- `--version` on every CLI (`jellyfin`, `radarr`, `sonarr`,
+  `maintainerr`, `seerr`): prints the release version as
+  `<service> <version>` on stdout (e.g. `jellyfin 0.1.1`) and exits
+  with code 0. The flag short-circuits during argument parsing, so it
+  needs no configuration file, reads no credential, and issues no
+  network request — it works on a freshly provisioned host with no
+  `arr.conf` present. It is registered on the universal flag set, so
+  both `<cli> --version` and `<cli> <subcommand> --version` print the
+  same line, and it is listed in every `--help` listing.
+  Adding `--version` narrows argparse's prefix-abbreviation surface:
+  `--v` and `--ver` are now ambiguous (argparse rejects them with the
+  standard usage error and exit code 1), so the full long forms
+  `--verbose` and `--version` are required.
+- The release version now has a single definition site:
+  `arr_cli/__init__.py` holds the version constant, and the package
+  metadata (`pyproject.toml`), the Jellyfin `MediaBrowser` envelope
+  (`Version="…"`), and the outbound `User-Agent` header
+  (`arr-cli/<version>`) are all derived from it. Bumping the release
+  version is now a one-line edit.
 
 - `jellyfin --human`: every size-to-summary table now carries the
   audit-requested fields. `jellyfin now` adds `LastActivityDate`,

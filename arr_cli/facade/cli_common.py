@@ -6,8 +6,8 @@ It owns three responsibilities:
 * :func:`build_parser` -- construct a uniformly-configured
   :class:`argparse.ArgumentParser` with the documented universal flag
   set (``--config``, ``--debug``, ``--quiet``, ``--human``/``-h``,
-  ``--connect-timeout``, ``--read-timeout``, ``--retry``,
-  ``--deadline``, ``--limit``).
+  ``--verbose``, ``--version``, ``--connect-timeout``,
+  ``--read-timeout``, ``--retry``, ``--deadline``, ``--limit``).
 * :func:`main_wrapper` -- a closure factory that wraps a per-service
   handler, loads the config via :func:`arr_cli.facade.config.load_config`,
   runs the handler, and translates any
@@ -52,8 +52,9 @@ import argparse
 import logging
 import sys
 import traceback
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
+from arr_cli import __version__
 from arr_cli.facade.config import (
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_READ_TIMEOUT,
@@ -185,6 +186,39 @@ def warn_once(service: str, message: str, *, quiet: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+class _VersionAction(argparse.Action):
+    """Print the release version and terminate the process with exit 0.
+
+    argparse's built-in ``action="version"`` interpolates ``%(prog)s``,
+    which expands to ``"<service> <command>"`` on a subparser -- so
+    ``jellyfin now --version`` would report ``jellyfin now <version>``
+    while ``jellyfin --version`` reported ``jellyfin <version>``. This
+    action takes the first whitespace-separated token of ``parser.prog``
+    instead, so both invocation forms emit the identical line.
+    """
+
+    def __init__(
+        self,
+        option_strings: Sequence[str],
+        dest: str,
+        version: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(option_strings, dest, **kwargs)
+        self.version = version
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: str | None = None,
+    ) -> None:
+        service = (parser.prog or "arr-cli").split()[0]
+        print(f"{service} {self.version}")
+        parser.exit()
+
+
 def _build_universal_parent() -> argparse.ArgumentParser:
     """Build an argparse parent carrying the universal flag set.
 
@@ -291,6 +325,23 @@ def _build_universal_parent() -> argparse.ArgumentParser:
         ),
     )
 
+    # ---- Version ---------------------------------------------------------
+    # Registered on the universal parent so the flag is available on the
+    # top-level parser *and* on every subcommand. The action fires while
+    # argparse is parsing, i.e. before ``load_config()`` is reached, so
+    # the version query needs no config file and opens no socket.
+    parent.add_argument(
+        "--version",
+        action=_VersionAction,
+        version=__version__,
+        nargs=0,
+        default=argparse.SUPPRESS,
+        help=(
+            "print the release version as '<service> <version>' and exit 0 "
+            "(no config, no network)"
+        ),
+    )
+
     # ---- Transport / reliability ---------------------------------------
     parent.add_argument(
         "--connect-timeout",
@@ -379,6 +430,10 @@ def build_parser(
       No short alias. The renderer priority chain is
       ``--human`` > ``--verbose`` > default summary (REQ-3 AC1-AC4,
       REQ-6 AC2).
+    * ``--version`` -- print the release version as
+      ``"<service> <version>"`` on stdout and exit 0. The action
+      fires during argument parsing, so no config file is read and no
+      network request is issued. No short alias.
     * ``--connect-timeout <float>`` -- per-call connect timeout
       (seconds). Default :data:`DEFAULT_CONNECT_TIMEOUT` (5.0).
     * ``--read-timeout <float>`` -- per-call read timeout (seconds).

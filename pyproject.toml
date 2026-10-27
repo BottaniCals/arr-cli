@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "arr-cli"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Read-only Python CLI wrappers around Jellyfin, Radarr, Sonarr, Maintainerr, and Seerr."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -52,6 +52,9 @@ packages = [
     "arr_cli",
     "arr_cli.facade",
 ]
+
+[tool.setuptools.dynamic]
+version = { attr = "arr_cli.__version__" }
 
 [tool.setuptools.package-data]
 arr_cli = ["py.typed"]

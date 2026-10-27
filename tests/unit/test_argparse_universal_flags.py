@@ -4,11 +4,12 @@ The bug closed by this fix had two independent surfaces:
 
 1. **Bug 1 / Bug 3** -- the universal flag set
    (``--config``, ``--debug``, ``--quiet``, ``--human``/``-h``,
-   ``--verbose``, ``--connect-timeout``, ``--read-timeout``,
-   ``--retry``, ``--deadline``, ``--limit``) was only registered on
-   the top-level argparse parser, so the documented invocation
-   ``<cli> <subcommand> --config <path>`` was rejected by argparse
-   and the universal flags did not appear in ``<subcommand> --help``.
+   ``--verbose``, ``--version``, ``--connect-timeout``,
+   ``--read-timeout``, ``--retry``, ``--deadline``, ``--limit``) was
+   only registered on the top-level argparse parser, so the documented
+   invocation ``<cli> <subcommand> --config <path>`` was rejected by
+   argparse and the universal flags did not appear in
+   ``<subcommand> --help``.
 
 2. **Bug 2** -- argparse's ``SystemExit(2)`` propagate-through
    collided with the documented ``AuthError`` exit code (``2``),
@@ -79,6 +80,7 @@ UNIVERSAL_FLAGS: tuple[str, ...] = (
     "--quiet",
     "--human",
     "--verbose",
+    "--version",
     "--connect-timeout",
     "--read-timeout",
     "--retry",
