@@ -59,6 +59,17 @@ Opt-in (integration tests RUN)::
 
 .. note::
 
+    The ``--run-integration`` flag is registered with pytest by the
+    project-level ``conftest.py`` at the repository root. That file is an
+    *initial* conftest -- an ancestor of every test path -- so the flag is
+    accepted for every documented invocation form (``pytest tests/``,
+    ``pytest tests/integration/`` and the no-argument ``testpaths`` form).
+    The parsed flag is handed to this module through the
+    ``ARR_RUN_INTEGRATION`` environment variable (see below), so the
+    pytest channel and the unittest channel share one implementation.
+
+.. note::
+
     ``unittest`` does not natively parse ``--key=value`` style
     arguments, so for the unittest runner the opt-in can also be
     triggered by setting the ``ARR_RUN_INTEGRATION`` environment
@@ -69,7 +80,9 @@ Environment variables consumed by integration tests
 --------------------------------------------------
 ``ARR_RUN_INTEGRATION`` (``"1"`` to enable; same effect as
 ``--run-integration`` on the pytest CLI). Honoured by the unittest
-fallback path because ``unittest`` does not parse the flag natively.
+fallback path because ``unittest`` does not parse the flag natively, and
+set by the project-level root ``conftest.py`` when pytest parses
+``--run-integration`` so both runners read the same signal.
 
 Per-service live endpoints are configured via:
 
@@ -92,7 +105,10 @@ The decorator looks at, in order:
 1. ``"--run-integration"`` in :data:`sys.argv` (pytest passes it
    through when the operator adds it after the test paths).
 2. ``"ARR_RUN_INTEGRATION"`` in :data:`os.environ` set to a truthy
-   value (``"1"``, ``"true"``, ``"yes"``).
+   value (``"1"``, ``"true"``, ``"yes"``). The project-level root
+   ``conftest.py`` sets this variable from the parsed pytest option, so
+   the pytest channel is observed here even when the flag never reaches
+   :data:`sys.argv` (an in-process ``pytest.main([...])`` run).
 3. The ``PYTEST_RUN_INTEGRATION`` env var (set by ``pytest`` when
    ``-p`` plugins propagate it; we accept it as a fallback so
    ``pytest --run-integration`` works even when the flag is removed

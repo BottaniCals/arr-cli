@@ -218,6 +218,20 @@ within the pre-1.0 contract documented in `README.md`.
 
 ### Fixed
 
+- The `--run-integration` pytest flag was advertised by the README, by
+  `AGENTS.md` and by the integration-suite docstring, but it was never
+  registered with pytest's own argument parser. Every documented
+  invocation (`pytest tests/integration/ --run-integration`,
+  `pytest tests/ --run-integration`, `make integration-test`) aborted
+  with `unrecognized arguments: --run-integration` (pytest exit code
+  `4`) while parsing the command line, so the opt-in integration suite
+  was unreachable through its documented channel. The flag is now
+  registered by the project-level root `conftest.py` and handed to the
+  skip helper through the `ARR_RUN_INTEGRATION` environment variable,
+  so `make integration-test` runs and skips cleanly with an explicit
+  reason when no live endpoint is configured. The default unit-test
+  path, the `ARR_RUN_INTEGRATION=1` unittest path and the
+  "integration tests are opt-in" default are unchanged.
 - The `jellyfin --human resume` / `jellyfin --human recent` tables
   rendered the playback progress as the raw upstream float, truncated
   mid-number by the table width budget (`63.78841043647…` for the

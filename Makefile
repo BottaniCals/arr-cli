@@ -23,7 +23,8 @@
 #                  (`make` with no args).
 #   test           Run the unit test suite (`pytest tests/unit`).
 #   lint           Byte-compile every Python file under `arr_cli/` and
-#                  `tests/` (catches syntax errors that escape pytest).
+#                  `tests/`, plus the repository-root `conftest.py`
+#                  (catches syntax errors that escape pytest).
 #                  Uses stdlib `py_compile`; no extra deps required.
 #   secret-scan    Run `scripts/secret-scan` to grep the tree for
 #                  committed API-key/token shapes (REQ NFR-Security).
@@ -71,6 +72,7 @@ SCRIPTS_DIR  := $(PROJECT_ROOT)/scripts
 TESTS_DIR    := $(PROJECT_ROOT)/tests/unit
 INTEG_DIR    := $(PROJECT_ROOT)/tests/integration
 PY_SRC_DIRS  := $(PROJECT_ROOT)/arr_cli $(PROJECT_ROOT)/tests
+ROOT_SRC_FILES := $(PROJECT_ROOT)/conftest.py
 
 # --- phony declarations -----------------------------------------------------
 # Everything in this Makefile is a recipe, not a file target. Declaring
@@ -88,7 +90,7 @@ help:
 	@printf '  help           Print this help banner (default target)\n'
 	@printf '  test           Run the unit test suite (pytest tests/unit)\n'
 	@printf '  integration-test  Run the opt-in integration suite (pytest tests/integration --run-integration)\n'
-	@printf '  lint           Byte-compile every Python file under arr_cli/ and tests/\n'
+	@printf '  lint           Byte-compile every Python file under arr_cli/, tests/, and conftest.py\n'
 	@printf '  secret-scan    Run scripts/secret-scan (greps for committed API-key shapes)\n'
 	@printf '  smoke          Run scripts/smoke.sh (defaults to --dry-run; CI safe)\n'
 	@printf '  smoke-dry      Same as smoke; explicit alias for scripts/smoke.sh --dry-run\n'
@@ -116,16 +118,18 @@ integration-test:
 	@$(PYTEST) $(INTEG_DIR) --run-integration
 
 # --- lint -------------------------------------------------------------------
-# Byte-compile every Python file under `arr_cli/` and `tests/`. This
-# catches syntax errors and indentation problems that pytest would
+# Byte-compile every Python file under `arr_cli/` and `tests/`, plus the
+# repository-root `conftest.py` (which lives outside those trees).
+# This catches syntax errors and indentation problems that pytest would
 # surface as collection errors anyway, but doing it as a separate
 # target means `make lint` is fast (~1s) and the error message points
 # at the exact file/line that broke. We shell-quote each file via
 # `find ... -print` so the inlined `$(PY_SRC_DIRS)` expansion stays
 # within command-line length limits on every supported platform.
 lint:
-	@printf 'make: [lint] py_compile sweep over arr_cli/ and tests/\n'
+	@printf 'make: [lint] py_compile sweep over arr_cli/, tests/, and conftest.py\n'
 	@$(PYTHON3) -c "import sys, py_compile; files = sys.argv[1:]; [py_compile.compile(f, doraise=True) for f in files]" \
+		$(ROOT_SRC_FILES) \
 		$$(find $(PY_SRC_DIRS) -type f -name '*.py' -not -path '*/__pycache__/*')
 	@printf 'make: [lint] OK\n'
 
