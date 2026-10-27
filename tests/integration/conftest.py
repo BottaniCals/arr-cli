@@ -38,9 +38,9 @@ For unittest::
     def test_live_jellyfin_now(self) -> None:
         ...
 
-Both runners recognise the same flag. The decorator is intentionally
-a no-op when neither pytest nor unittest is currently driving the
-test, so the same import is safe from any context.
+Both runners honour the same opt-in signal. The decorator is
+intentionally a no-op when neither pytest nor unittest is currently
+driving the test, so the same import is safe from any context.
 
 How to run
 ----------
@@ -53,9 +53,7 @@ Default (integration tests SKIPPED)::
 Opt-in (integration tests RUN)::
 
     pytest tests/ --run-integration
-    python -m unittest discover tests --run-integration   # argparse-style flag
-                                                       # (ignored by unittest,
-                                                       # opt-in via env var below)
+    ARR_RUN_INTEGRATION=1 python -m unittest discover tests
 
 .. note::
 
@@ -70,18 +68,19 @@ Opt-in (integration tests RUN)::
 
 .. note::
 
-    ``unittest`` does not natively parse ``--key=value`` style
-    arguments, so for the unittest runner the opt-in can also be
-    triggered by setting the ``ARR_RUN_INTEGRATION`` environment
-    variable to ``1``. Both runners honour the same name so a
-    contributor can pick whichever runner they prefer.
+    ``unittest`` does not accept ``--run-integration`` at all: its
+    argument parser rejects the flag with ``error: unrecognized
+    arguments: --run-integration`` and exits ``2``. The unittest runner
+    therefore opts in through the ``ARR_RUN_INTEGRATION`` environment
+    variable (``ARR_RUN_INTEGRATION=1``), which both runners honour -- so
+    a contributor can pick whichever runner they prefer.
 
 Environment variables consumed by integration tests
 --------------------------------------------------
 ``ARR_RUN_INTEGRATION`` (``"1"`` to enable; same effect as
-``--run-integration`` on the pytest CLI). Honoured by the unittest
-fallback path because ``unittest`` does not parse the flag natively, and
-set by the project-level root ``conftest.py`` when pytest parses
+``--run-integration`` on the pytest CLI). The unittest opt-in channel,
+because ``unittest`` rejects the flag outright; also set by the
+project-level root ``conftest.py`` when pytest parses
 ``--run-integration`` so both runners read the same signal.
 
 Per-service live endpoints are configured via:
@@ -109,10 +108,10 @@ The decorator looks at, in order:
    ``conftest.py`` sets this variable from the parsed pytest option, so
    the pytest channel is observed here even when the flag never reaches
    :data:`sys.argv` (an in-process ``pytest.main([...])`` run).
-3. The ``PYTEST_RUN_INTEGRATION`` env var (set by ``pytest`` when
-   ``-p`` plugins propagate it; we accept it as a fallback so
-   ``pytest --run-integration`` works even when the flag is removed
-   from ``sys.argv`` by a conftest hook).
+3. The ``PYTEST_RUN_INTEGRATION`` env var, when a contributor sets it
+   explicitly. pytest never sets it itself -- it is a user-set
+   fallback that covers the case where a conftest hook strips the flag
+   from :data:`sys.argv`.
 
 If none of those signals is present the test is SKIPPED.
 
